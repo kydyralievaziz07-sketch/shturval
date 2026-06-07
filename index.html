@@ -26,8 +26,6 @@
   .nav a:hover{background:var(--panel2);color:var(--text)}
   .nav a.active{background:var(--accent);color:#fff;font-weight:600}
   .nav .ico{width:18px;text-align:center}
-  .nav .count{margin-left:auto;background:var(--red);color:#fff;font-size:11px;font-weight:700;
-    border-radius:20px;padding:1px 7px}
   .side-foot{margin-top:auto;font-size:12px;color:var(--muted);line-height:1.5}
 
   /* MAIN */
@@ -41,8 +39,10 @@
     cursor:pointer;font-family:inherit}
   .period button.active{background:var(--accent);color:#fff;font-weight:600}
   .bell{position:relative;cursor:pointer;font-size:18px;background:var(--panel);border:1px solid var(--line);
-    width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center}
-  .bell .dot{position:absolute;top:8px;right:9px;width:8px;height:8px;border-radius:50%;background:var(--red)}
+    width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+    color:var(--text);font-family:inherit;padding:0}
+  .bcount{position:absolute;top:-6px;right:-6px;background:var(--red);color:#fff;font-size:10px;font-weight:700;
+    border-radius:20px;min-width:17px;height:17px;display:flex;align-items:center;justify-content:center;padding:0 4px}
   .user{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--muted)}
   .avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#4f8cff,#39d98a);
     display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;font-size:14px}
@@ -58,7 +58,6 @@
   .grid2{display:grid;grid-template-columns:1.5fr 1fr;gap:16px;margin-bottom:20px}
   .grid2b{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
   .card h3{font-size:15px;margin-bottom:14px;font-weight:600;display:flex;align-items:center;gap:8px}
-  .card h3 .more{margin-left:auto;font-size:12px;color:var(--accent);cursor:pointer;font-weight:400}
 
   /* BARS chart */
   .bars{display:flex;align-items:flex-end;gap:10px;height:165px;padding-top:10px}
@@ -124,7 +123,7 @@
     border-left:1px solid var(--line);padding:22px;transform:translateX(100%);transition:.25s;z-index:50;overflow-y:auto}
   .drawer.open{transform:translateX(0)}
   .drawer h3{font-size:16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between}
-  .drawer h3 .x{cursor:pointer;color:var(--muted)}
+  .drawer h3 .x{cursor:pointer;color:var(--muted);background:none;border:none;font-size:16px;font-family:inherit}
   .notif{background:var(--panel2);border-radius:10px;padding:12px;font-size:13px;margin-bottom:10px;
     line-height:1.5;border-left:3px solid var(--accent)}
   .notif.warn{border-left-color:var(--amber)} .notif.red{border-left-color:var(--red)}
@@ -132,8 +131,22 @@
   .overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:40;display:none}
   .overlay.open{display:block}
 
+  /* polish & доступность */
+  .card.kpi{transition:transform .15s,border-color .15s}
+  .card.kpi:hover{transform:translateY(-2px);border-color:#333b49}
+  a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   .hide{display:none}
   @media(max-width:1000px){.kpis{grid-template-columns:repeat(2,1fr)}.grid2,.grid2b{grid-template-columns:1fr}}
+  @media(max-width:760px){
+    body{flex-direction:column}
+    .sidebar{width:100%;flex-direction:row;flex-wrap:wrap;align-items:center;padding:12px 14px}
+    .sidebar .nav{flex-direction:row;flex-wrap:wrap;margin-top:0;gap:6px;width:100%}
+    .nav a{padding:8px 10px;font-size:13px}
+    .side-foot{display:none}
+    .main{padding:18px 16px}
+    .drawer{width:88%}
+    .funnel .lbl{width:88px}
+  }
 </style>
 </head>
 <body>
@@ -155,7 +168,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v0.3<br>Доступ: только владелец<br>Данные демонстрационные
+      Штурвал v0.4<br>Доступ: только владелец<br>Данные демонстрационные
     </div>
   </aside>
 
@@ -173,7 +186,7 @@
           <button class="active">Неделя</button>
           <button>Месяц</button>
         </div>
-        <div class="bell" onclick="toggleDrawer()">🔔<span class="dot"></span></div>
+        <button class="bell" onclick="toggleDrawer()" aria-label="Уведомления: 5 новых">🔔<span class="bcount">5</span></button>
         <div class="user">Владелец <div class="avatar">Б</div></div>
       </div>
     </div>
@@ -189,7 +202,7 @@
 
       <div class="grid2">
         <div class="card">
-          <h3>Продажи по дням <span class="more">подробнее →</span></h3>
+          <h3>Продажи по дням</h3>
           <div class="bars">
             <div class="bar-wrap"><div class="bar" style="height:50%"></div><span>Пн</span></div>
             <div class="bar-wrap"><div class="bar" style="height:62%"></div><span>Вт</span></div>
@@ -247,7 +260,7 @@
     <section id="tab-prod" class="hide">
       <div class="card">
         <div class="toolbar">
-          <input class="search" placeholder="🔍 Поиск товара по названию или категории...">
+          <input id="prodSearch" class="search" aria-label="Поиск товара" placeholder="🔍 Поиск товара по названию или категории...">
           <div style="display:flex;gap:8px">
             <button class="btn ghost">Импорт из 1С</button>
             <button class="btn">+ Добавить товар</button>
@@ -255,7 +268,7 @@
         </div>
         <table>
           <thead><tr><th>Товар</th><th>Категория</th><th>Цена</th><th>Закуп</th><th>Маржа</th><th>Остаток</th><th>На рынке</th><th>Статус</th></tr></thead>
-          <tbody>
+          <tbody id="prodRows">
             <tr><td>Набор кастрюль 6 шт</td><td>Кухня</td><td>24 900 ₸</td><td>17 000 ₸</td><td>32%</td><td>3</td><td><span class="badge b-mk">Опубликован</span></td><td><span class="badge b-low">Заканчивается</span></td></tr>
             <tr><td>Комплект постельного белья</td><td>Текстиль</td><td>15 500 ₸</td><td>9 800 ₸</td><td>37%</td><td>54</td><td><span class="badge b-mk">Опубликован</span></td><td><span class="badge b-ok">В наличии</span></td></tr>
             <tr><td>Органайзер для шкафа</td><td>Хранение</td><td>4 200 ₸</td><td>2 500 ₸</td><td>40%</td><td>120</td><td><span class="badge b-mk">Опубликован</span></td><td><span class="badge b-ok">В наличии</span></td></tr>
@@ -404,7 +417,7 @@
   <!-- NOTIFICATIONS DRAWER -->
   <div class="overlay" id="overlay" onclick="toggleDrawer()"></div>
   <div class="drawer" id="drawer">
-    <h3>🔔 Требует внимания <span class="x" onclick="toggleDrawer()">✕</span></h3>
+    <h3>🔔 Требует внимания <button class="x" onclick="toggleDrawer()" aria-label="Закрыть">✕</button></h3>
     <div class="notif red"><b>Закончился товар.</b> «Сушилка для белья» — 0 шт. Продажи остановлены.<div class="t">15 минут назад</div></div>
     <div class="notif warn"><b>Заканчивается.</b> «Набор кастрюль 6 шт» — осталось 3. Пополни склад.<div class="t">1 час назад</div></div>
     <div class="notif"><b>Цена выше рынка.</b> «Комплект белья» дороже конкурентов на 1 300 ₸.<div class="t">2 часа назад</div></div>
@@ -446,6 +459,31 @@
   function toggleDrawer(){
     document.getElementById('drawer').classList.toggle('open');
     document.getElementById('overlay').classList.toggle('open');
+  }
+  // закрытие шторки уведомлений по клавише Esc
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape'){
+      document.getElementById('drawer').classList.remove('open');
+      document.getElementById('overlay').classList.remove('open');
+    }
+  });
+  // доступность меню с клавиатуры (Tab + Enter)
+  document.querySelectorAll('.nav a').forEach(link=>{
+    link.setAttribute('tabindex','0');
+    link.setAttribute('role','button');
+    link.addEventListener('keydown',e=>{
+      if(e.key==='Enter'||e.key===' '){ e.preventDefault(); link.click(); }
+    });
+  });
+  // живой поиск по таблице товаров
+  const ps=document.getElementById('prodSearch');
+  if(ps){
+    ps.addEventListener('input',()=>{
+      const q=ps.value.trim().toLowerCase();
+      document.querySelectorAll('#prodRows tr').forEach(row=>{
+        row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
+      });
+    });
   }
 </script>
 </body>
