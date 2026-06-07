@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Штурвал — пульт управления Бизмарт</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#262b36;
+    --text:#e7eaf0; --muted:#9aa3b2; --accent:#4f8cff; --green:#39d98a;
+    --red:#ff6b6b; --amber:#ffb84d; --purple:#a78bfa; --radius:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--text);display:flex;min-height:100vh}
+
+  /* SIDEBAR */
+  .sidebar{width:240px;background:var(--panel);border-right:1px solid var(--line);
+    padding:22px 16px;display:flex;flex-direction:column;gap:6px;flex-shrink:0}
+  .logo{font-size:18px;font-weight:700;display:flex;align-items:center;gap:10px}
+  .logo .dot{width:12px;height:12px;border-radius:50%;background:var(--accent)}
+  .logo small{display:block;font-size:11px;color:var(--muted);font-weight:400;margin-top:2px}
+  .nav{display:flex;flex-direction:column;gap:4px;margin-top:18px}
+  .nav a{color:var(--muted);text-decoration:none;padding:11px 14px;border-radius:10px;
+    font-size:14px;display:flex;align-items:center;gap:11px;cursor:pointer;transition:.15s}
+  .nav a:hover{background:var(--panel2);color:var(--text)}
+  .nav a.active{background:var(--accent);color:#fff;font-weight:600}
+  .nav .ico{width:18px;text-align:center}
+  .nav .count{margin-left:auto;background:var(--red);color:#fff;font-size:11px;font-weight:700;
+    border-radius:20px;padding:1px 7px}
+  .side-foot{margin-top:auto;font-size:12px;color:var(--muted);line-height:1.5}
+
+  /* MAIN */
+  .main{flex:1;padding:24px 30px;overflow-y:auto}
+  .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px;gap:16px;flex-wrap:wrap}
+  .topbar h1{font-size:22px;font-weight:700}
+  .topbar .sub{color:var(--muted);font-size:13px;margin-top:3px}
+  .top-right{display:flex;align-items:center;gap:14px}
+  .period{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .period button{background:none;border:none;color:var(--muted);padding:8px 14px;font-size:13px;
+    cursor:pointer;font-family:inherit}
+  .period button.active{background:var(--accent);color:#fff;font-weight:600}
+  .bell{position:relative;cursor:pointer;font-size:18px;background:var(--panel);border:1px solid var(--line);
+    width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center}
+  .bell .dot{position:absolute;top:8px;right:9px;width:8px;height:8px;border-radius:50%;background:var(--red)}
+  .user{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--muted)}
+  .avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#4f8cff,#39d98a);
+    display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;font-size:14px}
+
+  /* CARDS / KPI */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px}
+  .kpi .label{color:var(--muted);font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+  .kpi .value{font-size:25px;font-weight:700}
+  .kpi .delta{font-size:12px;margin-top:6px}
+  .up{color:var(--green)} .down{color:var(--red)}
+
+  .grid2{display:grid;grid-template-columns:1.5fr 1fr;gap:16px;margin-bottom:20px}
+  .grid2b{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+  .card h3{font-size:15px;margin-bottom:14px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .card h3 .more{margin-left:auto;font-size:12px;color:var(--accent);cursor:pointer;font-weight:400}
+
+  /* BARS chart */
+  .bars{display:flex;align-items:flex-end;gap:10px;height:165px;padding-top:10px}
+  .bar-wrap{flex:1;display:flex;flex-direction:column;align-items:center;gap:8px}
+  .bar{width:100%;background:linear-gradient(180deg,var(--accent),#2c5fb3);border-radius:6px 6px 0 0;transition:.3s}
+  .bar-wrap span{font-size:11px;color:var(--muted)}
+
+  /* GOAL progress */
+  .goal-row{display:flex;justify-content:space-between;font-size:13px;margin-bottom:8px}
+  .goal-row b{font-size:15px}
+  .progress{height:12px;background:var(--panel2);border-radius:20px;overflow:hidden}
+  .progress > div{height:100%;background:linear-gradient(90deg,var(--green),#2db872);border-radius:20px}
+  .progress.amber > div{background:linear-gradient(90deg,var(--amber),#e69a2e)}
+
+  /* FUNNEL */
+  .funnel{display:flex;flex-direction:column;gap:8px}
+  .funnel .step{display:flex;align-items:center;gap:12px;font-size:13px}
+  .funnel .barf{height:34px;border-radius:8px;background:linear-gradient(90deg,#4f8cff,#6aa0ff);
+    display:flex;align-items:center;padding:0 12px;color:#fff;font-weight:600;min-width:70px}
+  .funnel .lbl{width:120px;color:var(--muted)}
+  .funnel .conv{color:var(--muted);font-size:12px}
+
+  /* AI */
+  .ai{background:linear-gradient(160deg,#1b2233,#171a21);border:1px solid #2b3650}
+  .ai .insight{background:var(--panel2);border-radius:10px;padding:12px 14px;font-size:13px;
+    line-height:1.5;margin-bottom:10px;border-left:3px solid var(--accent)}
+  .ai .insight.warn{border-left-color:var(--amber)}
+  .ai .insight.good{border-left-color:var(--green)}
+  .ai .insight b{color:#fff}
+  .chat{display:flex;gap:8px;margin-top:6px}
+  .chat input{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:10px;
+    padding:11px 14px;color:var(--text);font-size:13px;font-family:inherit}
+  .chat input::placeholder{color:var(--muted)}
+
+  /* TABLE */
+  .toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:12px;flex-wrap:wrap}
+  .search{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:9px 14px;
+    color:var(--text);font-size:13px;font-family:inherit;width:260px;max-width:100%}
+  .search::placeholder{color:var(--muted)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;color:var(--muted);font-weight:500;padding:10px 8px;border-bottom:1px solid var(--line);font-size:12px}
+  td{padding:12px 8px;border-bottom:1px solid var(--line)}
+  tr:last-child td{border-bottom:none}
+  .badge{padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600;display:inline-block}
+  .b-ok{background:rgba(57,217,138,.15);color:var(--green)}
+  .b-low{background:rgba(255,184,77,.15);color:var(--amber)}
+  .b-out{background:rgba(255,107,107,.15);color:var(--red)}
+  .b-mk{background:rgba(79,140,255,.15);color:var(--accent)}
+  .b-a{background:rgba(57,217,138,.15);color:var(--green)}
+  .b-b{background:rgba(255,184,77,.15);color:var(--amber)}
+  .b-c{background:rgba(167,139,250,.15);color:var(--purple)}
+
+  .btn{background:var(--accent);color:#fff;border:none;padding:9px 16px;border-radius:9px;
+    font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--text)}
+
+  .note{background:rgba(79,140,255,.08);border:1px dashed #2b3650;border-radius:12px;
+    padding:14px 16px;font-size:13px;color:var(--muted);line-height:1.6;margin-top:6px}
+  .note b{color:var(--text)}
+
+  /* Notifications drawer */
+  .drawer{position:fixed;top:0;right:0;width:340px;height:100vh;background:var(--panel);
+    border-left:1px solid var(--line);padding:22px;transform:translateX(100%);transition:.25s;z-index:50;overflow-y:auto}
+  .drawer.open{transform:translateX(0)}
+  .drawer h3{font-size:16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between}
+  .drawer h3 .x{cursor:pointer;color:var(--muted)}
+  .notif{background:var(--panel2);border-radius:10px;padding:12px;font-size:13px;margin-bottom:10px;
+    line-height:1.5;border-left:3px solid var(--accent)}
+  .notif.warn{border-left-color:var(--amber)} .notif.red{border-left-color:var(--red)}
+  .notif .t{font-size:11px;color:var(--muted);margin-top:4px}
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:40;display:none}
+  .overlay.open{display:block}
+
+  .hide{display:none}
+  @media(max-width:1000px){.kpis{grid-template-columns:repeat(2,1fr)}.grid2,.grid2b{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="logo"><span class="dot"></span> Штурвал
+      <small>пульт Бизмарт</small>
+    </div>
+    <nav class="nav">
+      <a class="active" data-tab="dash"><span class="ico">📊</span> Дашборд</a>
+      <a data-tab="prod"><span class="ico">📦</span> Товары</a>
+      <a data-tab="sales"><span class="ico">🛒</span> Продажи</a>
+      <a data-tab="clients"><span class="ico">👥</span> Клиенты</a>
+      <a data-tab="market"><span class="ico">🏪</span> Рынок</a>
+      <a data-tab="analytics"><span class="ico">📈</span> Аналитика</a>
+      <a data-tab="fin"><span class="ico">💰</span> Финансы (1С)</a>
+      <a data-tab="ai"><span class="ico">🤖</span> ИИ-помощник</a>
+      <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
+    </nav>
+    <div class="side-foot">
+      Штурвал v0.3<br>Доступ: только владелец<br>Данные демонстрационные
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+
+    <div class="topbar">
+      <div>
+        <h1 id="page-title">Дашборд</h1>
+        <div class="sub" id="page-sub">Магазин Бизмарт — общая картина</div>
+      </div>
+      <div class="top-right">
+        <div class="period">
+          <button>Сегодня</button>
+          <button class="active">Неделя</button>
+          <button>Месяц</button>
+        </div>
+        <div class="bell" onclick="toggleDrawer()">🔔<span class="dot"></span></div>
+        <div class="user">Владелец <div class="avatar">Б</div></div>
+      </div>
+    </div>
+
+    <!-- DASHBOARD -->
+    <section id="tab-dash">
+      <div class="kpis">
+        <div class="card kpi"><div class="label">Продаж за неделю</div><div class="value">312</div><div class="delta up">▲ 9%</div></div>
+        <div class="card kpi"><div class="label">Выручка</div><div class="value">3 240 000 ₸</div><div class="delta up">▲ 14%</div></div>
+        <div class="card kpi"><div class="label">Прибыль</div><div class="value">1 760 000 ₸</div><div class="delta up">▲ 11%</div></div>
+        <div class="card kpi"><div class="label">Товаров заканчивается</div><div class="value">12</div><div class="delta down">▼ требует действий</div></div>
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <h3>Продажи по дням <span class="more">подробнее →</span></h3>
+          <div class="bars">
+            <div class="bar-wrap"><div class="bar" style="height:50%"></div><span>Пн</span></div>
+            <div class="bar-wrap"><div class="bar" style="height:62%"></div><span>Вт</span></div>
+            <div class="bar-wrap"><div class="bar" style="height:45%"></div><span>Ср</span></div>
+            <div class="bar-wrap"><div class="bar" style="height:70%"></div><span>Чт</span></div>
+            <div class="bar-wrap"><div class="bar" style="height:88%"></div><span>Пт</span></div>
+            <div class="bar-wrap"><div class="bar" style="height:95%"></div><span>Сб</span></div>
+            <div class="bar-wrap"><div class="bar" style="height:60%"></div><span>Вс</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>🎯 Цель месяца</h3>
+          <div class="goal-row"><span>Выручка</span><b>12 / 15 млн ₸</b></div>
+          <div class="progress"><div style="width:80%"></div></div>
+          <div class="goal-row" style="margin-top:18px"><span>Новых клиентов</span><b>84 / 120</b></div>
+          <div class="progress amber"><div style="width:70%"></div></div>
+          <div class="note" style="margin-top:16px">До цели по выручке осталось <b>3 млн ₸</b> — это ~230 продаж. По темпу успеваешь. 💪</div>
+        </div>
+      </div>
+
+      <div class="grid2b">
+        <div class="card">
+          <h3>🔻 Воронка продаж (рынок)</h3>
+          <div class="funnel">
+            <div class="step"><span class="lbl">Просмотры</span><div class="barf" style="width:100%">8 400</div></div>
+            <div class="step"><span class="lbl">В корзину</span><div class="barf" style="width:62%">2 180</div><span class="conv">26%</span></div>
+            <div class="step"><span class="lbl">Заказы</span><div class="barf" style="width:34%">640</div><span class="conv">29%</span></div>
+            <div class="step"><span class="lbl">Оплачено</span><div class="barf" style="width:24%">312</div><span class="conv">49%</span></div>
+          </div>
+          <div class="note" style="margin-top:14px">Половина заказов не доходит до оплаты — есть что улучшить в оформлении.</div>
+        </div>
+        <div class="card ai">
+          <h3>🤖 ИИ заметил</h3>
+          <div class="insight warn"><b>Срочно пополнить.</b> «Набор кастрюль 6 шт» — хит, осталось 3.</div>
+          <div class="insight good"><b>Точка роста.</b> Текстиль растёт 3 недели — увеличь закуп на 20%.</div>
+          <div class="insight"><b>Цена.</b> «Органайзер» можно поднять на 5% — спрос высокий.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Топ товаров</h3>
+        <table>
+          <thead><tr><th>Товар</th><th>Категория</th><th>Продано</th><th>Прибыль</th><th>Остаток</th><th>Статус</th></tr></thead>
+          <tbody>
+            <tr><td>Набор кастрюль 6 шт</td><td>Кухня</td><td>58</td><td>420 000 ₸</td><td>3</td><td><span class="badge b-low">Заканчивается</span></td></tr>
+            <tr><td>Комплект постельного белья</td><td>Текстиль</td><td>46</td><td>310 000 ₸</td><td>54</td><td><span class="badge b-ok">В наличии</span></td></tr>
+            <tr><td>Органайзер для шкафа</td><td>Хранение</td><td>39</td><td>140 000 ₸</td><td>120</td><td><span class="badge b-ok">В наличии</span></td></tr>
+            <tr><td>Сушилка для белья</td><td>Хозтовары</td><td>0</td><td>0 ₸</td><td>0</td><td><span class="badge b-out">Нет в наличии</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- PRODUCTS -->
+    <section id="tab-prod" class="hide">
+      <div class="card">
+        <div class="toolbar">
+          <input class="search" placeholder="🔍 Поиск товара по названию или категории...">
+          <div style="display:flex;gap:8px">
+            <button class="btn ghost">Импорт из 1С</button>
+            <button class="btn">+ Добавить товар</button>
+          </div>
+        </div>
+        <table>
+          <thead><tr><th>Товар</th><th>Категория</th><th>Цена</th><th>Закуп</th><th>Маржа</th><th>Остаток</th><th>На рынке</th><th>Статус</th></tr></thead>
+          <tbody>
+            <tr><td>Набор кастрюль 6 шт</td><td>Кухня</td><td>24 900 ₸</td><td>17 000 ₸</td><td>32%</td><td>3</td><td><span class="badge b-mk">Опубликован</span></td><td><span class="badge b-low">Заканчивается</span></td></tr>
+            <tr><td>Комплект постельного белья</td><td>Текстиль</td><td>15 500 ₸</td><td>9 800 ₸</td><td>37%</td><td>54</td><td><span class="badge b-mk">Опубликован</span></td><td><span class="badge b-ok">В наличии</span></td></tr>
+            <tr><td>Органайзер для шкафа</td><td>Хранение</td><td>4 200 ₸</td><td>2 500 ₸</td><td>40%</td><td>120</td><td><span class="badge b-mk">Опубликован</span></td><td><span class="badge b-ok">В наличии</span></td></tr>
+            <tr><td>Сушилка для белья</td><td>Хозтовары</td><td>9 800 ₸</td><td>6 400 ₸</td><td>35%</td><td>0</td><td>—</td><td><span class="badge b-out">Нет в наличии</span></td></tr>
+            <tr><td>Набор полотенец 4 шт</td><td>Текстиль</td><td>7 300 ₸</td><td>4 100 ₸</td><td>44%</td><td>210</td><td>—</td><td><span class="badge b-ok">В наличии</span></td></tr>
+          </tbody>
+        </table>
+        <div class="note" style="margin-top:16px">📌 Позже: фото товаров, массовое редактирование цен, импорт всего каталога из <b>1С</b>, фильтры по категориям.</div>
+      </div>
+    </section>
+
+    <!-- SALES -->
+    <section id="tab-sales" class="hide">
+      <div class="kpis">
+        <div class="card kpi"><div class="label">Продаж сегодня</div><div class="value">47</div></div>
+        <div class="card kpi"><div class="label">Выручка сегодня</div><div class="value">612 000 ₸</div></div>
+        <div class="card kpi"><div class="label">Средний чек</div><div class="value">13 020 ₸</div></div>
+        <div class="card kpi"><div class="label">Возвраты сегодня</div><div class="value">1</div></div>
+      </div>
+      <div class="card">
+        <h3>Последние продажи</h3>
+        <table>
+          <thead><tr><th>Время</th><th>Товар</th><th>Кол-во</th><th>Сумма</th><th>Клиент</th><th>Источник</th></tr></thead>
+          <tbody>
+            <tr><td>14:32</td><td>Набор кастрюль 6 шт</td><td>1</td><td>24 900 ₸</td><td>Айгерим С.</td><td><span class="badge b-mk">Рынок</span></td></tr>
+            <tr><td>14:05</td><td>Органайзер для шкафа</td><td>2</td><td>8 400 ₸</td><td>Данияр К.</td><td>Магазин</td></tr>
+            <tr><td>13:48</td><td>Комплект постельного белья</td><td>1</td><td>15 500 ₸</td><td>Мадина Т.</td><td><span class="badge b-mk">Рынок</span></td></tr>
+            <tr><td>13:20</td><td>Набор полотенец 4 шт</td><td>3</td><td>21 900 ₸</td><td>Ержан А.</td><td>Магазин</td></tr>
+          </tbody>
+        </table>
+        <div class="note" style="margin-top:16px">📌 Данные о продажах будут приходить автоматически из <b>1С</b> и с <b>рынка</b>.</div>
+      </div>
+    </section>
+
+    <!-- CLIENTS -->
+    <section id="tab-clients" class="hide">
+      <div class="kpis">
+        <div class="card kpi"><div class="label">Всего клиентов</div><div class="value">1 840</div></div>
+        <div class="card kpi"><div class="label">Постоянные</div><div class="value">312</div><div class="delta up">▲ покупают повторно</div></div>
+        <div class="card kpi"><div class="label">Новых за месяц</div><div class="value">84</div></div>
+        <div class="card kpi"><div class="label">Средний чек</div><div class="value">13 020 ₸</div></div>
+      </div>
+      <div class="card">
+        <h3>Лучшие клиенты</h3>
+        <table>
+          <thead><tr><th>Клиент</th><th>Покупок</th><th>Всего потратил</th><th>Последняя покупка</th><th>Тип</th></tr></thead>
+          <tbody>
+            <tr><td>Айгерим С.</td><td>14</td><td>184 000 ₸</td><td>сегодня</td><td><span class="badge b-a">VIP</span></td></tr>
+            <tr><td>Данияр К.</td><td>9</td><td>112 000 ₸</td><td>сегодня</td><td><span class="badge b-a">Постоянный</span></td></tr>
+            <tr><td>Мадина Т.</td><td>6</td><td>78 000 ₸</td><td>сегодня</td><td><span class="badge b-b">Постоянный</span></td></tr>
+            <tr><td>Ержан А.</td><td>1</td><td>21 900 ₸</td><td>сегодня</td><td><span class="badge b-c">Новый</span></td></tr>
+          </tbody>
+        </table>
+        <div class="note" style="margin-top:16px">💡 Позже: рассылки постоянным клиентам, акции для «спящих», история покупок каждого.</div>
+      </div>
+    </section>
+
+    <!-- MARKET -->
+    <section id="tab-market" class="hide">
+      <div class="card">
+        <div class="toolbar">
+          <h3 style="margin:0">Предложения на рынке</h3>
+          <button class="btn">+ Выдвинуть предложение</button>
+        </div>
+        <table>
+          <thead><tr><th>Товар</th><th>Наша цена</th><th>Цена у конкурентов</th><th>Просмотры</th><th>Заказы</th><th>Статус</th></tr></thead>
+          <tbody>
+            <tr><td>Набор кастрюль 6 шт</td><td>24 900 ₸</td><td><span class="up">26 500 ₸ ↑</span></td><td>1 240</td><td>18</td><td><span class="badge b-mk">Активно</span></td></tr>
+            <tr><td>Комплект постельного белья</td><td>15 500 ₸</td><td><span class="down">14 200 ₸ ↓</span></td><td>980</td><td>12</td><td><span class="badge b-mk">Активно</span></td></tr>
+            <tr><td>Органайзер для шкафа</td><td>4 200 ₸</td><td><span class="up">4 900 ₸ ↑</span></td><td>540</td><td>9</td><td><span class="badge b-mk">Активно</span></td></tr>
+          </tbody>
+        </table>
+        <div class="note" style="margin-top:16px">🔗 Здесь ты выдвигаешь товар на «рынок» (Instagram / сайт / WhatsApp и, при желании, маркетплейс) и сравниваешь цену с конкурентами. <span class="up">Зелёное</span> = у тебя дешевле, <span class="down">красное</span> = дороже рынка.</div>
+      </div>
+    </section>
+
+    <!-- ANALYTICS -->
+    <section id="tab-analytics" class="hide">
+      <div class="grid2b">
+        <div class="card">
+          <h3>🅰️ ABC-анализ товаров</h3>
+          <table>
+            <thead><tr><th>Группа</th><th>Что это</th><th>Товаров</th><th>Доля прибыли</th></tr></thead>
+            <tbody>
+              <tr><td><span class="badge b-a">A — хиты</span></td><td>приносят основную прибыль</td><td>180</td><td>70%</td></tr>
+              <tr><td><span class="badge b-b">B — середняки</span></td><td>стабильные, но средние</td><td>420</td><td>22%</td></tr>
+              <tr><td><span class="badge b-c">C — балласт</span></td><td>почти не продаются</td><td>684</td><td>8%</td></tr>
+            </tbody>
+          </table>
+          <div class="note" style="margin-top:14px">💡 Группа C (684 товара) занимает склад, но даёт лишь 8% прибыли — кандидаты на распродажу.</div>
+        </div>
+        <div class="card">
+          <h3>📦 Остатки по категориям</h3>
+          <div class="bars" style="height:165px">
+            <div class="bar-wrap"><div class="bar" style="height:80%"></div><span>Кухня</span></div>
+            <div class="bar-wrap"><div class="bar" style="height:95%"></div><span>Текстиль</span></div>
+            <div class="bar-wrap"><div class="bar" style="height:55%"></div><span>Хранение</span></div>
+            <div class="bar-wrap"><div class="bar" style="height:40%"></div><span>Хозтовары</span></div>
+            <div class="bar-wrap"><div class="bar" style="height:65%"></div><span>Декор</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="note">📈 Раздел глубокой аналитики: прибыльность по категориям, сезонность, прогнозы спроса. Оживёт на реальных данных из 1С.</div>
+      </div>
+    </section>
+
+    <!-- FINANCE -->
+    <section id="tab-fin" class="hide">
+      <div class="kpis">
+        <div class="card kpi"><div class="label">Поступления (1С)</div><div class="value">3 240 000 ₸</div></div>
+        <div class="card kpi"><div class="label">Закуп товара (1С)</div><div class="value">1 480 000 ₸</div></div>
+        <div class="card kpi"><div class="label">Остаток на счетах</div><div class="value">5 420 000 ₸</div></div>
+        <div class="card kpi"><div class="label">Стоимость склада</div><div class="value">9 800 000 ₸</div></div>
+      </div>
+      <div class="card">
+        <div class="note">🔗 Этот раздел автоматически подтянет данные из твоей <b>1С</b> (стоит у тебя на компьютере). Сейчас цифры демонстрационные. Связь с 1С настроим отдельным шагом.</div>
+      </div>
+    </section>
+
+    <!-- AI -->
+    <section id="tab-ai" class="hide">
+      <div class="card ai">
+        <h3>🤖 ИИ-помощник магазина</h3>
+        <div class="insight warn"><b>Срочно пополнить.</b> «Набор кастрюль 6 шт» — хит, осталось 3 шт. Простой = потеря ~8 продаж/день.</div>
+        <div class="insight good"><b>Точка роста.</b> Текстиль растёт 3 недели. Увеличь закуп на 20%.</div>
+        <div class="insight"><b>Прогноз.</b> Выручка этой недели ≈ <b>3 600 000 ₸</b>.</div>
+        <div class="chat">
+          <input placeholder="Спроси что угодно: «какой товар приносит больше всего прибыли?»">
+          <button class="btn">Спросить</button>
+        </div>
+        <div class="note" style="margin-top:12px">💡 Чат заработает на реальных данных — ИИ будет отвечать по твоим товарам, продажам и 1С.</div>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="tab-set" class="hide">
+      <div class="card">
+        <h3>Настройки</h3>
+        <div class="note">Сейчас сайт <b>только для тебя (владельца)</b>. Позже: подключение <b>1С</b>, подключение <b>рынка</b>, настройка ИИ, цели продаж, и — когда решишь — <b>личные кабинеты для других клиентов</b>.</div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- NOTIFICATIONS DRAWER -->
+  <div class="overlay" id="overlay" onclick="toggleDrawer()"></div>
+  <div class="drawer" id="drawer">
+    <h3>🔔 Требует внимания <span class="x" onclick="toggleDrawer()">✕</span></h3>
+    <div class="notif red"><b>Закончился товар.</b> «Сушилка для белья» — 0 шт. Продажи остановлены.<div class="t">15 минут назад</div></div>
+    <div class="notif warn"><b>Заканчивается.</b> «Набор кастрюль 6 шт» — осталось 3. Пополни склад.<div class="t">1 час назад</div></div>
+    <div class="notif"><b>Цена выше рынка.</b> «Комплект белья» дороже конкурентов на 1 300 ₸.<div class="t">2 часа назад</div></div>
+    <div class="notif warn"><b>Возврат.</b> Клиент вернул «Набор полотенец». Проверь причину.<div class="t">3 часа назад</div></div>
+    <div class="notif"><b>Новый VIP-клиент.</b> Айгерим С. сделала 14-ю покупку.<div class="t">сегодня</div></div>
+  </div>
+
+<script>
+  const titles = {
+    dash     :["Дашборд","Магазин Бизмарт — общая картина"],
+    prod     :["Товары","Каталог, остатки и маржа"],
+    sales    :["Продажи","Продажи за день и за период"],
+    clients  :["Клиенты","Кто покупает и кто возвращается"],
+    market   :["Рынок","Предложения и цены конкурентов"],
+    analytics:["Аналитика","ABC-анализ, остатки, прогнозы"],
+    fin      :["Финансы (1С)","Деньги, закуп и остатки из 1С"],
+    ai       :["ИИ-помощник","Подсказки, прогнозы и чат по данным"],
+    set      :["Настройки","Доступы и интеграции"]
+  };
+  document.querySelectorAll('.nav a').forEach(link=>{
+    link.addEventListener('click',()=>{
+      document.querySelectorAll('.nav a').forEach(l=>l.classList.remove('active'));
+      link.classList.add('active');
+      const tab=link.dataset.tab;
+      document.querySelectorAll('main section').forEach(s=>s.classList.add('hide'));
+      document.getElementById('tab-'+tab).classList.remove('hide');
+      document.getElementById('page-title').textContent=titles[tab][0];
+      document.getElementById('page-sub').textContent=titles[tab][1];
+      window.scrollTo(0,0);
+    });
+  });
+  // period switch
+  document.querySelectorAll('.period button').forEach(b=>{
+    b.addEventListener('click',()=>{
+      document.querySelectorAll('.period button').forEach(x=>x.classList.remove('active'));
+      b.classList.add('active');
+    });
+  });
+  function toggleDrawer(){
+    document.getElementById('drawer').classList.toggle('open');
+    document.getElementById('overlay').classList.toggle('open');
+  }
+</script>
+</body>
+</html>
