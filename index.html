@@ -744,11 +744,14 @@
     const st=document.getElementById('prod-status');
     st.style.borderStyle='solid'; st.style.borderColor='#39d98a';
     st.innerHTML='🟢 <b>Каталог из 1С</b> · обновлено '+esc(d.updated||'')+' · всего '+(d.total_sku||0).toLocaleString('ru-RU')+' позиций · <span style="color:var(--muted)">обновляется само каждую минуту</span>';
+    const km=(label,som)=>'<div class="card kpi"><div class="label">'+label+'</div><div class="value"><span class="money" data-som="'+(som||0)+'">'+fmt(som||0)+'</span></div></div>';
     document.getElementById('prod-kpis').innerHTML=
       kpiCard('Позиций (SKU)',(d.total_sku||0).toLocaleString('ru-RU'))+
       kpiCard('В наличии',(d.in_stock||0).toLocaleString('ru-RU'))+
       kpiCard('Штук на складе',(d.total_units||0).toLocaleString('ru-RU'))+
-      kpiCard('Склад в рознице',fmt(d.retail_value));
+      km('Склад в рознице',d.retail_value)+
+      km('Себестоимость склада',d.cost_value)+
+      km('Потенц. наценка',d.margin_value);
     const cats=d.categories||[]; const maxv=Math.max.apply(null,cats.map(c=>c.value).concat([1]));
     document.getElementById('prod-cats').innerHTML=cats.length?cats.map(c=>
       '<div style="margin-bottom:11px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px">'+
