@@ -218,7 +218,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v1.3.2<br>Вход по паролю 🔒<br>облако 24/7: CRM · чаты · 1С
+      Штурвал v1.4.0<br>Вход по паролю 🔒<br>Дашборд: живые цифры по периодам
     </div>
   </aside>
 
@@ -249,10 +249,10 @@
     <!-- DASHBOARD -->
     <section id="tab-dash">
       <div class="kpis">
-        <div class="card kpi"><div class="label">Продаж за неделю</div><div class="value">312</div><div class="delta up">▲ 9%</div></div>
-        <div class="card kpi"><div class="label">Выручка</div><div class="value">3 240 000 сом</div><div class="delta up">▲ 14%</div></div>
-        <div class="card kpi"><div class="label">Прибыль</div><div class="value">1 760 000 сом</div><div class="delta up">▲ 11%</div></div>
-        <div class="card kpi"><div class="label">Товаров заканчивается</div><div class="value">12</div><div class="delta down">▼ требует действий</div></div>
+        <div class="card kpi"><div class="label" id="dl1">Сделок за неделю</div><div class="value" id="dk1">—</div></div>
+        <div class="card kpi"><div class="label" id="dl2">Сумма за неделю</div><div class="value" id="dk2">—</div></div>
+        <div class="card kpi"><div class="label">Успешных сделок</div><div class="value" id="dk3">—</div></div>
+        <div class="card kpi"><div class="label">Сумма успешных</div><div class="value" id="dk4">—</div></div>
       </div>
 
       <div class="grid2">
@@ -545,7 +545,8 @@
     b.addEventListener('click',()=>{
       document.querySelectorAll('#periodsw button').forEach(x=>x.classList.remove('active'));
       b.classList.add('active'); PERIOD=b.dataset.period;
-      if(window._crmData) renderCRM(window._crmData);
+      if(window._crmData){ renderCRM(window._crmData); updateDashKpis(window._crmData); }
+      else loadCRM();
     });
   });
   function toggleDrawer(){
@@ -596,7 +597,7 @@
     err.textContent=''; btn.disabled=true; btn.textContent='Проверяю…';
     try{
       const r=await fetch(API_BASE+'/api/auth',{headers:{'X-Auth':val}});
-      if(r.ok){ setPw(val); showLogin(false); }
+      if(r.ok){ setPw(val); showLogin(false); loadCRM(); }
       else { err.textContent='Неверный пароль. Попробуй ещё раз.'; }
     }catch(e){ err.textContent='Нет связи с сервером. Запусти backend и обнови страницу.'; }
     btn.disabled=false; btn.textContent='Войти';
@@ -605,6 +606,7 @@
   (async function bootAuth(){
     const ok=await checkAuth();
     showLogin(ok!==true);   // показываем форму, если нужен пароль (или сервер недоступен)
+    if(ok===true) loadCRM(); // сразу подтянуть живые цифры на Дашборд
   })();
   function logout(){ clearPw(); showLogin(true); }
   let CUR='KGS';          // выбранная валюта: KGS (сом) или USD ($)
@@ -620,17 +622,43 @@
     return esc(s).replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener" style="color:#bcd2ff;text-decoration:underline;word-break:break-all">$1</a>');
   }
   function kpiCard(label,val){return '<div class="card kpi"><div class="label">'+label+'</div><div class="value">'+val+'</div></div>';}
-  async function loadCRM(){
+  let crmTimer=null;
+  async function loadCRM(attempt){
+    attempt=attempt||1;
     const st=document.getElementById('crm-status');
     try{
       const r=await apiFetch('/api/overview',{},ONEC_BASE);
       if(!r.ok) throw 0;
       window._crmData=await r.json();
-      renderCRM(window._crmData);
+      renderCRM(window._crmData); updateDashKpis(window._crmData);
     }catch(e){
-      st.style.borderStyle='dashed'; st.style.borderColor='#ff6b6b';
-      st.innerHTML='🔴 <b>Нет связи с сервером-посредником.</b><br>Чтобы увидеть живые данные, запусти на компьютере файл <b>backend/Запустить-сервер.command</b> и обнови страницу.<br><span style="color:var(--muted)">На опубликованном сайте в интернете живые данные пока не работают — это следующий шаг.</span>';
+      if(e&&e.message==='unauthorized') return;
+      const isLocal=(API_BASE!=='');
+      if(!isLocal && attempt<7){
+        st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d';
+        st.innerHTML='⏳ <b>Сервер просыпается…</b> после паузы это занимает до минуты. Жду (попытка '+attempt+'/6)…';
+        clearTimeout(crmTimer); crmTimer=setTimeout(()=>loadCRM(attempt+1),12000);
+      }else{
+        st.style.borderStyle='dashed'; st.style.borderColor='#ff6b6b';
+        st.innerHTML=isLocal
+          ? '🔴 <b>Нет связи с 1С.</b> Запусти на компьютере <b>backend/Запустить-сервер.command</b> и обнови страницу.'
+          : '🔴 <b>Сервер пока не ответил.</b> Обнови страницу через минуту.';
+      }
     }
+  }
+  // живые цифры на Дашборде за выбранный период
+  function updateDashKpis(d){
+    if(!d||!d.periods) return;
+    const lbl={today:'сегодня',week:'за неделю',month:'за месяц'}[PERIOD]||'';
+    const p=d.periods[PERIOD]||{};
+    const succ=(p.stage_summary||[]).find(s=>/успешно/i.test(s.stage))||{count:0,sum:0};
+    const e=id=>document.getElementById(id);
+    if(e('dl1')) e('dl1').textContent='Сделок '+lbl;
+    if(e('dl2')) e('dl2').textContent='Сумма '+lbl;
+    if(e('dk1')) e('dk1').textContent=(p.count||0).toLocaleString('ru-RU');
+    if(e('dk2')) e('dk2').innerHTML='<span class="money" data-som="'+(p.sum||0)+'">'+fmt(p.sum||0)+'</span>';
+    if(e('dk3')) e('dk3').textContent=(succ.count||0).toLocaleString('ru-RU');
+    if(e('dk4')) e('dk4').innerHTML='<span class="money" data-som="'+(succ.sum||0)+'">'+fmt(succ.sum||0)+'</span>';
   }
   function renderCRM(d){
     const st=document.getElementById('crm-status');
