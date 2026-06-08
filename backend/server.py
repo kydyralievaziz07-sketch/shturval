@@ -24,6 +24,10 @@ def load_secret():
     # переменные окружения имеют приоритет (понадобится для облака)
     cfg["AMO_TOKEN"] = os.environ.get("AMO_TOKEN", cfg.get("AMO_TOKEN", ""))
     cfg["AMO_SUBDOMAIN"] = os.environ.get("AMO_SUBDOMAIN", cfg.get("AMO_SUBDOMAIN", ""))
+    # 1С (Yaros DataGate) — товары/остатки/цены
+    cfg["YAROS_URL"] = os.environ.get("YAROS_URL", cfg.get("YAROS_URL", ""))
+    cfg["YAROS_LOGIN"] = os.environ.get("YAROS_LOGIN", cfg.get("YAROS_LOGIN", ""))
+    cfg["YAROS_PASS"] = os.environ.get("YAROS_PASS", cfg.get("YAROS_PASS", ""))
     return cfg
 
 CFG = load_secret()
@@ -156,6 +160,122 @@ def build_chat_messages(cid):
         msgs.append({"t": ("in" if m.get("side") == "client" else "out"), "x": x})
     return {"msgs": msgs}
 
+# --- 1С (Yaros DataGate): товары, остатки, цены ---
+import base64
+
+def yaros_get(path):
+    """GET к 1С с Basic-авторизацией. Каталог большой (~20 МБ), поэтому таймаут щедрый."""
+    url = CFG.get("YAROS_URL", "").rstrip("/") + path
+    auth = base64.b64encode(
+        (CFG.get("YAROS_LOGIN", "") + ":" + CFG.get("YAROS_PASS", "")).encode("utf-8")
+    ).decode("ascii")
+    req = urllib.request.Request(url, headers={
+        "Authorization": "Basic " + auth,
+        "User-Agent": "Shturval/1.0",
+    })
+    with urllib.request.urlopen(req, timeout=180) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+def _num(x):
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return 0.0
+
+def _price_by_type(item, type_name):
+    for p in item.get("PRICES", []):
+        if p.get("TYPE") == type_name:
+            return _num(p.get("PRICE"))
+    return 0.0
+
+# каталог тяжёлый — держим в памяти и обновляем не чаще раза в 10 минут
+_goods = {"t": 0.0, "goods": None, "cats": None}
+
+def get_categories():
+    now = time.time()
+    if _goods["cats"] is None or now - _goods["t"] > 600:
+        try:
+            data = yaros_get("/categories")
+            _goods["cats"] = {c.get("ID"): (c.get("TITLE") or "").strip()
+                              for c in data.get("categories", [])}
+        except Exception:
+            _goods["cats"] = _goods["cats"] or {}
+    return _goods["cats"]
+
+def get_goods():
+    """Возвращает список товаров из 1С (кэш 10 минут). Бросает исключение, если 1С недоступна и кэша нет."""
+    now = time.time()
+    if _goods["goods"] is not None and now - _goods["t"] < 600:
+        return _goods["goods"]
+    data = yaros_get("/goods")
+    _goods["goods"] = data.get("goods", [])
+    _goods["t"] = now
+    return _goods["goods"]
+
+def build_inventory():
+    """Лёгкая сводка по складу для дашборда «Товары»."""
+    goods = get_goods()
+    cats = get_categories()
+    total_units = 0.0
+    retail_value = 0.0
+    cost_value = 0.0
+    in_stock = 0
+    by_cat = {}
+    low = []
+    for x in goods:
+        qty = _num(x.get("QUANTITY"))
+        price = _num(x.get("PRICE"))
+        cost = _price_by_type(x, "Закупочная")
+        total_units += qty
+        retail_value += qty * price
+        cost_value += qty * cost
+        if qty > 0:
+            in_stock += 1
+            cat = cats.get(x.get("CATEGORY_ID"), "Без категории") or "Без категории"
+            agg = by_cat.setdefault(cat, {"value": 0.0, "units": 0.0, "count": 0})
+            agg["value"] += qty * price
+            agg["units"] += qty
+            agg["count"] += 1
+            if qty <= 3:
+                low.append({"title": x.get("TITLE", ""), "qty": int(qty)})
+    categories = [{"title": k, "value": round(v["value"]),
+                   "units": int(v["units"]), "count": v["count"]}
+                  for k, v in sorted(by_cat.items(), key=lambda i: -i[1]["value"])][:8]
+    low.sort(key=lambda i: i["qty"])
+    return {
+        "total_sku": len(goods),
+        "in_stock": in_stock,
+        "total_units": int(total_units),
+        "retail_value": round(retail_value),
+        "cost_value": round(cost_value),
+        "margin_value": round(retail_value - cost_value),
+        "categories": categories,
+        "low": low[:12],
+        "updated": time.strftime("%H:%M:%S"),
+    }
+
+def search_products(q, page, per=50):
+    goods = get_goods()
+    cats = get_categories()
+    q = (q or "").strip().lower()
+    if q:
+        items = [x for x in goods if q in (x.get("TITLE", "") or "").lower()]
+    else:
+        items = goods
+    total = len(items)
+    start = max(0, (page - 1) * per)
+    out = []
+    for x in items[start:start + per]:
+        out.append({
+            "title": x.get("TITLE", ""),
+            "category": cats.get(x.get("CATEGORY_ID"), "—") or "—",
+            "price": _num(x.get("PRICE")),
+            "cost": _price_by_type(x, "Закупочная"),
+            "qty": int(_num(x.get("QUANTITY"))),
+        })
+    return {"total": total, "page": page, "per": per, "items": out}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -194,6 +314,23 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/overview"):
             data = cached("overview", 60, build_overview)
             return self._send(200, data)
+        if self.path.startswith("/api/inventory"):
+            try:
+                return self._send(200, cached("inventory", 600, build_inventory))
+            except Exception as e:
+                return self._send(200, {"error": "Нет связи с 1С: " + str(e)})
+        if self.path.startswith("/api/products"):
+            from urllib.parse import urlparse, parse_qs
+            qs = parse_qs(urlparse(self.path).query)
+            q = qs.get("q", [""])[0]
+            try:
+                page = int(qs.get("page", ["1"])[0])
+            except ValueError:
+                page = 1
+            try:
+                return self._send(200, search_products(q, max(1, page)))
+            except Exception as e:
+                return self._send(200, {"error": "Нет связи с 1С: " + str(e), "items": [], "total": 0})
         if self.path.startswith("/api/chats"):
             if CFG.get("CHATPLACE_KEY"):
                 return self._send(200, cached("chats", 8, build_chats))

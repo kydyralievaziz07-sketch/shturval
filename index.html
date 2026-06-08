@@ -191,7 +191,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v1.0.2<br>Доступ: только владелец<br>чаты: чтение + ответы + ссылки
+      Штурвал v1.1.0<br>Доступ: только владелец<br>1С: товары · остатки · цены
     </div>
   </aside>
 
@@ -310,27 +310,30 @@
       </div>
     </section>
 
-    <!-- PRODUCTS -->
+    <!-- PRODUCTS (живые данные из 1С) -->
     <section id="tab-prod" class="hide">
+      <div id="prod-status" class="note" style="margin-bottom:16px">⏳ Загружаю каталог из 1С…</div>
+      <div id="prod-kpis" class="kpis"></div>
+      <div class="grid2">
+        <div class="card">
+          <h3>📦 Склад по категориям (топ-8 по стоимости)</h3>
+          <div id="prod-cats"><span style="color:var(--muted);font-size:13px">—</span></div>
+        </div>
+        <div class="card">
+          <h3>⚠️ На исходе (остаток 1–3 шт)</h3>
+          <div id="prod-low"><span style="color:var(--muted);font-size:13px">—</span></div>
+        </div>
+      </div>
       <div class="card">
         <div class="toolbar">
-          <input id="prodSearch" class="search" aria-label="Поиск товара" placeholder="🔍 Поиск товара по названию или категории...">
-          <div style="display:flex;gap:8px">
-            <button class="btn ghost">Импорт из 1С</button>
-            <button class="btn">+ Добавить товар</button>
-          </div>
+          <input id="prodSearch" class="search" aria-label="Поиск товара" placeholder="🔍 Поиск товара по названию…">
+          <div id="prod-pager" style="display:flex;gap:8px;align-items:center"></div>
         </div>
         <table>
-          <thead><tr><th>Товар</th><th>Категория</th><th>Цена</th><th>Закуп</th><th>Маржа</th><th>Остаток</th><th>На рынке</th><th>Статус</th></tr></thead>
-          <tbody id="prodRows">
-            <tr><td>Набор кастрюль 6 шт</td><td>Кухня</td><td>24 900 сом</td><td>17 000 сом</td><td>32%</td><td>3</td><td><span class="badge b-mk">Опубликован</span></td><td><span class="badge b-low">Заканчивается</span></td></tr>
-            <tr><td>Комплект постельного белья</td><td>Текстиль</td><td>15 500 сом</td><td>9 800 сом</td><td>37%</td><td>54</td><td><span class="badge b-mk">Опубликован</span></td><td><span class="badge b-ok">В наличии</span></td></tr>
-            <tr><td>Органайзер для шкафа</td><td>Хранение</td><td>4 200 сом</td><td>2 500 сом</td><td>40%</td><td>120</td><td><span class="badge b-mk">Опубликован</span></td><td><span class="badge b-ok">В наличии</span></td></tr>
-            <tr><td>Сушилка для белья</td><td>Хозтовары</td><td>9 800 сом</td><td>6 400 сом</td><td>35%</td><td>0</td><td>—</td><td><span class="badge b-out">Нет в наличии</span></td></tr>
-            <tr><td>Набор полотенец 4 шт</td><td>Текстиль</td><td>7 300 сом</td><td>4 100 сом</td><td>44%</td><td>210</td><td>—</td><td><span class="badge b-ok">В наличии</span></td></tr>
-          </tbody>
+          <thead><tr><th>Товар</th><th>Категория</th><th>Розн. цена</th><th>Закуп</th><th>Маржа</th><th>Остаток</th><th>Статус</th></tr></thead>
+          <tbody id="prodRows"></tbody>
         </table>
-        <div class="note" style="margin-top:16px">📌 Позже: фото товаров, массовое редактирование цен, импорт всего каталога из <b>1С</b>, фильтры по категориям.</div>
+        <div class="note" style="margin-top:16px">🟢 Данные приходят <b>напрямую из 1С</b> (товары, цены, остатки). Поиск — по всему каталогу (23 000+ позиций). 📌 Позже: фильтры по категориям, фото, массовое изменение цен.</div>
       </div>
     </section>
 
@@ -504,6 +507,7 @@
       document.getElementById('page-sub').textContent=titles[tab][1];
       if(tab==='crm') loadCRM();
       if(tab==='chats') loadChats();
+      if(tab==='prod'){ loadInventory(); loadProducts(); }
       window.scrollTo(0,0);
     });
   });
@@ -580,14 +584,69 @@
       if(e.key==='Enter'||e.key===' '){ e.preventDefault(); link.click(); }
     });
   });
-  // живой поиск по таблице товаров
+  // --- ТОВАРЫ: живые данные из 1С (через сервер-посредник) ---
+  let prodPage=1, prodQ='', prodTimer=null;
+  async function loadInventory(){
+    const st=document.getElementById('prod-status');
+    try{
+      const r=await fetch(API_BASE+'/api/inventory'); if(!r.ok) throw 0;
+      const d=await r.json(); if(d.error) throw 0;
+      renderInventory(d);
+    }catch(e){
+      st.style.borderStyle='dashed'; st.style.borderColor='#ff6b6b';
+      st.innerHTML='🔴 <b>Нет связи с 1С.</b> Запусти на компьютере <b>backend/Запустить-сервер.command</b> и обнови страницу.<br><span style="color:var(--muted)">На опубликованном сайте в интернете 1С пока не подключена — это следующий шаг.</span>';
+    }
+  }
+  function renderInventory(d){
+    const st=document.getElementById('prod-status');
+    st.style.borderStyle='solid'; st.style.borderColor='#39d98a';
+    st.innerHTML='🟢 <b>Каталог из 1С</b> · обновлено '+esc(d.updated||'')+' · всего '+(d.total_sku||0).toLocaleString('ru-RU')+' позиций';
+    document.getElementById('prod-kpis').innerHTML=
+      kpiCard('Позиций (SKU)',(d.total_sku||0).toLocaleString('ru-RU'))+
+      kpiCard('В наличии',(d.in_stock||0).toLocaleString('ru-RU'))+
+      kpiCard('Штук на складе',(d.total_units||0).toLocaleString('ru-RU'))+
+      kpiCard('Склад в рознице',fmt(d.retail_value));
+    const cats=d.categories||[]; const maxv=Math.max.apply(null,cats.map(c=>c.value).concat([1]));
+    document.getElementById('prod-cats').innerHTML=cats.length?cats.map(c=>
+      '<div style="margin-bottom:11px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px">'+
+      '<span>'+esc(c.title)+' <span style="color:var(--muted)">· '+c.count+' тов.</span></span>'+
+      '<span class="money" data-som="'+c.value+'">'+fmt(c.value)+'</span></div>'+
+      '<div class="progress"><div style="width:'+Math.round(c.value/maxv*100)+'%"></div></div></div>').join(''):
+      '<span style="color:var(--muted);font-size:13px">Нет данных</span>';
+    const low=d.low||[];
+    document.getElementById('prod-low').innerHTML=low.length?
+      '<table><tbody>'+low.map(x=>'<tr><td>'+esc(x.title)+'</td><td style="text-align:right;width:90px"><span class="badge '+(x.qty<=0?'b-out':'b-low')+'">'+x.qty+' шт</span></td></tr>').join('')+'</tbody></table>':
+      '<span style="color:var(--muted);font-size:13px">Нет товаров на исходе 👍</span>';
+  }
+  function prodRow(x){
+    const out = x.qty<=0;
+    const status = out?'<span class="badge b-out">Нет</span>':(x.qty<=3?'<span class="badge b-low">Заканч.</span>':'<span class="badge b-ok">В наличии</span>');
+    const margin = (x.price>0 && x.cost>0)?Math.round((x.price-x.cost)/x.price*100)+'%':'—';
+    return '<tr><td>'+esc(x.title)+'</td><td>'+esc(x.category)+'</td>'+
+      '<td><span class="money" data-som="'+x.price+'">'+fmt(x.price)+'</span></td>'+
+      '<td><span class="money" data-som="'+x.cost+'">'+fmt(x.cost)+'</span></td>'+
+      '<td>'+margin+'</td><td>'+x.qty+'</td><td>'+status+'</td></tr>';
+  }
+  async function loadProducts(){
+    const tb=document.getElementById('prodRows');
+    tb.innerHTML='<tr><td colspan="7" style="color:var(--muted)">Загрузка…</td></tr>';
+    try{
+      const r=await fetch(API_BASE+'/api/products?page='+prodPage+'&q='+encodeURIComponent(prodQ));
+      const d=await r.json();
+      tb.innerHTML=(d.items&&d.items.length)?d.items.map(prodRow).join(''):'<tr><td colspan="7" style="color:var(--muted)">Ничего не найдено</td></tr>';
+      const per=d.per||50, pages=Math.max(1,Math.ceil((d.total||0)/per));
+      document.getElementById('prod-pager').innerHTML=
+        '<button class="btn ghost" '+(prodPage<=1?'disabled':'')+' onclick="prodGo(-1)">← Назад</button>'+
+        '<span style="font-size:13px;color:var(--muted)">стр. '+prodPage+' из '+pages+' · '+(d.total||0).toLocaleString('ru-RU')+' тов.</span>'+
+        '<button class="btn ghost" '+(prodPage>=pages?'disabled':'')+' onclick="prodGo(1)">Вперёд →</button>';
+    }catch(e){ tb.innerHTML='<tr><td colspan="7" style="color:var(--red)">Нет связи с сервером 1С</td></tr>'; }
+  }
+  function prodGo(delta){ prodPage+=delta; if(prodPage<1)prodPage=1; loadProducts(); }
   const ps=document.getElementById('prodSearch');
   if(ps){
     ps.addEventListener('input',()=>{
-      const q=ps.value.trim().toLowerCase();
-      document.querySelectorAll('#prodRows tr').forEach(row=>{
-        row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
-      });
+      clearTimeout(prodTimer);
+      prodTimer=setTimeout(()=>{ prodQ=ps.value.trim(); prodPage=1; loadProducts(); },350);
     });
   }
   // --- ВАЛЮТА: переключение сом / доллар с автоматическим курсом ---
