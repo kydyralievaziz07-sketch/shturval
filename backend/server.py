@@ -197,47 +197,65 @@ def _price_by_type(item, type_name):
     return 0.0
 
 # каталог тяжёлый (~20 МБ, ~50 сек на загрузку) — держим в памяти, обновляем фоном
-_goods = {"t": 0.0, "goods": None, "cats": None}
+_goods = {"t": 0.0, "goods": None, "cats": None, "cats_t": 0.0, "refreshing": False}
 _goods_lock = threading.Lock()
 
-def get_categories():
-    now = time.time()
-    if _goods["cats"] is None or now - _goods["t"] > 600:
+def _fetch_goods():
+    return yaros_get("/goods").get("goods", [])
+
+def _fetch_cats():
+    data = yaros_get("/categories")
+    return {c.get("ID"): (c.get("TITLE") or "").strip() for c in data.get("categories", [])}
+
+def _refresh_catalog():
+    """Качает свежий каталог и АТОМАРНО заменяет кэш. НЕ держит общую блокировку —
+    поэтому пользовательские запросы во время обновления отвечают мгновенно из старого кэша."""
+    if _goods["refreshing"]:
+        return
+    _goods["refreshing"] = True
+    try:
+        goods = _fetch_goods()           # ~50 сек, но в фоне
+        _goods["goods"] = goods          # подменяем разом
+        _goods["t"] = time.time()
         try:
-            data = yaros_get("/categories")
-            _goods["cats"] = {c.get("ID"): (c.get("TITLE") or "").strip()
-                              for c in data.get("categories", [])}
+            _goods["cats"] = _fetch_cats()
+            _goods["cats_t"] = time.time()
         except Exception:
-            _goods["cats"] = _goods["cats"] or {}
-    return _goods["cats"]
+            pass
+    except Exception:
+        pass
+    finally:
+        _goods["refreshing"] = False
 
 def get_goods():
-    """Возвращает список товаров из 1С (кэш 2 минуты). Блокировка не даёт качать 20 МБ дважды разом.
-    Если кэш есть, но устарел, а обновить не вышло — отдаём старый (лучше слегка несвежее, чем ничего)."""
-    now = time.time()
-    if _goods["goods"] is not None and now - _goods["t"] < 120:
+    """Мгновенно отдаёт каталог из памяти. Если устарел — обновляет ФОНОМ, не задерживая ответ.
+    Ждать (~50 сек) приходится только при самой первой загрузке, когда кэша ещё нет."""
+    if _goods["goods"] is not None:
+        if time.time() - _goods["t"] > 120 and not _goods["refreshing"]:
+            threading.Thread(target=_refresh_catalog, daemon=True).start()
         return _goods["goods"]
-    with _goods_lock:
-        # пока ждали блокировку, другой поток мог уже обновить
-        if _goods["goods"] is not None and time.time() - _goods["t"] < 120:
+    with _goods_lock:                    # самый первый раз — приходится дождаться
+        if _goods["goods"] is not None:
             return _goods["goods"]
-        try:
-            data = yaros_get("/goods")
-            _goods["goods"] = data.get("goods", [])
-            _goods["t"] = time.time()
-        except Exception:
-            if _goods["goods"] is None:
-                raise            # совсем нет данных — пробрасываем ошибку
+        _goods["goods"] = _fetch_goods()
+        _goods["t"] = time.time()
         return _goods["goods"]
+
+def get_categories():
+    if _goods["cats"] is None:
+        try:
+            _goods["cats"] = _fetch_cats()
+            _goods["cats_t"] = time.time()
+        except Exception:
+            _goods["cats"] = {}
+    return _goods["cats"]
 
 def _warmer():
     """Фоновый поток: держит каталог 1С тёплым, чтобы запросы отвечали мгновенно."""
     while True:
         try:
             if CFG.get("YAROS_URL"):
-                _goods["t"] = 0.0          # принудительно обновить
-                get_goods()
-                get_categories()
+                _refresh_catalog()
         except Exception:
             pass
         time.sleep(110)
