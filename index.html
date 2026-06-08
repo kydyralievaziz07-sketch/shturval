@@ -154,6 +154,20 @@
   .card.kpi:hover{transform:translateY(-2px);border-color:#333b49}
   a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   .hide{display:none}
+
+  /* LOGIN — экран входа */
+  .loginwrap{position:fixed;inset:0;z-index:100;background:radial-gradient(1200px 600px at 50% -10%,#1b2233,#0f1115);
+    display:flex;align-items:center;justify-content:center;padding:20px}
+  .logincard{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:32px 28px;
+    width:360px;max-width:100%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.4)}
+  .logincard .logo{justify-content:center;font-size:22px;margin-bottom:6px}
+  .logincard h2{font-size:17px;font-weight:600;margin:14px 0 4px}
+  .logincard p{color:var(--muted);font-size:13px;margin-bottom:18px}
+  .logincard input{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:11px;
+    padding:13px 15px;color:var(--text);font-size:15px;font-family:inherit;margin-bottom:12px;text-align:center}
+  .logincard .btn{width:100%;padding:13px;font-size:15px}
+  .loginerr{color:var(--red);font-size:13px;margin-top:12px;min-height:18px}
+  .loginhint{color:var(--muted);font-size:11px;margin-top:14px;line-height:1.5}
   @media(max-width:1000px){.kpis{grid-template-columns:repeat(2,1fr)}.grid2,.grid2b{grid-template-columns:1fr}}
   @media(max-width:760px){
     body{flex-direction:column}
@@ -171,6 +185,19 @@
 </style>
 </head>
 <body>
+
+  <!-- ЭКРАН ВХОДА -->
+  <div class="loginwrap" id="login">
+    <form class="logincard" id="loginform" autocomplete="off">
+      <div class="logo"><span class="dot"></span> Штурвал</div>
+      <h2>Вход в пульт управления</h2>
+      <p>Магазин Бизмарт · доступ только для владельца</p>
+      <input type="password" id="loginpw" placeholder="Введите пароль" aria-label="Пароль" autofocus>
+      <button class="btn" type="submit" id="loginbtn">Войти</button>
+      <div class="loginerr" id="loginerr"></div>
+      <div class="loginhint">🔒 Данные (CRM, 1С, чаты) защищены — без пароля их не видно даже по прямой ссылке.</div>
+    </form>
+  </div>
 
   <!-- SIDEBAR -->
   <aside class="sidebar">
@@ -191,7 +218,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v1.1.0<br>Доступ: только владелец<br>1С: товары · остатки · цены
+      Штурвал v1.2.0<br>Вход по паролю 🔒<br>1С: товары · остатки · цены
     </div>
   </aside>
 
@@ -465,7 +492,8 @@
     <section id="tab-set" class="hide">
       <div class="card">
         <h3>Настройки</h3>
-        <div class="note">Сейчас сайт <b>только для тебя (владельца)</b>. Позже: подключение <b>1С</b>, подключение <b>рынка</b>, настройка ИИ, цели продаж, и — когда решишь — <b>личные кабинеты для других клиентов</b>.</div>
+        <div class="note">Сейчас сайт <b>только для тебя (владельца)</b>, вход защищён паролем 🔒. Позже: подключение <b>рынка</b>, настройка ИИ, цели продаж, и — когда решишь — <b>личные кабинеты для других клиентов</b>.</div>
+        <div style="margin-top:16px"><button class="btn ghost" onclick="logout()">🚪 Выйти из аккаунта</button></div>
       </div>
     </section>
 
@@ -526,6 +554,52 @@
   // локально — стучимся в свой сервер на 8787; в облаке (Vercel) — на тот же адрес ('/api/...')
   const _h=location.hostname;
   const API_BASE=(_h==='localhost'||_h==='127.0.0.1'||_h==='')?'http://localhost:8787':'';
+
+  // --- ВХОД ПО ПАРОЛЮ ---
+  const PW_KEY='shturval_pw';
+  function getPw(){ try{return localStorage.getItem(PW_KEY)||'';}catch(e){return '';} }
+  function setPw(p){ try{localStorage.setItem(PW_KEY,p);}catch(e){} }
+  function clearPw(){ try{localStorage.removeItem(PW_KEY);}catch(e){} }
+  // обёртка над fetch: подставляет пароль в заголовок, ловит 401 → показывает вход
+  async function apiFetch(path,opts){
+    opts=opts||{}; const h=Object.assign({},opts.headers||{}); const p=getPw();
+    if(p) h['X-Auth']=p; opts.headers=h;
+    const r=await fetch(API_BASE+path,opts);
+    if(r.status===401){ clearPw(); showLogin(true); throw new Error('unauthorized'); }
+    return r;
+  }
+  function showLogin(show){
+    const el=document.getElementById('login');
+    if(el) el.style.display = show ? 'flex' : 'none';
+    if(show){ const i=document.getElementById('loginpw'); if(i){ i.value=''; setTimeout(()=>i.focus(),50); } }
+  }
+  async function checkAuth(){
+    // защита включена на сервере? и подходит ли сохранённый пароль?
+    try{
+      const r=await fetch(API_BASE+'/api/auth',{headers:getPw()?{'X-Auth':getPw()}:{}});
+      return r.ok;  // 200 = вход не нужен или пароль верный
+    }catch(e){
+      return null;  // сервер недоступен (например, открыт файл без бэкенда)
+    }
+  }
+  document.getElementById('loginform').addEventListener('submit',async e=>{
+    e.preventDefault();
+    const inp=document.getElementById('loginpw'), err=document.getElementById('loginerr'), btn=document.getElementById('loginbtn');
+    const val=inp.value.trim(); if(!val){ inp.focus(); return; }
+    err.textContent=''; btn.disabled=true; btn.textContent='Проверяю…';
+    try{
+      const r=await fetch(API_BASE+'/api/auth',{headers:{'X-Auth':val}});
+      if(r.ok){ setPw(val); showLogin(false); }
+      else { err.textContent='Неверный пароль. Попробуй ещё раз.'; }
+    }catch(e){ err.textContent='Нет связи с сервером. Запусти backend и обнови страницу.'; }
+    btn.disabled=false; btn.textContent='Войти';
+  });
+  // при загрузке: решаем, показывать вход или сразу сайт
+  (async function bootAuth(){
+    const ok=await checkAuth();
+    showLogin(ok!==true);   // показываем форму, если нужен пароль (или сервер недоступен)
+  })();
+  function logout(){ clearPw(); showLogin(true); }
   let CUR='KGS';          // выбранная валюта: KGS (сом) или USD ($)
   let RATE=87.5;          // сколько сомов за 1$ (запасной курс, обновляется автоматически)
   function fmt(n){
@@ -542,7 +616,7 @@
   async function loadCRM(){
     const st=document.getElementById('crm-status');
     try{
-      const r=await fetch(API_BASE+'/api/overview');
+      const r=await apiFetch('/api/overview');
       if(!r.ok) throw 0;
       window._crmData=await r.json();
       renderCRM(window._crmData);
@@ -589,7 +663,7 @@
   async function loadInventory(){
     const st=document.getElementById('prod-status');
     try{
-      const r=await fetch(API_BASE+'/api/inventory'); if(!r.ok) throw 0;
+      const r=await apiFetch('/api/inventory'); if(!r.ok) throw 0;
       const d=await r.json(); if(d.error) throw 0;
       renderInventory(d);
     }catch(e){
@@ -631,7 +705,7 @@
     const tb=document.getElementById('prodRows');
     if(!silent) tb.innerHTML='<tr><td colspan="7" style="color:var(--muted)">Загрузка…</td></tr>';
     try{
-      const r=await fetch(API_BASE+'/api/products?page='+prodPage+'&q='+encodeURIComponent(prodQ));
+      const r=await apiFetch('/api/products?page='+prodPage+'&q='+encodeURIComponent(prodQ));
       const d=await r.json();
       tb.innerHTML=(d.items&&d.items.length)?d.items.map(prodRow).join(''):'<tr><td colspan="7" style="color:var(--muted)">Ничего не найдено</td></tr>';
       const per=d.per||50, pages=Math.max(1,Math.ceil((d.total||0)/per));
@@ -724,7 +798,7 @@
   async function loadChats(){
     const note=document.querySelector('#tab-chats .note');
     let data=null;
-    try{ const r=await fetch(API_BASE+'/api/chats'); if(r.ok) data=await r.json(); }catch(e){}
+    try{ const r=await apiFetch('/api/chats'); if(r.ok) data=await r.json(); }catch(e){}
     const real=!!(data&&data.chats&&data.chats.length&&data.chats[0].id);
     if(real){
       CHATS=data.chats;
@@ -758,7 +832,7 @@
     const nearBottom = box.scrollHeight-box.scrollTop-box.clientHeight < 80;
     if(id){
       let msgs=[];
-      try{ const r=await fetch(API_BASE+'/api/chat?id='+encodeURIComponent(id)); if(r.ok){ const d=await r.json(); msgs=d.msgs||[]; } }catch(e){}
+      try{ const r=await apiFetch('/api/chat?id='+encodeURIComponent(id)); if(r.ok){ const d=await r.json(); msgs=d.msgs||[]; } }catch(e){}
       box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+m.t+'">'+linkify(m.x)+'</div>').join(''):'<div style="color:var(--muted);font-size:12px">Нет сообщений</div>';
     }else{
       box.innerHTML=(fallbackMsgs||[]).map(m=>'<div class="bubble '+m.t+'">'+linkify(m.x)+'</div>').join('');
@@ -769,7 +843,7 @@
   async function refreshChats(){
     const tab=document.getElementById('tab-chats');
     if(!tab||tab.classList.contains('hide')){ if(chatsTimer){clearInterval(chatsTimer);chatsTimer=null;} return; }
-    try{ const r=await fetch(API_BASE+'/api/chats'); if(r.ok){ const d=await r.json(); if(d.chats&&d.chats.length&&d.chats[0].id){ CHATS=d.chats; renderChatList(); const n=document.querySelector('#tab-chats .note'); if(n) n.innerHTML='🟢 <b>Живые переписки</b> · обновлено '+esc(d.updated||''); if(curChatId) openChat(curChatId,curChatName); } } }catch(e){}
+    try{ const r=await apiFetch('/api/chats'); if(r.ok){ const d=await r.json(); if(d.chats&&d.chats.length&&d.chats[0].id){ CHATS=d.chats; renderChatList(); const n=document.querySelector('#tab-chats .note'); if(n) n.innerHTML='🟢 <b>Живые переписки</b> · обновлено '+esc(d.updated||''); if(curChatId) openChat(curChatId,curChatName); } } }catch(e){}
   }
   async function sendReply(){
     const inp=document.getElementById('replyInput'); const text=inp.value.trim();
@@ -779,7 +853,7 @@
     const box=document.getElementById('msgs');
     box.insertAdjacentHTML('beforeend','<div class="bubble out">'+esc(text)+'</div>'); box.scrollTop=box.scrollHeight;
     try{
-      await fetch(API_BASE+'/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chatId:curChatId,text:text})});
+      await apiFetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chatId:curChatId,text:text})});
     }catch(e){ alert('Не удалось отправить — проверь, запущен ли сервер.'); }
     inp.disabled=false; inp.focus();
     setTimeout(()=>{ if(curChatId) openChat(curChatId,curChatName); }, 1500);

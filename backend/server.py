@@ -28,6 +28,8 @@ def load_secret():
     cfg["YAROS_URL"] = os.environ.get("YAROS_URL", cfg.get("YAROS_URL", ""))
     cfg["YAROS_LOGIN"] = os.environ.get("YAROS_LOGIN", cfg.get("YAROS_LOGIN", ""))
     cfg["YAROS_PASS"] = os.environ.get("YAROS_PASS", cfg.get("YAROS_PASS", ""))
+    # пароль для входа на сайт (если пусто — защита выключена)
+    cfg["SITE_PASSWORD"] = os.environ.get("SITE_PASSWORD", cfg.get("SITE_PASSWORD", ""))
     return cfg
 
 CFG = load_secret()
@@ -291,7 +293,17 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self._send(200, {})
 
+    def _authed(self):
+        """True, если защита выключена или прислан верный пароль в заголовке X-Auth."""
+        pw = CFG.get("SITE_PASSWORD", "").strip()
+        if not pw:
+            return True
+        given = (self.headers.get("X-Auth") or "").strip()
+        return given == pw
+
     def do_POST(self):
+        if self.path.startswith("/api/") and not self._authed():
+            return self._send(401, {"error": "Требуется вход"})
         if self.path.startswith("/api/send"):
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -311,6 +323,12 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/health"):
             ok = bool(CFG.get("AMO_TOKEN")) and bool(CFG.get("AMO_SUBDOMAIN"))
             return self._send(200, {"ok": ok, "account": CFG.get("AMO_SUBDOMAIN")})
+        if self.path.startswith("/api/auth"):
+            # проверка пароля для формы входа
+            return self._send(200 if self._authed() else 401, {"ok": self._authed()})
+        # всё остальное под /api/ — только с верным паролем
+        if self.path.startswith("/api/") and not self._authed():
+            return self._send(401, {"error": "Требуется вход"})
         if self.path.startswith("/api/overview"):
             data = cached("overview", 60, build_overview)
             return self._send(200, data)
