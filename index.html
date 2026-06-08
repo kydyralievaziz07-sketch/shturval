@@ -143,7 +143,7 @@
   .chatview{display:flex;flex-direction:column;background:var(--bg);min-width:0;min-height:0}
   .chatview .head{padding:13px 16px;border-bottom:1px solid var(--line);font-weight:600;background:var(--panel)}
   .msgs{flex:1;min-height:0;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
-  .bubble{max-width:72%;padding:9px 13px;border-radius:14px;font-size:13px;line-height:1.45;word-wrap:break-word}
+  .bubble{max-width:72%;padding:9px 13px;border-radius:14px;font-size:13px;line-height:1.45;word-wrap:break-word;overflow-wrap:anywhere}
   .bubble.in{align-self:flex-start;background:var(--panel2);border-bottom-left-radius:4px}
   .bubble.out{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:4px}
   .replybox{padding:12px;border-top:1px solid var(--line);display:flex;gap:8px;background:var(--panel)}
@@ -191,7 +191,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v1.0.1<br>Доступ: только владелец<br>чаты: чтение + ответы (локально)
+      Штурвал v1.0.2<br>Доступ: только владелец<br>чаты: чтение + ответы + ссылки
     </div>
   </aside>
 
@@ -530,6 +530,10 @@
     return n.toLocaleString('ru-RU')+' сом';
   }
   function esc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+  // превращаем ссылки в кликабельные (например, когда клиент пришёл с рекламы/сторис)
+  function linkify(s){
+    return esc(s).replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener" style="color:#bcd2ff;text-decoration:underline;word-break:break-all">$1</a>');
+  }
   function kpiCard(label,val){return '<div class="card kpi"><div class="label">'+label+'</div><div class="value">'+val+'</div></div>';}
   async function loadCRM(){
     const st=document.getElementById('crm-status');
@@ -685,9 +689,9 @@
     if(id){
       let msgs=[];
       try{ const r=await fetch(API_BASE+'/api/chat?id='+encodeURIComponent(id)); if(r.ok){ const d=await r.json(); msgs=d.msgs||[]; } }catch(e){}
-      box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+m.t+'">'+esc(m.x)+'</div>').join(''):'<div style="color:var(--muted);font-size:12px">Нет сообщений</div>';
+      box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+m.t+'">'+linkify(m.x)+'</div>').join(''):'<div style="color:var(--muted);font-size:12px">Нет сообщений</div>';
     }else{
-      box.innerHTML=(fallbackMsgs||[]).map(m=>'<div class="bubble '+m.t+'">'+esc(m.x)+'</div>').join('');
+      box.innerHTML=(fallbackMsgs||[]).map(m=>'<div class="bubble '+m.t+'">'+linkify(m.x)+'</div>').join('');
     }
     // при открытии чата или если был внизу — крутим вниз; иначе оставляем позицию чтения
     box.scrollTop = (switching||nearBottom) ? box.scrollHeight : prevTop;
