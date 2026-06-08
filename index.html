@@ -133,16 +133,16 @@
 
   /* INBOX / чаты */
   .inbox{display:grid;grid-template-columns:300px 1fr;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;height:72vh}
-  .chatlist{border-right:1px solid var(--line);overflow-y:auto;background:var(--panel)}
+  .chatlist{border-right:1px solid var(--line);overflow-y:auto;background:var(--panel);min-height:0}
   .chatitem{padding:12px 14px;border-bottom:1px solid var(--line);cursor:pointer}
   .chatitem:hover,.chatitem.active{background:var(--panel2)}
   .ci-name{font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px}
   .ci-unread{background:var(--accent);color:#fff;font-size:11px;border-radius:20px;padding:0 6px}
   .ci-last{color:var(--muted);font-size:12px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ci-time{color:var(--muted);font-size:11px;margin-top:3px}
-  .chatview{display:flex;flex-direction:column;background:var(--bg);min-width:0}
+  .chatview{display:flex;flex-direction:column;background:var(--bg);min-width:0;min-height:0}
   .chatview .head{padding:13px 16px;border-bottom:1px solid var(--line);font-weight:600;background:var(--panel)}
-  .msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
+  .msgs{flex:1;min-height:0;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
   .bubble{max-width:72%;padding:9px 13px;border-radius:14px;font-size:13px;line-height:1.45;word-wrap:break-word}
   .bubble.in{align-self:flex-start;background:var(--panel2);border-bottom-left-radius:4px}
   .bubble.out{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:4px}
@@ -191,7 +191,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v1.0<br>Доступ: только владелец<br>чаты: чтение + ответы (локально)
+      Штурвал v1.0.1<br>Доступ: только владелец<br>чаты: чтение + ответы (локально)
     </div>
   </aside>
 
@@ -676,9 +676,12 @@
     }));
   }
   async function openChat(id,name,fallbackMsgs){
+    const switching = (id||null)!==curChatId;
     curChatId=id||null; curChatName=name||'';
     document.getElementById('chat-title').textContent=name||'';
     const box=document.getElementById('msgs');
+    const prevTop=box.scrollTop;
+    const nearBottom = box.scrollHeight-box.scrollTop-box.clientHeight < 80;
     if(id){
       let msgs=[];
       try{ const r=await fetch(API_BASE+'/api/chat?id='+encodeURIComponent(id)); if(r.ok){ const d=await r.json(); msgs=d.msgs||[]; } }catch(e){}
@@ -686,7 +689,8 @@
     }else{
       box.innerHTML=(fallbackMsgs||[]).map(m=>'<div class="bubble '+m.t+'">'+esc(m.x)+'</div>').join('');
     }
-    box.scrollTop=box.scrollHeight;
+    // при открытии чата или если был внизу — крутим вниз; иначе оставляем позицию чтения
+    box.scrollTop = (switching||nearBottom) ? box.scrollHeight : prevTop;
   }
   async function refreshChats(){
     const tab=document.getElementById('tab-chats');

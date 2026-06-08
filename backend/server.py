@@ -147,8 +147,13 @@ def build_chats():
 def build_chat_messages(cid):
     res = chatplace_call("chats_messages", {"chatId": cid, "limit": 40})
     arr = res if isinstance(res, list) else res.get("items", [])
-    msgs = [{"t": ("in" if m.get("side") == "client" else "out"), "x": m.get("message", "")}
-            for m in reversed(arr)]
+    msgs = []
+    for m in reversed(arr):
+        x = (m.get("message") or "").strip()
+        # пропускаем пустые и служебные технические сообщения
+        if not x or x.endswith("Label") or x.endswith("StatusLabel"):
+            continue
+        msgs.append({"t": ("in" if m.get("side") == "client" else "out"), "x": x})
     return {"msgs": msgs}
 
 class Handler(BaseHTTPRequestHandler):
