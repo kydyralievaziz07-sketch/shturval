@@ -309,22 +309,26 @@ def build_inventory():
     in_stock = 0
     by_cat = {}
     low = []
+    no_cost_units = 0  # штук без закупочной цены (себестоимость по ним неизвестна)
     for x in goods:
         qty = _num(x.get("QUANTITY"))
+        if qty <= 0:
+            continue  # отрицательные/нулевые остатки не входят в стоимость склада (как в 1С)
         price = _num(x.get("PRICE"))
         cost = _price_by_type(x, "Закупочная")
         total_units += qty
         retail_value += qty * price
         cost_value += qty * cost
-        if qty > 0:
-            in_stock += 1
-            cat = cats.get(x.get("CATEGORY_ID"), "Без категории") or "Без категории"
-            agg = by_cat.setdefault(cat, {"value": 0.0, "units": 0.0, "count": 0})
-            agg["value"] += qty * price
-            agg["units"] += qty
-            agg["count"] += 1
-            if qty <= 3:
-                low.append({"title": x.get("TITLE", ""), "qty": int(qty)})
+        if cost == 0:
+            no_cost_units += qty
+        in_stock += 1
+        cat = cats.get(x.get("CATEGORY_ID"), "Без категории") or "Без категории"
+        agg = by_cat.setdefault(cat, {"value": 0.0, "units": 0.0, "count": 0})
+        agg["value"] += qty * price
+        agg["units"] += qty
+        agg["count"] += 1
+        if qty <= 3:
+            low.append({"title": x.get("TITLE", ""), "qty": int(qty)})
     categories = [{"title": k, "value": round(v["value"]),
                    "units": int(v["units"]), "count": v["count"]}
                   for k, v in sorted(by_cat.items(), key=lambda i: -i[1]["value"])][:8]
@@ -340,6 +344,7 @@ def build_inventory():
         "retail_value": round(retail_value),
         "cost_value": round(cost_value),
         "margin_value": round(retail_value - cost_value),
+        "no_cost_units": int(no_cost_units),
         "categories": categories,
         "low": low[:12],
         "updated": time.strftime("%H:%M:%S"),
