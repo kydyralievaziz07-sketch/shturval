@@ -191,7 +191,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v0.9<br>Доступ: только владелец<br>+ живые чаты (локально)
+      Штурвал v1.0<br>Доступ: только владелец<br>чаты: чтение + ответы (локально)
     </div>
   </aside>
 
@@ -303,8 +303,8 @@
           <div class="head" id="chat-title">—</div>
           <div class="msgs" id="msgs"></div>
           <div class="replybox">
-            <input placeholder="Написать ответ… (заработает после подключения)" disabled>
-            <button class="btn" disabled>Отправить</button>
+            <input id="replyInput" placeholder="Написать ответ клиенту…">
+            <button class="btn" id="replyBtn">Отправить</button>
           </div>
         </div>
       </div>
@@ -693,6 +693,24 @@
     if(!tab||tab.classList.contains('hide')){ if(chatsTimer){clearInterval(chatsTimer);chatsTimer=null;} return; }
     try{ const r=await fetch(API_BASE+'/api/chats'); if(r.ok){ const d=await r.json(); if(d.chats&&d.chats.length&&d.chats[0].id){ CHATS=d.chats; renderChatList(); const n=document.querySelector('#tab-chats .note'); if(n) n.innerHTML='🟢 <b>Живые переписки</b> · обновлено '+esc(d.updated||''); if(curChatId) openChat(curChatId,curChatName); } } }catch(e){}
   }
+  async function sendReply(){
+    const inp=document.getElementById('replyInput'); const text=inp.value.trim();
+    if(!text) return;
+    if(!curChatId){ alert('Это пример-диалог. Отправка работает с живыми чатами (запусти локальный сервер).'); return; }
+    inp.value=''; inp.disabled=true;
+    const box=document.getElementById('msgs');
+    box.insertAdjacentHTML('beforeend','<div class="bubble out">'+esc(text)+'</div>'); box.scrollTop=box.scrollHeight;
+    try{
+      await fetch(API_BASE+'/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chatId:curChatId,text:text})});
+    }catch(e){ alert('Не удалось отправить — проверь, запущен ли сервер.'); }
+    inp.disabled=false; inp.focus();
+    setTimeout(()=>{ if(curChatId) openChat(curChatId,curChatName); }, 1500);
+  }
+  (function(){
+    const b=document.getElementById('replyBtn'), i=document.getElementById('replyInput');
+    if(b) b.addEventListener('click',sendReply);
+    if(i) i.addEventListener('keydown',e=>{ if(e.key==='Enter') sendReply(); });
+  })();
 </script>
 </body>
 </html>

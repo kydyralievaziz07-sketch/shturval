@@ -158,11 +158,28 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
         self.end_headers()
         self.wfile.write(body)
 
     def do_OPTIONS(self):
         self._send(200, {})
+
+    def do_POST(self):
+        if self.path.startswith("/api/send"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            cid = body.get("chatId"); text = (body.get("text") or "").strip()
+            if not cid or not text:
+                return self._send(400, {"error": "нужны chatId и text"})
+            chatplace_call("chats_open", {"chatId": cid})        # берём диалог на себя (пауза ИИ)
+            chatplace_call("chats_send_message", {"chatId": cid, "text": text})
+            _cache.pop("chats", None)                            # сбросить кэш списка
+            return self._send(200, {"ok": True})
+        self._send(404, {"error": "не найдено"})
 
     def do_GET(self):
         if self.path.startswith("/api/health"):
