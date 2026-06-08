@@ -665,16 +665,29 @@
   });
   // --- ТОВАРЫ: живые данные из 1С (через сервер-посредник) ---
   let prodPage=1, prodQ='', prodTimer=null;
-  async function loadInventory(){
+  let prodInvTimer=null;
+  async function loadInventory(attempt){
+    attempt=attempt||1;
     const st=document.getElementById('prod-status');
+    if(!ONEC_BASE){ st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d';
+      st.innerHTML='🟠 1С в облаке подключается отдельным шагом.'; return; }
     try{
-      if(!ONEC_BASE) throw 0;
       const r=await apiFetch('/api/inventory',{},ONEC_BASE); if(!r.ok) throw 0;
       const d=await r.json(); if(d.error) throw 0;
       renderInventory(d);
     }catch(e){
-      st.style.borderStyle='dashed'; st.style.borderColor='#ff6b6b';
-      st.innerHTML='🔴 <b>Нет связи с 1С.</b> Запусти на компьютере <b>backend/Запустить-сервер.command</b> и обнови страницу.<br><span style="color:var(--muted)">На опубликованном сайте в интернете 1С пока не подключена — это следующий шаг.</span>';
+      const isLocal=(API_BASE!=='');
+      if(isLocal){
+        st.style.borderStyle='dashed'; st.style.borderColor='#ff6b6b';
+        st.innerHTML='🔴 <b>Нет связи с 1С.</b> Запусти на компьютере <b>backend/Запустить-сервер.command</b> и обнови страницу.';
+      } else if(attempt<7){
+        st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d';
+        st.innerHTML='⏳ <b>Сервер 1С просыпается…</b> после паузы это занимает до минуты. Жду, не закрывай (попытка '+attempt+'/6)…';
+        clearTimeout(prodInvTimer); prodInvTimer=setTimeout(()=>loadInventory(attempt+1),12000);
+      } else {
+        st.style.borderStyle='dashed'; st.style.borderColor='#ff6b6b';
+        st.innerHTML='🔴 <b>Сервер 1С пока не ответил.</b> Обнови страницу через минуту.';
+      }
     }
   }
   function renderInventory(d){
@@ -707,11 +720,13 @@
       '<td><span class="money" data-som="'+x.cost+'">'+fmt(x.cost)+'</span></td>'+
       '<td>'+margin+'</td><td>'+x.qty+'</td><td>'+status+'</td></tr>';
   }
-  async function loadProducts(silent){
+  let prodRowsTimer=null;
+  async function loadProducts(silent,attempt){
+    attempt=attempt||1;
     const tb=document.getElementById('prodRows');
-    if(!silent) tb.innerHTML='<tr><td colspan="7" style="color:var(--muted)">Загрузка…</td></tr>';
+    if(!ONEC_BASE){ tb.innerHTML='<tr><td colspan="7" style="color:var(--muted)">В облаке 1С подключается отдельным шагом</td></tr>'; return; }
+    if(!silent && attempt===1) tb.innerHTML='<tr><td colspan="7" style="color:var(--muted)">Загрузка…</td></tr>';
     try{
-      if(!ONEC_BASE){ tb.innerHTML='<tr><td colspan="7" style="color:var(--muted)">В облаке 1С подключается отдельным шагом</td></tr>'; return; }
       const r=await apiFetch('/api/products?page='+prodPage+'&q='+encodeURIComponent(prodQ),{},ONEC_BASE);
       const d=await r.json();
       tb.innerHTML=(d.items&&d.items.length)?d.items.map(prodRow).join(''):'<tr><td colspan="7" style="color:var(--muted)">Ничего не найдено</td></tr>';
@@ -720,7 +735,15 @@
         '<button class="btn ghost" '+(prodPage<=1?'disabled':'')+' onclick="prodGo(-1)">← Назад</button>'+
         '<span style="font-size:13px;color:var(--muted)">стр. '+prodPage+' из '+pages+' · '+(d.total||0).toLocaleString('ru-RU')+' тов.</span>'+
         '<button class="btn ghost" '+(prodPage>=pages?'disabled':'')+' onclick="prodGo(1)">Вперёд →</button>';
-    }catch(e){ tb.innerHTML='<tr><td colspan="7" style="color:var(--red)">Нет связи с сервером 1С</td></tr>'; }
+    }catch(e){
+      const isLocal=(API_BASE!=='');
+      if(!isLocal && attempt<7){
+        tb.innerHTML='<tr><td colspan="7" style="color:var(--muted)">⏳ Сервер 1С просыпается… (попытка '+attempt+'/6)</td></tr>';
+        clearTimeout(prodRowsTimer); prodRowsTimer=setTimeout(()=>loadProducts(silent,attempt+1),12000);
+      } else {
+        tb.innerHTML='<tr><td colspan="7" style="color:var(--red)">Нет связи с сервером 1С</td></tr>';
+      }
+    }
   }
   function prodGo(delta){ prodPage+=delta; if(prodPage<1)prodPage=1; loadProducts(); }
   // автообновление: пока вкладка «Товары» открыта — сами тянем свежие остатки
