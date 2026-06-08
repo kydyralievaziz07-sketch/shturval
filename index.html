@@ -556,7 +556,7 @@
   const API_BASE=(_h==='localhost'||_h==='127.0.0.1'||_h==='')?'http://localhost:8787':'';
   // 1С-данные тяжёлые → их отдаёт отдельный «всегда включённый» сервер.
   // Локально — тот же localhost; в облаке — адрес сервера 1С (впишется после деплоя на Render).
-  const ONEC_CLOUD='';   // напр. 'https://shturval-backend.onrender.com'
+  const ONEC_CLOUD='https://shturval-backend.onrender.com';   // сервер 1С на Render (всегда включён)
   const ONEC_BASE=(API_BASE!=='')?API_BASE:ONEC_CLOUD;
 
   // --- ВХОД ПО ПАРОЛЮ ---
