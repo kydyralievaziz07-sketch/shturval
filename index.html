@@ -621,7 +621,7 @@
   async function loadCRM(){
     const st=document.getElementById('crm-status');
     try{
-      const r=await apiFetch('/api/overview');
+      const r=await apiFetch('/api/overview',{},ONEC_BASE);
       if(!r.ok) throw 0;
       window._crmData=await r.json();
       renderCRM(window._crmData);

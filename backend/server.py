@@ -79,26 +79,21 @@ def build_overview():
             stages.append(s["name"])
         pipelines.append({"name": p["name"], "stages": stages})
 
-    # 2) последние сделки
-    recent_raw = amo_get("/leads?limit=20")
-    recent = []
-    for l in recent_raw.get("_embedded", {}).get("leads", []):
-        recent.append({
-            "name": l.get("name") or "(без названия)",
-            "price": l.get("price") or 0,
-            "stage": status_name.get(l.get("status_id"), "—"),
-        })
+    # 2+3) сделки: тянем до 6 страниц (1500 шт) ПАРАЛЛЕЛЬНО — это ~1 запрос по времени вместо 6
+    pages = {}
+    def _fetch_page(n):
+        pages[n] = amo_get("/leads?limit=250&page={}".format(n))
+    ths = [threading.Thread(target=_fetch_page, args=(n,)) for n in range(1, 7)]
+    for t in ths: t.start()
+    for t in ths: t.join()
 
-    # 3) сводка по этапам — собираем до 1500 последних сделок
     by_stage = {}
     total_count = 0
     total_sum = 0
-    page = 1
-    while page <= 6:
-        data = amo_get("/leads?limit=250&page={}".format(page))
-        leads = data.get("_embedded", {}).get("leads", [])
-        if not leads:
-            break
+    all_leads = []
+    for n in range(1, 7):
+        leads = pages.get(n, {}).get("_embedded", {}).get("leads", [])
+        all_leads.extend(leads)
         for l in leads:
             st = status_name.get(l.get("status_id"), "—")
             pr = l.get("price") or 0
@@ -107,10 +102,13 @@ def build_overview():
             agg["sum"] += pr
             total_count += 1
             total_sum += pr
-        if len(leads) < 250:
-            break
-        page += 1
-    sampled = (page > 6)  # упёрлись в лимит выборки
+    # последние сделки — из первой страницы (отдельный запрос больше не нужен)
+    recent = [{
+        "name": l.get("name") or "(без названия)",
+        "price": l.get("price") or 0,
+        "stage": status_name.get(l.get("status_id"), "—"),
+    } for l in all_leads[:20]]
+    sampled = len(pages.get(6, {}).get("_embedded", {}).get("leads", [])) >= 250
 
     stage_summary = [{"stage": k, "count": v["count"], "sum": v["sum"]}
                      for k, v in sorted(by_stage.items(), key=lambda x: -x[1]["sum"])]
@@ -126,6 +124,32 @@ def build_overview():
         "sampled": sampled,
         "updated": time.strftime("%H:%M:%S"),
     }
+
+# кэш сводки amoCRM с фоновым обновлением (как у каталога — отвечаем мгновенно)
+_ov = {"t": 0.0, "data": None, "refreshing": False}
+
+def _refresh_overview():
+    if _ov["refreshing"]:
+        return
+    _ov["refreshing"] = True
+    try:
+        _ov["data"] = build_overview()
+        _ov["t"] = time.time()
+    except Exception:
+        pass
+    finally:
+        _ov["refreshing"] = False
+
+def get_overview():
+    """Мгновенно отдаёт сводку amoCRM из памяти; устаревшую обновляет фоном.
+    Ждать приходится только при самой первой загрузке."""
+    if _ov["data"] is not None:
+        if time.time() - _ov["t"] > 60 and not _ov["refreshing"]:
+            threading.Thread(target=_refresh_overview, daemon=True).start()
+        return _ov["data"]
+    _ov["data"] = build_overview()
+    _ov["t"] = time.time()
+    return _ov["data"]
 
 # --- ChatPlace: общение по протоколу MCP ---
 def chatplace_call(name, arguments):
@@ -251,11 +275,16 @@ def get_categories():
     return _goods["cats"]
 
 def _warmer():
-    """Фоновый поток: держит каталог 1С тёплым, чтобы запросы отвечали мгновенно."""
+    """Фоновый поток: держит каталог 1С и сводку amoCRM тёплыми, чтобы запросы отвечали мгновенно."""
     while True:
         try:
             if CFG.get("YAROS_URL"):
                 _refresh_catalog()
+        except Exception:
+            pass
+        try:
+            if CFG.get("AMO_TOKEN"):
+                _refresh_overview()
         except Exception:
             pass
         time.sleep(110)
@@ -376,8 +405,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/") and not self._authed():
             return self._send(401, {"error": "Требуется вход"})
         if self.path.startswith("/api/overview"):
-            data = cached("overview", 60, build_overview)
-            return self._send(200, data)
+            return self._send(200, get_overview())
         if self.path.startswith("/api/inventory"):
             try:
                 return self._send(200, cached("inventory", 120, build_inventory))
@@ -421,7 +449,7 @@ if __name__ == "__main__":
     print("  Адрес: http://localhost:{}".format(PORT))
     print("  Чтобы остановить — закрой это окно или нажми Ctrl+C")
     print("=" * 48)
-    # фоновый прогрев каталога 1С (чтобы запросы не ждали 50 сек)
-    if CFG.get("YAROS_URL"):
+    # фоновый прогрев каталога 1С и сводки amoCRM (чтобы запросы отвечали мгновенно)
+    if CFG.get("YAROS_URL") or CFG.get("AMO_TOKEN"):
         threading.Thread(target=_warmer, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
