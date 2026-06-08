@@ -229,7 +229,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v1.6.0<br>Вход по паролю 🔒<br>форма «добавить товар» (готова)
+      Штурвал v1.7.0<br>Личные кабинеты с ролями 👥<br>у каждого свой пароль и разделы
     </div>
   </aside>
 
@@ -626,7 +626,26 @@
     if(base===undefined) base=API_BASE;
     const r=await fetch(base+path,opts);
     if(r.status===401){ clearPw(); showLogin(true); throw new Error('unauthorized'); }
+    if(r.status===403){ throw new Error('forbidden'); }
     return r;
+  }
+  // --- пользователь и роли (что ему показывать) ---
+  let USER={name:'',sections:['all']};
+  function canSee(tab){ return USER.sections.indexOf('all')>=0 || USER.sections.indexOf(tab)>=0; }
+  function applyUser(d){
+    USER={name:(d&&d.name)||'', sections:(d&&d.sections&&d.sections.length)?d.sections:['all']};
+    applyAccess();
+  }
+  function applyAccess(){
+    let first=null;
+    document.querySelectorAll('.nav a').forEach(a=>{
+      if(canSee(a.dataset.tab)){ a.style.display=''; if(!first) first=a; }
+      else a.style.display='none';
+    });
+    const u=document.querySelector('.user'); if(u&&u.childNodes[0]) u.childNodes[0].nodeValue=(USER.name||'Пользователь')+' ';
+    const av=document.querySelector('.avatar'); if(av) av.textContent=(USER.name||'?').slice(0,1).toUpperCase();
+    const active=document.querySelector('.nav a.active');
+    if((!active||active.style.display==='none')&&first) first.click();
   }
   function showLogin(show){
     const el=document.getElementById('login');
@@ -634,12 +653,13 @@
     if(show){ const i=document.getElementById('loginpw'); if(i){ i.value=''; setTimeout(()=>i.focus(),50); } }
   }
   async function checkAuth(){
-    // защита включена на сервере? и подходит ли сохранённый пароль?
+    // спрашиваем сервер: верный ли пароль и какие разделы доступны
     try{
-      const r=await fetch(API_BASE+'/api/auth',{headers:getPw()?{'X-Auth':getPw()}:{}});
-      return r.ok;  // 200 = вход не нужен или пароль верный
+      const r=await fetch(ONEC_BASE+'/api/auth',{headers:getPw()?{'X-Auth':getPw()}:{}});
+      if(r.ok) return await r.json();   // {ok, name, sections}
+      return false;                      // 401 — нужен вход
     }catch(e){
-      return null;  // сервер недоступен (например, открыт файл без бэкенда)
+      return null;                       // сервер недоступен
     }
   }
   document.getElementById('loginform').addEventListener('submit',async e=>{
@@ -648,17 +668,17 @@
     const val=inp.value.trim(); if(!val){ inp.focus(); return; }
     err.textContent=''; btn.disabled=true; btn.textContent='Проверяю…';
     try{
-      const r=await fetch(API_BASE+'/api/auth',{headers:{'X-Auth':val}});
-      if(r.ok){ setPw(val); showLogin(false); loadCRM(); }
+      const r=await fetch(ONEC_BASE+'/api/auth',{headers:{'X-Auth':val}});
+      if(r.ok){ const d=await r.json(); setPw(val); applyUser(d); showLogin(false); if(canSee('crm')||canSee('dash')) loadCRM(); }
       else { err.textContent='Неверный пароль. Попробуй ещё раз.'; }
-    }catch(e){ err.textContent='Нет связи с сервером. Запусти backend и обнови страницу.'; }
+    }catch(e){ err.textContent='Нет связи с сервером. Обнови страницу.'; }
     btn.disabled=false; btn.textContent='Войти';
   });
   // при загрузке: решаем, показывать вход или сразу сайт
   (async function bootAuth(){
-    const ok=await checkAuth();
-    showLogin(ok!==true);   // показываем форму, если нужен пароль (или сервер недоступен)
-    if(ok===true) loadCRM(); // сразу подтянуть живые цифры на Дашборд
+    const res=await checkAuth();
+    if(res&&res.ok){ applyUser(res); showLogin(false); if(canSee('crm')||canSee('dash')) loadCRM(); }
+    else showLogin(true);
   })();
   function logout(){ clearPw(); showLogin(true); }
   let CUR='KGS';          // выбранная валюта: KGS (сом) или USD ($)
@@ -684,7 +704,7 @@
       window._crmData=await r.json();
       renderCRM(window._crmData); updateDashKpis(window._crmData);
     }catch(e){
-      if(e&&e.message==='unauthorized') return;
+      if(e&&(e.message==='unauthorized'||e.message==='forbidden')) return;
       const isLocal=(API_BASE!=='');
       if(!isLocal && attempt<7){
         st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d';
@@ -769,6 +789,7 @@
       const d=await r.json(); if(d.error) throw 0;
       renderInventory(d);
     }catch(e){
+      if(e&&(e.message==='unauthorized'||e.message==='forbidden')) return;
       const isLocal=(API_BASE!=='');
       if(isLocal){
         st.style.borderStyle='dashed'; st.style.borderColor='#ff6b6b';
@@ -858,6 +879,7 @@
         '<span style="font-size:13px;color:var(--muted)">стр. '+prodPage+' из '+pages+' · '+(d.total||0).toLocaleString('ru-RU')+' тов.</span>'+
         '<button class="btn ghost" '+(prodPage>=pages?'disabled':'')+' onclick="prodGo(1)">Вперёд →</button>';
     }catch(e){
+      if(e&&(e.message==='unauthorized'||e.message==='forbidden')) return;
       const isLocal=(API_BASE!=='');
       if(!isLocal && attempt<7){
         tb.innerHTML='<tr><td colspan="7" style="color:var(--muted)">⏳ Сервер 1С просыпается… (попытка '+attempt+'/6)</td></tr>';

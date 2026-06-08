@@ -36,12 +36,56 @@ def load_secret():
     cfg["CHATPLACE_KEY"] = env("CHATPLACE_KEY")
     # адрес метода создания товара в 1С (появится, когда программист сделает запись)
     cfg["YAROS_CREATE_URL"] = env("YAROS_CREATE_URL")
-    # пароль для входа на сайт (если пусто — защита выключена)
+    # пароль владельца (видит всё). Если пусто — защита выключена.
     cfg["SITE_PASSWORD"] = env("SITE_PASSWORD")
+    # доп. пользователи с ролями (JSON-список): [{"pw":"...","name":"...","sections":["chats"]}]
+    cfg["USERS_JSON"] = env("USERS_JSON")
     return cfg
 
 CFG = load_secret()
 BASE = "https://{}.amocrm.ru/api/v4".format(CFG.get("AMO_SUBDOMAIN", ""))
+
+# --- пользователи и роли ---
+# каждый пользователь: пароль -> {name, sections}. sections=["all"] = видит всё.
+# разделы: dash, crm, chats, prod, sales, clients, market, analytics, fin, ai, set
+def load_users():
+    users = {}
+    owner = CFG.get("SITE_PASSWORD", "").strip()
+    if owner:
+        users[owner] = {"name": "Владелец", "sections": ["all"]}
+    raw = CFG.get("USERS_JSON", "").strip()
+    if raw:
+        try:
+            for u in json.loads(raw):
+                pw = (u.get("pw") or "").strip()
+                if pw:
+                    users[pw] = {"name": u.get("name", "Сотрудник"),
+                                 "sections": u.get("sections", [])}
+        except Exception:
+            pass
+    return users
+
+USERS = load_users()
+
+# какой раздел нужен для каждого data-эндпоинта (для проверки прав)
+SECTION_OF = [
+    ("/api/overview", "crm"),
+    ("/api/inventory", "prod"), ("/api/products", "prod"),
+    ("/api/categories", "prod"), ("/api/add-product", "prod"),
+    ("/api/chats", "chats"), ("/api/chat", "chats"), ("/api/send", "chats"),
+]
+
+def _section_for(path):
+    for pref, sec in SECTION_OF:
+        if path.startswith(pref):
+            return sec
+    return None
+
+def _can(user, section):
+    if not user:
+        return False
+    s = user.get("sections", [])
+    return "all" in s or section in s
 
 # --- простой кэш на 60 секунд, чтобы не дёргать amoCRM лишний раз ---
 _cache = {}
@@ -419,17 +463,24 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self._send(200, {})
 
-    def _authed(self):
-        """True, если защита выключена или прислан верный пароль в заголовке X-Auth."""
-        pw = CFG.get("SITE_PASSWORD", "").strip()
-        if not pw:
-            return True
+    def _user(self):
+        # если пользователи не заданы вовсе — защита выключена (гость видит всё)
+        if not USERS:
+            return {"name": "Гость", "sections": ["all"]}
         given = (self.headers.get("X-Auth") or "").strip()
-        return given == pw
+        return USERS.get(given)
+
+    def _authed(self):
+        return self._user() is not None
 
     def do_POST(self):
-        if self.path.startswith("/api/") and not self._authed():
-            return self._send(401, {"error": "Требуется вход"})
+        if self.path.startswith("/api/"):
+            u = self._user()
+            if not u:
+                return self._send(401, {"error": "Требуется вход"})
+            sec = _section_for(self.path)
+            if sec and not _can(u, sec):
+                return self._send(403, {"error": "Нет доступа к этому разделу"})
         if self.path.startswith("/api/send"):
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -470,11 +521,17 @@ class Handler(BaseHTTPRequestHandler):
             ok = bool(CFG.get("AMO_TOKEN")) and bool(CFG.get("AMO_SUBDOMAIN"))
             return self._send(200, {"ok": ok, "account": CFG.get("AMO_SUBDOMAIN")})
         if self.path.startswith("/api/auth"):
-            # проверка пароля для формы входа
-            return self._send(200 if self._authed() else 401, {"ok": self._authed()})
-        # всё остальное под /api/ — только с верным паролем
-        if self.path.startswith("/api/") and not self._authed():
-            return self._send(401, {"error": "Требуется вход"})
+            u = self._user()
+            return self._send(200 if u else 401, {"ok": bool(u),
+                "name": (u or {}).get("name", ""), "sections": (u or {}).get("sections", [])})
+        # всё остальное под /api/ — нужен вход и доступ к разделу
+        if self.path.startswith("/api/"):
+            u = self._user()
+            if not u:
+                return self._send(401, {"error": "Требуется вход"})
+            sec = _section_for(self.path)
+            if sec and not _can(u, sec):
+                return self._send(403, {"error": "Нет доступа к этому разделу"})
         if self.path.startswith("/api/overview"):
             return self._send(200, get_overview())
         if self.path.startswith("/api/categories"):
