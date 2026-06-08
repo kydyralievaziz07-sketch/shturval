@@ -218,7 +218,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v1.4.0<br>Вход по паролю 🔒<br>Дашборд: живые цифры по периодам
+      Штурвал v1.5.0<br>Вход по паролю 🔒<br>воронка · диаграмма · статистика чатов
     </div>
   </aside>
 
@@ -347,9 +347,18 @@
           <div id="prod-cats"><span style="color:var(--muted);font-size:13px">—</span></div>
         </div>
         <div class="card">
-          <h3>⚠️ На исходе (остаток 1–3 шт)</h3>
+          <h3>⚠️ На исходе (остаток 1–3 шт)
+            <span style="margin-left:auto;display:inline-flex;gap:6px">
+              <button class="btn ghost" style="padding:4px 9px;font-size:12px;font-weight:400" onclick="setLowSort('asc')">меньше → больше</button>
+              <button class="btn ghost" style="padding:4px 9px;font-size:12px;font-weight:400" onclick="setLowSort('desc')">больше → меньше</button>
+            </span>
+          </h3>
           <div id="prod-low"><span style="color:var(--muted);font-size:13px">—</span></div>
         </div>
+      </div>
+      <div class="card">
+        <h3>📊 Чего больше всего на складе (по количеству)</h3>
+        <div id="prod-donut"><span style="color:var(--muted);font-size:13px">—</span></div>
       </div>
       <div class="card">
         <div class="toolbar">
@@ -672,10 +681,18 @@
     document.getElementById('crm-kpis').innerHTML=
       kpiCard('Успешных сделок',succ.count)+kpiCard('Сумма успешных',fmt(succ.sum))+
       kpiCard('Сделок '+lbl,p.count)+kpiCard('Сумма '+lbl,fmt(p.sum));
-    document.getElementById('crm-stages').innerHTML= (p.stage_summary&&p.stage_summary.length)?
-      '<table><thead><tr><th>Этап</th><th>Сделок</th><th>Сумма</th></tr></thead><tbody>'+
-      p.stage_summary.map(s=>'<tr><td>'+esc(s.stage)+'</td><td>'+s.count+'</td><td>'+fmt(s.sum)+'</td></tr>').join('')+
-      '</tbody></table>' : '<div style="color:var(--muted);font-size:13px">Нет сделок за этот период</div>';
+    // этапы в порядке воронки amoCRM (Неразобранное → … → клиент получил → успешно)
+    let stages=(p.stage_summary||[]).slice();
+    const order=(d.pipelines&&d.pipelines[0]&&d.pipelines[0].stages)||[];
+    if(order.length){ const idx={}; order.forEach((n,i)=>idx[n]=i);
+      stages.sort((a,b)=>((idx[a.stage]==null?99:idx[a.stage])-(idx[b.stage]==null?99:idx[b.stage]))); }
+    const maxc=Math.max.apply(null,stages.map(s=>s.count).concat([1]));
+    document.getElementById('crm-stages').innerHTML= stages.length?
+      stages.map(s=>'<div style="margin-bottom:10px">'+
+        '<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">'+
+        '<span>'+esc(s.stage)+'</span><span style="color:var(--muted)"><b style="color:var(--text)">'+s.count+'</b> · <span class="money" data-som="'+s.sum+'">'+fmt(s.sum)+'</span></span></div>'+
+        '<div class="progress"><div style="width:'+Math.round(s.count/maxc*100)+'%"></div></div></div>').join('')
+      : '<div style="color:var(--muted);font-size:13px">Нет сделок за этот период</div>';
     document.getElementById('crm-recent').innerHTML= (p.recent&&p.recent.length)?
       '<table><thead><tr><th>Сделка</th><th>Сумма</th><th>Этап</th></tr></thead><tbody>'+
       p.recent.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+fmt(x.price)+'</td><td>'+esc(x.stage)+'</td></tr>').join('')+
@@ -739,10 +756,36 @@
       '<span class="money" data-som="'+c.value+'">'+fmt(c.value)+'</span></div>'+
       '<div class="progress"><div style="width:'+Math.round(c.value/maxv*100)+'%"></div></div></div>').join(''):
       '<span style="color:var(--muted);font-size:13px">Нет данных</span>';
-    const low=d.low||[];
+    window._invData=d;
+    renderLow();
+    renderDonut(d);
+  }
+  // «На исходе» с переключаемой сортировкой
+  let LOW_SORT='asc';
+  function setLowSort(dir){ LOW_SORT=dir; renderLow(); }
+  function renderLow(){
+    const d=window._invData; if(!d) return;
+    const low=(d.low||[]).slice().sort((a,b)=>LOW_SORT==='asc'?a.qty-b.qty:b.qty-a.qty);
     document.getElementById('prod-low').innerHTML=low.length?
       '<table><tbody>'+low.map(x=>'<tr><td>'+esc(x.title)+'</td><td style="text-align:right;width:90px"><span class="badge '+(x.qty<=0?'b-out':'b-low')+'">'+x.qty+' шт</span></td></tr>').join('')+'</tbody></table>':
       '<span style="color:var(--muted);font-size:13px">Нет товаров на исходе 👍</span>';
+  }
+  // круговая диаграмма: чего больше всего по количеству
+  function renderDonut(d){
+    const box=document.getElementById('prod-donut'); if(!box) return;
+    const items=(d.cats_units||[]).filter(c=>c.units>0);
+    if(!items.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет данных</span>'; return; }
+    const total=items.reduce((s,x)=>s+x.units,0)||1;
+    const colors=['#4f8cff','#39d98a','#ffb84d','#a78bfa','#ff6b6b','#22d3ee','#f472b6','#94a3b8'];
+    let acc=0; const segs=items.map((x,i)=>{const f=acc/total*360;acc+=x.units;const t=acc/total*360;return colors[i%colors.length]+' '+f+'deg '+t+'deg';}).join(',');
+    const legend=items.map((x,i)=>'<div style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:7px">'+
+      '<span style="width:12px;height:12px;border-radius:3px;flex-shrink:0;background:'+colors[i%colors.length]+'"></span>'+
+      '<span>'+esc(x.title)+'</span>'+
+      '<span style="color:var(--muted);margin-left:auto;white-space:nowrap">'+x.units.toLocaleString('ru-RU')+' шт · '+Math.round(x.units/total*100)+'%</span></div>').join('');
+    box.innerHTML='<div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap">'+
+      '<div style="width:150px;height:150px;border-radius:50%;flex-shrink:0;background:conic-gradient('+segs+')">'+
+      '<div style="width:56%;height:56%;margin:22% auto;background:var(--panel);border-radius:50%"></div></div>'+
+      '<div style="flex:1;min-width:220px">'+legend+'</div></div>';
   }
   function prodRow(x){
     const out = x.qty<=0;
@@ -865,7 +908,7 @@
     const real=!!(data&&data.chats&&data.chats.length&&data.chats[0].id);
     if(real){
       CHATS=data.chats;
-      if(note) note.innerHTML='🟢 <b>Живые переписки</b> из Instagram ('+esc(data.source||'')+') · обновлено '+esc(data.updated||'')+'. Обновляется само каждые 8 сек.';
+      if(note) note.innerHTML='🟢 <b>Живые переписки</b> · источник: <b>'+esc(data.source||'Instagram')+'</b> · 📨 диалогов с активностью сегодня: <b>'+(data.today||0)+'</b> · открытых: '+(data.active||0)+' · обновлено '+esc(data.updated||'');
       if(!chatsTimer) chatsTimer=setInterval(refreshChats,8000);
     }else{
       CHATS=CHAT_SAMPLE;
@@ -906,7 +949,7 @@
   async function refreshChats(){
     const tab=document.getElementById('tab-chats');
     if(!tab||tab.classList.contains('hide')){ if(chatsTimer){clearInterval(chatsTimer);chatsTimer=null;} return; }
-    try{ const r=await apiFetch('/api/chats',{},ONEC_BASE); if(r.ok){ const d=await r.json(); if(d.chats&&d.chats.length&&d.chats[0].id){ CHATS=d.chats; renderChatList(); const n=document.querySelector('#tab-chats .note'); if(n) n.innerHTML='🟢 <b>Живые переписки</b> · обновлено '+esc(d.updated||''); if(curChatId) openChat(curChatId,curChatName); } } }catch(e){}
+    try{ const r=await apiFetch('/api/chats',{},ONEC_BASE); if(r.ok){ const d=await r.json(); if(d.chats&&d.chats.length&&d.chats[0].id){ CHATS=d.chats; renderChatList(); const n=document.querySelector('#tab-chats .note'); if(n) n.innerHTML='🟢 <b>Живые переписки</b> · источник: <b>'+esc(d.source||'Instagram')+'</b> · 📨 сегодня: <b>'+(d.today||0)+'</b> · открытых: '+(d.active||0)+' · обновлено '+esc(d.updated||''); if(curChatId) openChat(curChatId,curChatName); } } }catch(e){}
   }
   async function sendReply(){
     const inp=document.getElementById('replyInput'); const text=inp.value.trim();

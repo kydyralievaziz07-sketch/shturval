@@ -175,15 +175,20 @@ def chatplace_call(name, arguments):
         return resp.get("result", {})
 
 def build_chats():
-    res = chatplace_call("chats_list", {"limit": 15})
+    res = chatplace_call("chats_list", {"limit": 50})
     items = res.get("items", []) if isinstance(res, dict) else []
+    now = time.time(); lt = time.localtime(now)
+    start_today = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+    today = sum(1 for it in items if (it.get("lastMessageAt") or 0) >= start_today)
+    active = sum(1 for it in items if it.get("statusName") == "active")
     chats = []
     for it in items:
         ts = it.get("lastMessageAt")
         tm = time.strftime("%H:%M", time.localtime(ts)) if ts else ""
         chats.append({"id": it.get("id"), "name": it.get("clientName", "клиент"),
                       "time": tm, "status": it.get("statusName", "")})
-    return {"source": "ChatPlace · Instagram", "updated": time.strftime("%H:%M:%S"), "chats": chats}
+    return {"source": "Instagram", "updated": time.strftime("%H:%M:%S"),
+            "today": today, "active": active, "total": len(items), "chats": chats}
 
 def build_chat_messages(cid):
     res = chatplace_call("chats_messages", {"chatId": cid, "limit": 40})
@@ -323,8 +328,12 @@ def build_inventory():
     categories = [{"title": k, "value": round(v["value"]),
                    "units": int(v["units"]), "count": v["count"]}
                   for k, v in sorted(by_cat.items(), key=lambda i: -i[1]["value"])][:8]
+    # топ категорий по КОЛИЧЕСТВУ штук (для круговой диаграммы «чего больше всего»)
+    cats_units = [{"title": k, "units": int(v["units"]), "count": v["count"]}
+                  for k, v in sorted(by_cat.items(), key=lambda i: -i[1]["units"])][:8]
     low.sort(key=lambda i: i["qty"])
     return {
+        "cats_units": cats_units,
         "total_sku": len(goods),
         "in_stock": in_stock,
         "total_units": int(total_units),
