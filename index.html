@@ -231,10 +231,10 @@
         <div class="sub" id="page-sub">Магазин Бизмарт — общая картина</div>
       </div>
       <div class="top-right">
-        <div class="period">
-          <button>Сегодня</button>
-          <button class="active">Неделя</button>
-          <button>Месяц</button>
+        <div class="period" id="periodsw">
+          <button data-period="today">Сегодня</button>
+          <button class="active" data-period="week">Неделя</button>
+          <button data-period="month">Месяц</button>
         </div>
         <div class="period" id="curswitch" title="Валюта отображения">
           <button class="active" data-cur="KGS">Сом</button>
@@ -539,11 +539,13 @@
       window.scrollTo(0,0);
     });
   });
-  // period switch
-  document.querySelectorAll('.period button').forEach(b=>{
+  // переключатель периода (Сегодня / Неделя / Месяц) — фильтрует живые данные CRM
+  let PERIOD='week';
+  document.querySelectorAll('#periodsw button').forEach(b=>{
     b.addEventListener('click',()=>{
-      document.querySelectorAll('.period button').forEach(x=>x.classList.remove('active'));
-      b.classList.add('active');
+      document.querySelectorAll('#periodsw button').forEach(x=>x.classList.remove('active'));
+      b.classList.add('active'); PERIOD=b.dataset.period;
+      if(window._crmData) renderCRM(window._crmData);
     });
   });
   function toggleDrawer(){
@@ -633,20 +635,23 @@
   function renderCRM(d){
     const st=document.getElementById('crm-status');
     st.style.borderStyle='solid'; st.style.borderColor='#39d98a';
-    st.innerHTML='🟢 <b>Подключено к amoCRM</b> ('+esc(d.account)+') • обновлено '+esc(d.updated)+
+    const lbl={today:'сегодня',week:'за неделю',month:'за месяц'}[PERIOD]||'';
+    // данные за выбранный период (или всё, если периодов нет)
+    const p=(d.periods&&d.periods[PERIOD])||{stage_summary:d.stage_summary,recent:d.recent,count:d.total_count,sum:d.total_sum};
+    st.innerHTML='🟢 <b>Подключено к amoCRM</b> ('+esc(d.account)+') • <b>'+lbl+'</b> • обновлено '+esc(d.updated)+
       (d.sampled?' • по последним ~'+d.total_count+' сделкам':'');
-    const succ=(d.stage_summary||[]).find(s=>/успешно/i.test(s.stage))||{count:0,sum:0};
+    const succ=(p.stage_summary||[]).find(s=>/успешно/i.test(s.stage))||{count:0,sum:0};
     document.getElementById('crm-kpis').innerHTML=
       kpiCard('Успешных сделок',succ.count)+kpiCard('Сумма успешных',fmt(succ.sum))+
-      kpiCard('Сделок в выборке',d.total_count)+kpiCard('Сумма выборки',fmt(d.total_sum));
-    document.getElementById('crm-stages').innerHTML=
+      kpiCard('Сделок '+lbl,p.count)+kpiCard('Сумма '+lbl,fmt(p.sum));
+    document.getElementById('crm-stages').innerHTML= (p.stage_summary&&p.stage_summary.length)?
       '<table><thead><tr><th>Этап</th><th>Сделок</th><th>Сумма</th></tr></thead><tbody>'+
-      (d.stage_summary||[]).map(s=>'<tr><td>'+esc(s.stage)+'</td><td>'+s.count+'</td><td>'+fmt(s.sum)+'</td></tr>').join('')+
-      '</tbody></table>';
-    document.getElementById('crm-recent').innerHTML=
+      p.stage_summary.map(s=>'<tr><td>'+esc(s.stage)+'</td><td>'+s.count+'</td><td>'+fmt(s.sum)+'</td></tr>').join('')+
+      '</tbody></table>' : '<div style="color:var(--muted);font-size:13px">Нет сделок за этот период</div>';
+    document.getElementById('crm-recent').innerHTML= (p.recent&&p.recent.length)?
       '<table><thead><tr><th>Сделка</th><th>Сумма</th><th>Этап</th></tr></thead><tbody>'+
-      (d.recent||[]).map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+fmt(x.price)+'</td><td>'+esc(x.stage)+'</td></tr>').join('')+
-      '</tbody></table>';
+      p.recent.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+fmt(x.price)+'</td><td>'+esc(x.stage)+'</td></tr>').join('')+
+      '</tbody></table>' : '<div style="color:var(--muted);font-size:13px">Нет сделок за этот период</div>';
   }
   // закрытие шторки уведомлений по клавише Esc
   document.addEventListener('keydown',e=>{

@@ -82,45 +82,50 @@ def build_overview():
     # 2+3) сделки: тянем до 6 страниц (1500 шт) ПАРАЛЛЕЛЬНО — это ~1 запрос по времени вместо 6
     pages = {}
     def _fetch_page(n):
-        pages[n] = amo_get("/leads?limit=250&page={}".format(n))
+        pages[n] = amo_get("/leads?limit=250&order[created_at]=desc&page={}".format(n))
     ths = [threading.Thread(target=_fetch_page, args=(n,)) for n in range(1, 7)]
     for t in ths: t.start()
     for t in ths: t.join()
 
-    by_stage = {}
-    total_count = 0
-    total_sum = 0
     all_leads = []
     for n in range(1, 7):
-        leads = pages.get(n, {}).get("_embedded", {}).get("leads", [])
-        all_leads.extend(leads)
-        for l in leads:
-            st = status_name.get(l.get("status_id"), "—")
-            pr = l.get("price") or 0
-            agg = by_stage.setdefault(st, {"count": 0, "sum": 0})
-            agg["count"] += 1
-            agg["sum"] += pr
-            total_count += 1
-            total_sum += pr
-    # последние сделки — из первой страницы (отдельный запрос больше не нужен)
-    recent = [{
-        "name": l.get("name") or "(без названия)",
-        "price": l.get("price") or 0,
-        "stage": status_name.get(l.get("status_id"), "—"),
-    } for l in all_leads[:20]]
+        all_leads.extend(pages.get(n, {}).get("_embedded", {}).get("leads", []))
     sampled = len(pages.get(6, {}).get("_embedded", {}).get("leads", [])) >= 250
 
-    stage_summary = [{"stage": k, "count": v["count"], "sum": v["sum"]}
-                     for k, v in sorted(by_stage.items(), key=lambda x: -x[1]["sum"])]
+    def summarize(leads):
+        by_stage = {}; tc = 0; ts = 0
+        for l in leads:
+            st = status_name.get(l.get("status_id"), "—"); pr = l.get("price") or 0
+            agg = by_stage.setdefault(st, {"count": 0, "sum": 0})
+            agg["count"] += 1; agg["sum"] += pr; tc += 1; ts += pr
+        stage_summary = [{"stage": k, "count": v["count"], "sum": v["sum"]}
+                         for k, v in sorted(by_stage.items(), key=lambda x: -x[1]["sum"])]
+        recent = [{"name": l.get("name") or "(без названия)", "price": l.get("price") or 0,
+                   "stage": status_name.get(l.get("status_id"), "—")} for l in leads[:20]]
+        return {"count": tc, "sum": ts, "stage_summary": stage_summary, "recent": recent}
 
+    # разбивка по периодам (по дате создания сделки)
+    now = time.time()
+    lt = time.localtime(now)
+    start_today = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+    def created(l): return l.get("created_at") or 0
+    periods = {
+        "all":   summarize(all_leads),
+        "today": summarize([l for l in all_leads if created(l) >= start_today]),
+        "week":  summarize([l for l in all_leads if created(l) >= now - 7 * 86400]),
+        "month": summarize([l for l in all_leads if created(l) >= now - 30 * 86400]),
+    }
+    allp = periods["all"]
     return {
         "account": CFG.get("AMO_SUBDOMAIN"),
         "currency": "сом",
         "pipelines": pipelines,
-        "recent": recent,
-        "stage_summary": stage_summary,
-        "total_count": total_count,
-        "total_sum": total_sum,
+        "periods": periods,
+        # верхний уровень = все сделки (для совместимости)
+        "recent": allp["recent"],
+        "stage_summary": allp["stage_summary"],
+        "total_count": allp["count"],
+        "total_sum": allp["sum"],
         "sampled": sampled,
         "updated": time.strftime("%H:%M:%S"),
     }
