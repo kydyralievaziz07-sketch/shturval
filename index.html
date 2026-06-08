@@ -479,7 +479,9 @@
     document.getElementById('overlay').classList.toggle('open');
   }
   // --- ЖИВЫЕ ДАННЫЕ ИЗ amoCRM (через сервер-посредник) ---
-  const API_BASE='http://localhost:8787';
+  // локально — стучимся в свой сервер на 8787; в облаке (Vercel) — на тот же адрес ('/api/...')
+  const _h=location.hostname;
+  const API_BASE=(_h==='localhost'||_h==='127.0.0.1'||_h==='')?'http://localhost:8787':'';
   let CUR='KGS';          // выбранная валюта: KGS (сом) или USD ($)
   let RATE=87.5;          // сколько сомов за 1$ (запасной курс, обновляется автоматически)
   function fmt(n){
