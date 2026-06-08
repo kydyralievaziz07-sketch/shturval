@@ -131,6 +131,24 @@
   .overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:40;display:none}
   .overlay.open{display:block}
 
+  /* INBOX / чаты */
+  .inbox{display:grid;grid-template-columns:300px 1fr;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;height:72vh}
+  .chatlist{border-right:1px solid var(--line);overflow-y:auto;background:var(--panel)}
+  .chatitem{padding:12px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+  .chatitem:hover,.chatitem.active{background:var(--panel2)}
+  .ci-name{font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px}
+  .ci-unread{background:var(--accent);color:#fff;font-size:11px;border-radius:20px;padding:0 6px}
+  .ci-last{color:var(--muted);font-size:12px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ci-time{color:var(--muted);font-size:11px;margin-top:3px}
+  .chatview{display:flex;flex-direction:column;background:var(--bg);min-width:0}
+  .chatview .head{padding:13px 16px;border-bottom:1px solid var(--line);font-weight:600;background:var(--panel)}
+  .msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
+  .bubble{max-width:72%;padding:9px 13px;border-radius:14px;font-size:13px;line-height:1.45;word-wrap:break-word}
+  .bubble.in{align-self:flex-start;background:var(--panel2);border-bottom-left-radius:4px}
+  .bubble.out{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:4px}
+  .replybox{padding:12px;border-top:1px solid var(--line);display:flex;gap:8px;background:var(--panel)}
+  .replybox input{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 14px;color:var(--text);font-family:inherit}
+
   /* polish & доступность */
   .card.kpi{transition:transform .15s,border-color .15s}
   .card.kpi:hover{transform:translateY(-2px);border-color:#333b49}
@@ -146,6 +164,9 @@
     .main{padding:18px 16px}
     .drawer{width:88%}
     .funnel .lbl{width:88px}
+    .inbox{grid-template-columns:1fr;height:auto}
+    .chatlist{max-height:240px}
+    .msgs{min-height:300px}
   }
 </style>
 </head>
@@ -159,6 +180,7 @@
     <nav class="nav">
       <a class="active" data-tab="dash"><span class="ico">📊</span> Дашборд</a>
       <a data-tab="crm"><span class="ico">🔌</span> CRM (живые данные)</a>
+      <a data-tab="chats"><span class="ico">💬</span> Чаты</a>
       <a data-tab="prod"><span class="ico">📦</span> Товары</a>
       <a data-tab="sales"><span class="ico">🛒</span> Продажи</a>
       <a data-tab="clients"><span class="ico">👥</span> Клиенты</a>
@@ -169,7 +191,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v0.6<br>Доступ: только владелец<br>Демо + живая CRM + валюты
+      Штурвал v0.7<br>Доступ: только владелец<br>+ раздел Чаты (предпросмотр)
     </div>
   </aside>
 
@@ -269,6 +291,22 @@
       <div class="grid2b">
         <div class="card"><h3>🔻 Сделки по этапам</h3><div id="crm-stages">—</div></div>
         <div class="card"><h3>🕐 Последние сделки</h3><div id="crm-recent">—</div></div>
+      </div>
+    </section>
+
+    <!-- CHATS (предпросмотр) -->
+    <section id="tab-chats" class="hide">
+      <div class="note" style="margin-bottom:14px">💬 Это <b>предпросмотр</b> раздела чатов (диалоги для примера). Подключение твоих реальных переписок из Instagram (через ChatPlace) — следующий шаг. Пояснение — в моём сообщении.</div>
+      <div class="inbox">
+        <div class="chatlist" id="chatlist"></div>
+        <div class="chatview">
+          <div class="head" id="chat-title">—</div>
+          <div class="msgs" id="msgs"></div>
+          <div class="replybox">
+            <input placeholder="Написать ответ… (заработает после подключения)" disabled>
+            <button class="btn" disabled>Отправить</button>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -445,6 +483,7 @@
   const titles = {
     dash     :["Дашборд","Магазин Бизмарт — общая картина"],
     crm      :["CRM — живые данные","Реальные сделки и воронки из amoCRM"],
+    chats    :["Чаты","Переписки с клиентами (предпросмотр)"],
     prod     :["Товары","Каталог, остатки и маржа"],
     sales    :["Продажи","Продажи за день и за период"],
     clients  :["Клиенты","Кто покупает и кто возвращается"],
@@ -464,6 +503,7 @@
       document.getElementById('page-title').textContent=titles[tab][0];
       document.getElementById('page-sub').textContent=titles[tab][1];
       if(tab==='crm') loadCRM();
+      if(tab==='chats') loadChats();
       window.scrollTo(0,0);
     });
   });
@@ -583,6 +623,45 @@
   fetch('https://open.er-api.com/v6/latest/USD').then(r=>r.json()).then(d=>{
     if(d&&d.rates&&d.rates.KGS){RATE=d.rates.KGS; updateFx(); renderAll();}
   }).catch(()=>{});
+
+  // --- ЧАТЫ (предпросмотр на примерных данных) ---
+  const CHAT_SAMPLE=[
+    {name:'Айбек', time:'14:32', unread:2, last:'Сонун, кантип заказ кылам?', msgs:[
+      {t:'in', x:'Салам! Бул кастрюля топтому канча турат?'},
+      {t:'out',x:'Салам! 6 даана топтом — 2 400 сом. Жеткирүү бар 😊'},
+      {t:'in', x:'Сонун, кантип заказ кылам?'},
+    ]},
+    {name:'Мээрим', time:'13:48', unread:0, last:'Какой размер есть?', msgs:[
+      {t:'in', x:'Здравствуйте! Постельное бельё есть в наличии?'},
+      {t:'out',x:'Здравствуйте! Да, есть. Какой размер интересует — 1.5 или 2-спальный?'},
+      {t:'in', x:'Какой размер есть?'},
+    ]},
+    {name:'Нурлан', time:'12:10', unread:0, last:'Доставка по Бишкеку сколько?', msgs:[
+      {t:'in', x:'Доставка по Бишкеку сколько стоит?'},
+      {t:'out',x:'Экспресс 2–4 часа, обычная — 1 день. Подскажите адрес?'},
+    ]},
+    {name:'Гүлзат', time:'вчера', unread:0, last:'Рахмат!', msgs:[
+      {t:'in', x:'Органайзер бармы?'},
+      {t:'out',x:'Ооба, бар! 420 сом. Каалайсызбы?'},
+      {t:'in', x:'Рахмат!'},
+    ]},
+  ];
+  function loadChats(){
+    const list=document.getElementById('chatlist');
+    list.innerHTML=CHAT_SAMPLE.map((c,i)=>'<div class="chatitem'+(i===0?' active':'')+'" data-i="'+i+'">'+
+      '<div class="ci-name">'+esc(c.name)+(c.unread?' <span class="ci-unread">'+c.unread+'</span>':'')+'</div>'+
+      '<div class="ci-last">'+esc(c.last)+'</div><div class="ci-time">'+esc(c.time)+'</div></div>').join('');
+    list.querySelectorAll('.chatitem').forEach(el=>el.addEventListener('click',()=>{
+      list.querySelectorAll('.chatitem').forEach(x=>x.classList.remove('active'));
+      el.classList.add('active'); showChat(+el.dataset.i);
+    }));
+    showChat(0);
+  }
+  function showChat(i){
+    const c=CHAT_SAMPLE[i];
+    document.getElementById('chat-title').textContent=c.name;
+    document.getElementById('msgs').innerHTML=c.msgs.map(m=>'<div class="bubble '+m.t+'">'+esc(m.x)+'</div>').join('');
+  }
 </script>
 </body>
 </html>
