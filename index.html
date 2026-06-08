@@ -169,7 +169,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v0.5<br>Доступ: только владелец<br>Демо + живая CRM
+      Штурвал v0.6<br>Доступ: только владелец<br>Демо + живая CRM + валюты
     </div>
   </aside>
 
@@ -187,6 +187,11 @@
           <button class="active">Неделя</button>
           <button>Месяц</button>
         </div>
+        <div class="period" id="curswitch" title="Валюта отображения">
+          <button class="active" data-cur="KGS">Сом</button>
+          <button data-cur="USD">$</button>
+        </div>
+        <span id="fxnote" style="font-size:11px;color:var(--muted)"></span>
         <button class="bell" onclick="toggleDrawer()" aria-label="Уведомления: 5 новых">🔔<span class="bcount">5</span></button>
         <div class="user">Владелец <div class="avatar">Б</div></div>
       </div>
@@ -475,7 +480,13 @@
   }
   // --- ЖИВЫЕ ДАННЫЕ ИЗ amoCRM (через сервер-посредник) ---
   const API_BASE='http://localhost:8787';
-  const fmt=n=>(n||0).toLocaleString('ru-RU')+' сом';
+  let CUR='KGS';          // выбранная валюта: KGS (сом) или USD ($)
+  let RATE=87.5;          // сколько сомов за 1$ (запасной курс, обновляется автоматически)
+  function fmt(n){
+    n=Number(n)||0;
+    if(CUR==='USD') return '$'+Math.round(n/RATE).toLocaleString('ru-RU');
+    return n.toLocaleString('ru-RU')+' сом';
+  }
   function esc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
   function kpiCard(label,val){return '<div class="card kpi"><div class="label">'+label+'</div><div class="value">'+val+'</div></div>';}
   async function loadCRM(){
@@ -483,26 +494,30 @@
     try{
       const r=await fetch(API_BASE+'/api/overview');
       if(!r.ok) throw 0;
-      const d=await r.json();
-      st.style.borderStyle='solid'; st.style.borderColor='#39d98a';
-      st.innerHTML='🟢 <b>Подключено к amoCRM</b> ('+esc(d.account)+') • обновлено '+esc(d.updated)+
-        (d.sampled?' • по последним ~'+d.total_count+' сделкам':'');
-      const succ=(d.stage_summary||[]).find(s=>/успешно/i.test(s.stage))||{count:0,sum:0};
-      document.getElementById('crm-kpis').innerHTML=
-        kpiCard('Успешных сделок',succ.count)+kpiCard('Сумма успешных',fmt(succ.sum))+
-        kpiCard('Сделок в выборке',d.total_count)+kpiCard('Сумма выборки',fmt(d.total_sum));
-      document.getElementById('crm-stages').innerHTML=
-        '<table><thead><tr><th>Этап</th><th>Сделок</th><th>Сумма</th></tr></thead><tbody>'+
-        (d.stage_summary||[]).map(s=>'<tr><td>'+esc(s.stage)+'</td><td>'+s.count+'</td><td>'+fmt(s.sum)+'</td></tr>').join('')+
-        '</tbody></table>';
-      document.getElementById('crm-recent').innerHTML=
-        '<table><thead><tr><th>Сделка</th><th>Сумма</th><th>Этап</th></tr></thead><tbody>'+
-        (d.recent||[]).map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+fmt(x.price)+'</td><td>'+esc(x.stage)+'</td></tr>').join('')+
-        '</tbody></table>';
+      window._crmData=await r.json();
+      renderCRM(window._crmData);
     }catch(e){
       st.style.borderStyle='dashed'; st.style.borderColor='#ff6b6b';
       st.innerHTML='🔴 <b>Нет связи с сервером-посредником.</b><br>Чтобы увидеть живые данные, запусти на компьютере файл <b>backend/Запустить-сервер.command</b> и обнови страницу.<br><span style="color:var(--muted)">На опубликованном сайте в интернете живые данные пока не работают — это следующий шаг.</span>';
     }
+  }
+  function renderCRM(d){
+    const st=document.getElementById('crm-status');
+    st.style.borderStyle='solid'; st.style.borderColor='#39d98a';
+    st.innerHTML='🟢 <b>Подключено к amoCRM</b> ('+esc(d.account)+') • обновлено '+esc(d.updated)+
+      (d.sampled?' • по последним ~'+d.total_count+' сделкам':'');
+    const succ=(d.stage_summary||[]).find(s=>/успешно/i.test(s.stage))||{count:0,sum:0};
+    document.getElementById('crm-kpis').innerHTML=
+      kpiCard('Успешных сделок',succ.count)+kpiCard('Сумма успешных',fmt(succ.sum))+
+      kpiCard('Сделок в выборке',d.total_count)+kpiCard('Сумма выборки',fmt(d.total_sum));
+    document.getElementById('crm-stages').innerHTML=
+      '<table><thead><tr><th>Этап</th><th>Сделок</th><th>Сумма</th></tr></thead><tbody>'+
+      (d.stage_summary||[]).map(s=>'<tr><td>'+esc(s.stage)+'</td><td>'+s.count+'</td><td>'+fmt(s.sum)+'</td></tr>').join('')+
+      '</tbody></table>';
+    document.getElementById('crm-recent').innerHTML=
+      '<table><thead><tr><th>Сделка</th><th>Сумма</th><th>Этап</th></tr></thead><tbody>'+
+      (d.recent||[]).map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+fmt(x.price)+'</td><td>'+esc(x.stage)+'</td></tr>').join('')+
+      '</tbody></table>';
   }
   // закрытие шторки уведомлений по клавише Esc
   document.addEventListener('keydown',e=>{
@@ -529,6 +544,43 @@
       });
     });
   }
+  // --- ВАЛЮТА: переключение сом / доллар с автоматическим курсом ---
+  function mkMoney(som){const s=document.createElement('span');s.className='money';s.dataset.som=som;s.textContent=fmt(som);return s;}
+  function renderMoney(){document.querySelectorAll('.money').forEach(el=>el.textContent=fmt(el.dataset.som));}
+  function renderAll(){renderMoney(); if(window._crmData) renderCRM(window._crmData);}
+  function updateFx(){document.getElementById('fxnote').textContent = CUR==='USD' ? ('1$ ≈ '+Math.round(RATE)+' сом') : '';}
+  // один раз помечаем все суммы в демо-части, чтобы потом пересчитывать
+  function tagDemoMoney(){
+    const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+    const nodes=[]; while(walker.nextNode()) nodes.push(walker.currentNode);
+    const re=/(\d+(?:[.,]\d+)?)(\s*\/\s*(\d+(?:[.,]\d+)?))?\s*млн\s*сом|(\d[\d ]*\d|\d)\s*сом/g;
+    nodes.forEach(node=>{
+      const t=node.nodeValue; if(!/сом/.test(t)) return;
+      re.lastIndex=0; let m,idx=0,found=false; const frag=document.createDocumentFragment();
+      while((m=re.exec(t))){
+        found=true; frag.appendChild(document.createTextNode(t.slice(idx,m.index)));
+        if(m[1]!==undefined){
+          frag.appendChild(mkMoney(Math.round(parseFloat(m[1].replace(',','.'))*1e6)));
+          if(m[3]!==undefined){frag.appendChild(document.createTextNode(' / '));frag.appendChild(mkMoney(Math.round(parseFloat(m[3].replace(',','.'))*1e6)));}
+        }else{
+          frag.appendChild(mkMoney(parseInt(m[4].replace(/ /g,''),10)||0));
+        }
+        idx=re.lastIndex;
+      }
+      if(found){frag.appendChild(document.createTextNode(t.slice(idx))); node.parentNode.replaceChild(frag,node);}
+    });
+  }
+  document.querySelectorAll('#curswitch button').forEach(b=>{
+    b.addEventListener('click',()=>{
+      document.querySelectorAll('#curswitch button').forEach(x=>x.classList.remove('active'));
+      b.classList.add('active'); CUR=b.dataset.cur; updateFx(); renderAll();
+    });
+  });
+  tagDemoMoney();
+  // автоматически тянем свежий курс доллара к сому
+  fetch('https://open.er-api.com/v6/latest/USD').then(r=>r.json()).then(d=>{
+    if(d&&d.rates&&d.rates.KGS){RATE=d.rates.KGS; updateFx(); renderAll();}
+  }).catch(()=>{});
 </script>
 </body>
 </html>
