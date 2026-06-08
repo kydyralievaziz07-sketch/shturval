@@ -5,6 +5,8 @@ backend/secret.env
 # переписки клиентов (приватные данные)
 chats-data.json
 backend/chats-data.json
+# ТЗ содержит адрес сервера 1С — не публиковать
+ТЗ-1С-продажи.md
 
 # системное
 .DS_Store
