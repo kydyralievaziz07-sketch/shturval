@@ -65,6 +65,12 @@ def build_overview(subdomain, token):
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        # защита паролем: если задан SITE_PASSWORD — без верного заголовка данные не отдаём
+        site_pw = os.environ.get("SITE_PASSWORD", "").strip()
+        if site_pw:
+            given = (self.headers.get("X-Auth") or "").strip()
+            if given != site_pw:
+                return self._send(401, {"error": "Требуется вход"})
         subdomain = os.environ.get("AMO_SUBDOMAIN", "").strip()
         token = os.environ.get("AMO_TOKEN", "").strip()
         if not subdomain or not token:

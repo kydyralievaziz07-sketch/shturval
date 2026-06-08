@@ -135,6 +135,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/overview"):
             data = cached("overview", 60, build_overview)
             return self._send(200, data)
+        if self.path.startswith("/api/chats"):
+            p = os.path.join(HERE, "chats-data.json")
+            if os.path.exists(p):
+                data = json.load(open(p, encoding="utf-8"))
+            else:
+                data = {"chats": []}
+            return self._send(200, data)
         self._send(404, {"error": "не найдено"})
 
     def log_message(self, *a):

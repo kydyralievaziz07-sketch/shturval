@@ -191,7 +191,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v0.7<br>Доступ: только владелец<br>+ раздел Чаты (предпросмотр)
+      Штурвал v0.8<br>Доступ: только владелец<br>+ чаты (локально — реальные)
     </div>
   </aside>
 
@@ -646,11 +646,20 @@
       {t:'in', x:'Рахмат!'},
     ]},
   ];
-  function loadChats(){
+  let CHATS=CHAT_SAMPLE;
+  async function loadChats(){
+    const note=document.querySelector('#tab-chats .note');
+    let data=null;
+    try{ const r=await fetch(API_BASE+'/api/chats'); if(r.ok) data=await r.json(); }catch(e){}
+    const real=!!(data&&data.chats&&data.chats.length);
+    CHATS = real ? data.chats.map(c=>({name:c.name,time:c.time,unread:c.unread,last:(c.msgs&&c.msgs.length?c.msgs[c.msgs.length-1].x:''),msgs:c.msgs})) : CHAT_SAMPLE;
+    if(note) note.innerHTML = real
+      ? '🟢 <b>Реальные переписки</b> из Instagram @bizmart_home ('+esc(data.updated||'снимок')+'). Это снимок — живой режим и ответы подключим после ключа ChatPlace.'
+      : '💬 <b>Предпросмотр</b> (примерные диалоги). Реальные чаты появятся, когда запущен локальный сервер или подключён ключ ChatPlace.';
     const list=document.getElementById('chatlist');
-    list.innerHTML=CHAT_SAMPLE.map((c,i)=>'<div class="chatitem'+(i===0?' active':'')+'" data-i="'+i+'">'+
+    list.innerHTML=CHATS.map((c,i)=>'<div class="chatitem'+(i===0?' active':'')+'" data-i="'+i+'">'+
       '<div class="ci-name">'+esc(c.name)+(c.unread?' <span class="ci-unread">'+c.unread+'</span>':'')+'</div>'+
-      '<div class="ci-last">'+esc(c.last)+'</div><div class="ci-time">'+esc(c.time)+'</div></div>').join('');
+      '<div class="ci-last">'+esc(c.last||'')+'</div><div class="ci-time">'+esc(c.time||'')+'</div></div>').join('');
     list.querySelectorAll('.chatitem').forEach(el=>el.addEventListener('click',()=>{
       list.querySelectorAll('.chatitem').forEach(x=>x.classList.remove('active'));
       el.classList.add('active'); showChat(+el.dataset.i);
@@ -658,9 +667,9 @@
     showChat(0);
   }
   function showChat(i){
-    const c=CHAT_SAMPLE[i];
+    const c=CHATS[i]; if(!c) return;
     document.getElementById('chat-title').textContent=c.name;
-    document.getElementById('msgs').innerHTML=c.msgs.map(m=>'<div class="bubble '+m.t+'">'+esc(m.x)+'</div>').join('');
+    document.getElementById('msgs').innerHTML=(c.msgs||[]).map(m=>'<div class="bubble '+m.t+'">'+esc(m.x)+'</div>').join('');
   }
 </script>
 </body>

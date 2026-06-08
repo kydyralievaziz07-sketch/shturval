@@ -1,7 +1,10 @@
-# СЕКРЕТЫ — никогда не выкладывать на GitHub!
+# СЕКРЕТЫ и личные данные — никогда не выкладывать на GitHub!
 backend/secret.env
 *.env
 *token*.txt
+# переписки клиентов (приватные данные)
+chats-data.json
+backend/chats-data.json
 
 # системное
 .DS_Store
