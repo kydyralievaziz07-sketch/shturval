@@ -23,14 +23,19 @@ def load_secret():
                 k, v = line.split("=", 1)
                 cfg[k.strip()] = v.strip()
     # переменные окружения имеют приоритет (понадобится для облака)
-    cfg["AMO_TOKEN"] = os.environ.get("AMO_TOKEN", cfg.get("AMO_TOKEN", ""))
-    cfg["AMO_SUBDOMAIN"] = os.environ.get("AMO_SUBDOMAIN", cfg.get("AMO_SUBDOMAIN", ""))
+    # переменные окружения имеют приоритет (для облака/хостинга); .strip() убирает случайные пробелы/переносы
+    def env(name):
+        return os.environ.get(name, cfg.get(name, "")).strip()
+    cfg["AMO_TOKEN"] = env("AMO_TOKEN")
+    cfg["AMO_SUBDOMAIN"] = env("AMO_SUBDOMAIN")
     # 1С (Yaros DataGate) — товары/остатки/цены
-    cfg["YAROS_URL"] = os.environ.get("YAROS_URL", cfg.get("YAROS_URL", ""))
-    cfg["YAROS_LOGIN"] = os.environ.get("YAROS_LOGIN", cfg.get("YAROS_LOGIN", ""))
-    cfg["YAROS_PASS"] = os.environ.get("YAROS_PASS", cfg.get("YAROS_PASS", ""))
+    cfg["YAROS_URL"] = env("YAROS_URL")
+    cfg["YAROS_LOGIN"] = env("YAROS_LOGIN")
+    cfg["YAROS_PASS"] = env("YAROS_PASS")
+    # ChatPlace — чаты (раньше читался только из файла, теперь и из окружения)
+    cfg["CHATPLACE_KEY"] = env("CHATPLACE_KEY")
     # пароль для входа на сайт (если пусто — защита выключена)
-    cfg["SITE_PASSWORD"] = os.environ.get("SITE_PASSWORD", cfg.get("SITE_PASSWORD", ""))
+    cfg["SITE_PASSWORD"] = env("SITE_PASSWORD")
     return cfg
 
 CFG = load_secret()
