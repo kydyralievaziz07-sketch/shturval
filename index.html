@@ -218,7 +218,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v1.2.0<br>Вход по паролю 🔒<br>1С: товары · остатки · цены
+      Штурвал v1.3.0<br>Вход по паролю 🔒<br>облако: CRM · чаты · 1С
     </div>
   </aside>
 
@@ -554,6 +554,10 @@
   // локально — стучимся в свой сервер на 8787; в облаке (Vercel) — на тот же адрес ('/api/...')
   const _h=location.hostname;
   const API_BASE=(_h==='localhost'||_h==='127.0.0.1'||_h==='')?'http://localhost:8787':'';
+  // 1С-данные тяжёлые → их отдаёт отдельный «всегда включённый» сервер.
+  // Локально — тот же localhost; в облаке — адрес сервера 1С (впишется после деплоя на Render).
+  const ONEC_CLOUD='';   // напр. 'https://shturval-backend.onrender.com'
+  const ONEC_BASE=(API_BASE!=='')?API_BASE:ONEC_CLOUD;
 
   // --- ВХОД ПО ПАРОЛЮ ---
   const PW_KEY='shturval_pw';
@@ -561,10 +565,11 @@
   function setPw(p){ try{localStorage.setItem(PW_KEY,p);}catch(e){} }
   function clearPw(){ try{localStorage.removeItem(PW_KEY);}catch(e){} }
   // обёртка над fetch: подставляет пароль в заголовок, ловит 401 → показывает вход
-  async function apiFetch(path,opts){
+  async function apiFetch(path,opts,base){
     opts=opts||{}; const h=Object.assign({},opts.headers||{}); const p=getPw();
     if(p) h['X-Auth']=p; opts.headers=h;
-    const r=await fetch(API_BASE+path,opts);
+    if(base===undefined) base=API_BASE;
+    const r=await fetch(base+path,opts);
     if(r.status===401){ clearPw(); showLogin(true); throw new Error('unauthorized'); }
     return r;
   }
@@ -663,7 +668,8 @@
   async function loadInventory(){
     const st=document.getElementById('prod-status');
     try{
-      const r=await apiFetch('/api/inventory'); if(!r.ok) throw 0;
+      if(!ONEC_BASE) throw 0;
+      const r=await apiFetch('/api/inventory',{},ONEC_BASE); if(!r.ok) throw 0;
       const d=await r.json(); if(d.error) throw 0;
       renderInventory(d);
     }catch(e){
@@ -705,7 +711,8 @@
     const tb=document.getElementById('prodRows');
     if(!silent) tb.innerHTML='<tr><td colspan="7" style="color:var(--muted)">Загрузка…</td></tr>';
     try{
-      const r=await apiFetch('/api/products?page='+prodPage+'&q='+encodeURIComponent(prodQ));
+      if(!ONEC_BASE){ tb.innerHTML='<tr><td colspan="7" style="color:var(--muted)">В облаке 1С подключается отдельным шагом</td></tr>'; return; }
+      const r=await apiFetch('/api/products?page='+prodPage+'&q='+encodeURIComponent(prodQ),{},ONEC_BASE);
       const d=await r.json();
       tb.innerHTML=(d.items&&d.items.length)?d.items.map(prodRow).join(''):'<tr><td colspan="7" style="color:var(--muted)">Ничего не найдено</td></tr>';
       const per=d.per||50, pages=Math.max(1,Math.ceil((d.total||0)/per));

@@ -5,10 +5,11 @@
 Токен хранится здесь, на сервере, и НЕ попадает в код сайта.
 Запуск: python3 server.py   (или двойной клик по «Запустить-сервер.command»)
 """
-import os, json, time, urllib.request, urllib.error
+import os, json, time, threading, urllib.request, urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-PORT = 8787
+# порт: локально 8787, на хостинге (Render и т.п.) берётся из переменной PORT
+PORT = int(os.environ.get("PORT", "8787"))
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # --- читаем секрет (токен + поддомен) ---
@@ -190,8 +191,9 @@ def _price_by_type(item, type_name):
             return _num(p.get("PRICE"))
     return 0.0
 
-# каталог тяжёлый — держим в памяти и обновляем не чаще раза в 10 минут
+# каталог тяжёлый (~20 МБ, ~50 сек на загрузку) — держим в памяти, обновляем фоном
 _goods = {"t": 0.0, "goods": None, "cats": None}
+_goods_lock = threading.Lock()
 
 def get_categories():
     now = time.time()
@@ -205,14 +207,35 @@ def get_categories():
     return _goods["cats"]
 
 def get_goods():
-    """Возвращает список товаров из 1С (кэш 10 минут). Бросает исключение, если 1С недоступна и кэша нет."""
+    """Возвращает список товаров из 1С (кэш 2 минуты). Блокировка не даёт качать 20 МБ дважды разом.
+    Если кэш есть, но устарел, а обновить не вышло — отдаём старый (лучше слегка несвежее, чем ничего)."""
     now = time.time()
     if _goods["goods"] is not None and now - _goods["t"] < 120:
         return _goods["goods"]
-    data = yaros_get("/goods")
-    _goods["goods"] = data.get("goods", [])
-    _goods["t"] = now
-    return _goods["goods"]
+    with _goods_lock:
+        # пока ждали блокировку, другой поток мог уже обновить
+        if _goods["goods"] is not None and time.time() - _goods["t"] < 120:
+            return _goods["goods"]
+        try:
+            data = yaros_get("/goods")
+            _goods["goods"] = data.get("goods", [])
+            _goods["t"] = time.time()
+        except Exception:
+            if _goods["goods"] is None:
+                raise            # совсем нет данных — пробрасываем ошибку
+        return _goods["goods"]
+
+def _warmer():
+    """Фоновый поток: держит каталог 1С тёплым, чтобы запросы отвечали мгновенно."""
+    while True:
+        try:
+            if CFG.get("YAROS_URL"):
+                _goods["t"] = 0.0          # принудительно обновить
+                get_goods()
+                get_categories()
+        except Exception:
+            pass
+        time.sleep(110)
 
 def build_inventory():
     """Лёгкая сводка по складу для дашборда «Товары»."""
@@ -375,4 +398,7 @@ if __name__ == "__main__":
     print("  Адрес: http://localhost:{}".format(PORT))
     print("  Чтобы остановить — закрой это окно или нажми Ctrl+C")
     print("=" * 48)
+    # фоновый прогрев каталога 1С (чтобы запросы не ждали 50 сек)
+    if CFG.get("YAROS_URL"):
+        threading.Thread(target=_warmer, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

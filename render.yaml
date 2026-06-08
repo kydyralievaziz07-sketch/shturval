@@ -1,0 +1,27 @@
+# Конфигурация «всегда включённого» сервера Штурвала для Render.com.
+# Этот сервер держит каталог 1С (20 МБ) в памяти и обновляет его в фоне,
+# поэтому товары видны на телефоне даже при выключенном ноутбуке.
+# Секреты (токены/пароли) НЕ хранятся здесь — их вводят в панели Render (sync: false).
+services:
+  - type: web
+    name: shturval-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python server.py"
+    envVars:
+      - key: AMO_SUBDOMAIN
+        sync: false
+      - key: AMO_TOKEN
+        sync: false
+      - key: YAROS_URL
+        sync: false
+      - key: YAROS_LOGIN
+        sync: false
+      - key: YAROS_PASS
+        sync: false
+      - key: CHATPLACE_KEY
+        sync: false
+      - key: SITE_PASSWORD
+        sync: false
