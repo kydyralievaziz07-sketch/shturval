@@ -34,6 +34,8 @@ def load_secret():
     cfg["YAROS_PASS"] = env("YAROS_PASS")
     # ChatPlace — чаты (раньше читался только из файла, теперь и из окружения)
     cfg["CHATPLACE_KEY"] = env("CHATPLACE_KEY")
+    # адрес метода создания товара в 1С (появится, когда программист сделает запись)
+    cfg["YAROS_CREATE_URL"] = env("YAROS_CREATE_URL")
     # пароль для входа на сайт (если пусто — защита выключена)
     cfg["SITE_PASSWORD"] = env("SITE_PASSWORD")
     return cfg
@@ -353,6 +355,33 @@ def build_inventory():
         "updated": time.strftime("%H:%M:%S"),
     }
 
+def build_categories():
+    cats = get_categories()
+    items = [{"id": k, "title": v} for k, v in cats.items() if v]
+    items.sort(key=lambda i: i["title"])
+    return {"categories": items}
+
+def yaros_create_good(payload):
+    """Создать товар в 1С. Работает, когда задан YAROS_CREATE_URL (метод от 1С-программиста)."""
+    url = CFG.get("YAROS_CREATE_URL", "").strip()
+    if not url:
+        return {"ok": False, "pending": True,
+                "error": "Добавление в 1С ещё не подключено — ждём метод записи от 1С-программиста."}
+    auth = base64.b64encode((CFG.get("YAROS_LOGIN", "") + ":" + CFG.get("YAROS_PASS", "")).encode()).decode()
+    req = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                                 headers={"Authorization": "Basic " + auth,
+                                          "Content-Type": "application/json",
+                                          "User-Agent": "Shturval/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            res = json.loads(r.read().decode("utf-8"))
+        _goods["t"] = 0.0  # сбросить кэш, чтобы новый товар появился в списке
+        return {"ok": True, "result": res}
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "error": "1С ответила ошибкой HTTP {}".format(e.code)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
 def search_products(q, page, per=50):
     goods = get_goods()
     cats = get_categories()
@@ -414,6 +443,26 @@ class Handler(BaseHTTPRequestHandler):
             chatplace_call("chats_send_message", {"chatId": cid, "text": text})
             _cache.pop("chats", None)                            # сбросить кэш списка
             return self._send(200, {"ok": True})
+        if self.path.startswith("/api/add-product"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"ok": False, "error": "плохой запрос"})
+            title = (body.get("title") or "").strip()
+            if not title:
+                return self._send(400, {"ok": False, "error": "Нужно название товара"})
+            payload = {
+                "TITLE": title,
+                "CATEGORY_ID": (body.get("category_id") or "").strip(),
+                "PRICE": body.get("price") or 0,
+                "PURCHASE_PRICE": body.get("cost") or 0,
+                "MEASURE": (body.get("measure") or "шт").strip(),
+                "BARCODE": (body.get("barcode") or "").strip(),
+                "ARTICLE": (body.get("article") or "").strip(),
+                "QUANTITY": body.get("qty") or 0,
+            }
+            return self._send(200, yaros_create_good(payload))
         self._send(404, {"error": "не найдено"})
 
     def do_GET(self):
@@ -428,6 +477,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(401, {"error": "Требуется вход"})
         if self.path.startswith("/api/overview"):
             return self._send(200, get_overview())
+        if self.path.startswith("/api/categories"):
+            try:
+                return self._send(200, build_categories())
+            except Exception as e:
+                return self._send(200, {"categories": [], "error": str(e)})
         if self.path.startswith("/api/inventory"):
             try:
                 return self._send(200, cached("inventory", 120, build_inventory))

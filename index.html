@@ -168,6 +168,17 @@
   .logincard .btn{width:100%;padding:13px;font-size:15px}
   .loginerr{color:var(--red);font-size:13px;margin-top:12px;min-height:18px}
   .loginhint{color:var(--muted);font-size:11px;margin-top:14px;line-height:1.5}
+
+  /* MODAL — окно добавления товара */
+  .modal-bg{position:fixed;inset:0;z-index:90;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:20px}
+  .modal-bg.open{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:24px;width:460px;max-width:100%;max-height:90vh;overflow:auto}
+  .modal h3{margin-bottom:6px}
+  .modal label{display:block;font-size:12px;color:var(--muted);margin:11px 0 4px}
+  .modal input,.modal select{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--text);font-family:inherit;font-size:14px}
+  .modal .row{display:flex;gap:10px}
+  .modal .row>div{flex:1}
+  .modal-foot{display:flex;gap:10px;margin-top:18px}
   @media(max-width:1000px){.kpis{grid-template-columns:repeat(2,1fr)}.grid2,.grid2b{grid-template-columns:1fr}}
   @media(max-width:760px){
     body{flex-direction:column}
@@ -218,7 +229,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v1.5.1<br>Вход по паролю 🔒<br>склад считается как в 1С
+      Штурвал v1.6.0<br>Вход по паролю 🔒<br>форма «добавить товар» (готова)
     </div>
   </aside>
 
@@ -362,7 +373,10 @@
       </div>
       <div class="card">
         <div class="toolbar">
-          <input id="prodSearch" class="search" aria-label="Поиск товара" placeholder="🔍 Поиск товара по названию…">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input id="prodSearch" class="search" aria-label="Поиск товара" placeholder="🔍 Поиск товара по названию…">
+            <button class="btn" onclick="openAddProduct()">➕ Добавить товар</button>
+          </div>
           <div id="prod-pager" style="display:flex;gap:8px;align-items:center"></div>
         </div>
         <table>
@@ -507,6 +521,35 @@
     </section>
 
   </main>
+
+  <!-- ОКНО: ДОБАВИТЬ ТОВАР -->
+  <div class="modal-bg" id="addbg">
+    <div class="modal">
+      <h3>➕ Новый товар</h3>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Товар сохранится в 1С и появится в каталоге</div>
+      <label>Название *</label>
+      <input id="ap-title" placeholder="Напр. Одеяло 1.5-спальное">
+      <label>Категория</label>
+      <select id="ap-cat"><option value="">— выбрать —</option></select>
+      <div class="row">
+        <div><label>Розн. цена, сом</label><input id="ap-price" type="number" inputmode="decimal" placeholder="0"></div>
+        <div><label>Закуп, сом</label><input id="ap-cost" type="number" inputmode="decimal" placeholder="0"></div>
+      </div>
+      <div class="row">
+        <div><label>Остаток, шт</label><input id="ap-qty" type="number" inputmode="numeric" placeholder="0"></div>
+        <div><label>Ед. изм.</label><input id="ap-measure" value="шт"></div>
+      </div>
+      <div class="row">
+        <div><label>Штрихкод</label><input id="ap-barcode" placeholder="необязательно"></div>
+        <div><label>Артикул</label><input id="ap-article" placeholder="необязательно"></div>
+      </div>
+      <div id="ap-msg" style="font-size:13px;margin-top:12px;min-height:18px"></div>
+      <div class="modal-foot">
+        <button class="btn" id="ap-save" onclick="submitAddProduct()">Сохранить в 1С</button>
+        <button class="btn ghost" onclick="closeAddProduct()">Отмена</button>
+      </div>
+    </div>
+  </div>
 
   <!-- NOTIFICATIONS DRAWER -->
   <div class="overlay" id="overlay" onclick="toggleDrawer()"></div>
@@ -972,6 +1015,37 @@
     if(b) b.addEventListener('click',sendReply);
     if(i) i.addEventListener('keydown',e=>{ if(e.key==='Enter') sendReply(); });
   })();
+
+  // --- ДОБАВЛЕНИЕ ТОВАРА ---
+  function openAddProduct(){
+    document.getElementById('addbg').classList.add('open');
+    document.getElementById('ap-msg').textContent='';
+    const sel=document.getElementById('ap-cat');
+    if(sel.options.length<=1){
+      apiFetch('/api/categories',{},ONEC_BASE).then(r=>r.json()).then(d=>{
+        (d.categories||[]).forEach(c=>{ const o=document.createElement('option'); o.value=c.id; o.textContent=c.title; sel.appendChild(o); });
+      }).catch(()=>{});
+    }
+  }
+  function closeAddProduct(){ document.getElementById('addbg').classList.remove('open'); }
+  async function submitAddProduct(){
+    const v=id=>document.getElementById(id).value;
+    const title=v('ap-title').trim();
+    const msg=document.getElementById('ap-msg'), btn=document.getElementById('ap-save');
+    if(!title){ msg.style.color='var(--red)'; msg.textContent='Введите название товара'; return; }
+    btn.disabled=true; msg.style.color='var(--muted)'; msg.textContent='Сохраняю…';
+    const payload={title, category_id:v('ap-cat'), price:parseFloat(v('ap-price'))||0,
+      cost:parseFloat(v('ap-cost'))||0, qty:parseFloat(v('ap-qty'))||0,
+      measure:v('ap-measure')||'шт', barcode:v('ap-barcode').trim(), article:v('ap-article').trim()};
+    try{
+      const r=await apiFetch('/api/add-product',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)},ONEC_BASE);
+      const d=await r.json();
+      if(d.ok){ msg.style.color='var(--green)'; msg.textContent='✅ Товар добавлен в 1С!';
+        setTimeout(()=>{ closeAddProduct(); document.getElementById('ap-title').value=''; loadInventory(); loadProducts(true); },1300); }
+      else { msg.style.color='var(--amber)'; msg.innerHTML='⏳ '+esc(d.error||'Не удалось сохранить'); }
+    }catch(e){ msg.style.color='var(--red)'; msg.textContent='Нет связи с сервером'; }
+    btn.disabled=false;
+  }
 </script>
 </body>
 </html>
