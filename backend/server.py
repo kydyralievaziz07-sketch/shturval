@@ -115,6 +115,42 @@ def build_overview():
         "updated": time.strftime("%H:%M:%S"),
     }
 
+# --- ChatPlace: общение по протоколу MCP ---
+def chatplace_call(name, arguments):
+    key = CFG.get("CHATPLACE_KEY", "")
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                       "params": {"name": name, "arguments": arguments}}).encode("utf-8")
+    req = urllib.request.Request("https://mcp.chatplace.io/mcp", data=body, headers={
+        "Authorization": "Bearer " + key,
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        "User-Agent": "Shturval/1.0",
+    })
+    with urllib.request.urlopen(req, timeout=25) as r:
+        resp = json.loads(r.read().decode("utf-8"))
+    try:
+        return json.loads(resp["result"]["content"][0]["text"])
+    except Exception:
+        return resp.get("result", {})
+
+def build_chats():
+    res = chatplace_call("chats_list", {"limit": 15})
+    items = res.get("items", []) if isinstance(res, dict) else []
+    chats = []
+    for it in items:
+        ts = it.get("lastMessageAt")
+        tm = time.strftime("%H:%M", time.localtime(ts)) if ts else ""
+        chats.append({"id": it.get("id"), "name": it.get("clientName", "клиент"),
+                      "time": tm, "status": it.get("statusName", "")})
+    return {"source": "ChatPlace · Instagram", "updated": time.strftime("%H:%M:%S"), "chats": chats}
+
+def build_chat_messages(cid):
+    res = chatplace_call("chats_messages", {"chatId": cid, "limit": 40})
+    arr = res if isinstance(res, list) else res.get("items", [])
+    msgs = [{"t": ("in" if m.get("side") == "client" else "out"), "x": m.get("message", "")}
+            for m in reversed(arr)]
+    return {"msgs": msgs}
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -136,12 +172,17 @@ class Handler(BaseHTTPRequestHandler):
             data = cached("overview", 60, build_overview)
             return self._send(200, data)
         if self.path.startswith("/api/chats"):
+            if CFG.get("CHATPLACE_KEY"):
+                return self._send(200, cached("chats", 8, build_chats))
             p = os.path.join(HERE, "chats-data.json")
-            if os.path.exists(p):
-                data = json.load(open(p, encoding="utf-8"))
-            else:
-                data = {"chats": []}
+            data = json.load(open(p, encoding="utf-8")) if os.path.exists(p) else {"chats": []}
             return self._send(200, data)
+        if self.path.startswith("/api/chat"):
+            from urllib.parse import urlparse, parse_qs
+            cid = parse_qs(urlparse(self.path).query).get("id", [""])[0]
+            if not cid:
+                return self._send(400, {"error": "нет id"})
+            return self._send(200, build_chat_messages(cid))
         self._send(404, {"error": "не найдено"})
 
     def log_message(self, *a):

@@ -191,7 +191,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v0.8<br>Доступ: только владелец<br>+ чаты (локально — реальные)
+      Штурвал v0.9<br>Доступ: только владелец<br>+ живые чаты (локально)
     </div>
   </aside>
 
@@ -646,30 +646,52 @@
       {t:'in', x:'Рахмат!'},
     ]},
   ];
-  let CHATS=CHAT_SAMPLE;
+  let CHATS=CHAT_SAMPLE, curChatId=null, curChatName='', chatsTimer=null;
   async function loadChats(){
     const note=document.querySelector('#tab-chats .note');
     let data=null;
     try{ const r=await fetch(API_BASE+'/api/chats'); if(r.ok) data=await r.json(); }catch(e){}
-    const real=!!(data&&data.chats&&data.chats.length);
-    CHATS = real ? data.chats.map(c=>({name:c.name,time:c.time,unread:c.unread,last:(c.msgs&&c.msgs.length?c.msgs[c.msgs.length-1].x:''),msgs:c.msgs})) : CHAT_SAMPLE;
-    if(note) note.innerHTML = real
-      ? '🟢 <b>Реальные переписки</b> из Instagram @bizmart_home ('+esc(data.updated||'снимок')+'). Это снимок — живой режим и ответы подключим после ключа ChatPlace.'
-      : '💬 <b>Предпросмотр</b> (примерные диалоги). Реальные чаты появятся, когда запущен локальный сервер или подключён ключ ChatPlace.';
-    const list=document.getElementById('chatlist');
-    list.innerHTML=CHATS.map((c,i)=>'<div class="chatitem'+(i===0?' active':'')+'" data-i="'+i+'">'+
-      '<div class="ci-name">'+esc(c.name)+(c.unread?' <span class="ci-unread">'+c.unread+'</span>':'')+'</div>'+
-      '<div class="ci-last">'+esc(c.last||'')+'</div><div class="ci-time">'+esc(c.time||'')+'</div></div>').join('');
-    list.querySelectorAll('.chatitem').forEach(el=>el.addEventListener('click',()=>{
-      list.querySelectorAll('.chatitem').forEach(x=>x.classList.remove('active'));
-      el.classList.add('active'); showChat(+el.dataset.i);
-    }));
-    showChat(0);
+    const real=!!(data&&data.chats&&data.chats.length&&data.chats[0].id);
+    if(real){
+      CHATS=data.chats;
+      if(note) note.innerHTML='🟢 <b>Живые переписки</b> из Instagram ('+esc(data.source||'')+') · обновлено '+esc(data.updated||'')+'. Обновляется само каждые 8 сек.';
+      if(!chatsTimer) chatsTimer=setInterval(refreshChats,8000);
+    }else{
+      CHATS=CHAT_SAMPLE;
+      if(note) note.innerHTML='💬 <b>Предпросмотр</b> (примеры). Живые чаты — когда запущен локальный сервер с ключом ChatPlace.';
+    }
+    renderChatList();
+    if(curChatId && CHATS.some(c=>c.id===curChatId)) openChat(curChatId,curChatName);
+    else if(CHATS.length) openChat(CHATS[0].id, CHATS[0].name, CHATS[0].msgs);
   }
-  function showChat(i){
-    const c=CHATS[i]; if(!c) return;
-    document.getElementById('chat-title').textContent=c.name;
-    document.getElementById('msgs').innerHTML=(c.msgs||[]).map(m=>'<div class="bubble '+m.t+'">'+esc(m.x)+'</div>').join('');
+  function renderChatList(){
+    const list=document.getElementById('chatlist');
+    list.innerHTML=CHATS.map((c,i)=>'<div class="chatitem'+(((c.id&&c.id===curChatId)||(!curChatId&&i===0))?' active':'')+'" data-i="'+i+'">'+
+      '<div class="ci-name">'+esc(c.name)+(c.unread?' <span class="ci-unread">'+c.unread+'</span>':'')+'</div>'+
+      '<div class="ci-last">'+esc(c.last||c.status||'')+'</div><div class="ci-time">'+esc(c.time||'')+'</div></div>').join('');
+    list.querySelectorAll('.chatitem').forEach(el=>el.addEventListener('click',()=>{
+      const c=CHATS[+el.dataset.i];
+      list.querySelectorAll('.chatitem').forEach(x=>x.classList.remove('active'));
+      el.classList.add('active'); openChat(c.id,c.name,c.msgs);
+    }));
+  }
+  async function openChat(id,name,fallbackMsgs){
+    curChatId=id||null; curChatName=name||'';
+    document.getElementById('chat-title').textContent=name||'';
+    const box=document.getElementById('msgs');
+    if(id){
+      let msgs=[];
+      try{ const r=await fetch(API_BASE+'/api/chat?id='+encodeURIComponent(id)); if(r.ok){ const d=await r.json(); msgs=d.msgs||[]; } }catch(e){}
+      box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+m.t+'">'+esc(m.x)+'</div>').join(''):'<div style="color:var(--muted);font-size:12px">Нет сообщений</div>';
+    }else{
+      box.innerHTML=(fallbackMsgs||[]).map(m=>'<div class="bubble '+m.t+'">'+esc(m.x)+'</div>').join('');
+    }
+    box.scrollTop=box.scrollHeight;
+  }
+  async function refreshChats(){
+    const tab=document.getElementById('tab-chats');
+    if(!tab||tab.classList.contains('hide')){ if(chatsTimer){clearInterval(chatsTimer);chatsTimer=null;} return; }
+    try{ const r=await fetch(API_BASE+'/api/chats'); if(r.ok){ const d=await r.json(); if(d.chats&&d.chats.length&&d.chats[0].id){ CHATS=d.chats; renderChatList(); const n=document.querySelector('#tab-chats .note'); if(n) n.innerHTML='🟢 <b>Живые переписки</b> · обновлено '+esc(d.updated||''); if(curChatId) openChat(curChatId,curChatName); } } }catch(e){}
   }
 </script>
 </body>
