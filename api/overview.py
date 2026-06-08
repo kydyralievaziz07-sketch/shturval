@@ -61,18 +61,12 @@ def build_overview(subdomain, token):
         "stage_summary": stage_summary,
         "total_count": total_count, "total_sum": total_sum,
         "sampled": sampled, "updated": time.strftime("%H:%M:%S"),
-        "_diag": {
-            "pipes_keys": list(pipes.keys())[:5],
-            "pipes_error": pipes.get("_error"),
-            "recent_error": recent_raw.get("_error"),
-            "token_len": len(token),
-        },
     }
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        subdomain = os.environ.get("AMO_SUBDOMAIN", "")
-        token = os.environ.get("AMO_TOKEN", "")
+        subdomain = os.environ.get("AMO_SUBDOMAIN", "").strip()
+        token = os.environ.get("AMO_TOKEN", "").strip()
         if not subdomain or not token:
             return self._send(500, {"error": "Не заданы AMO_SUBDOMAIN / AMO_TOKEN в настройках Vercel"})
         self._send(200, build_overview(subdomain, token))
