@@ -805,7 +805,7 @@
   async function loadChats(){
     const note=document.querySelector('#tab-chats .note');
     let data=null;
-    try{ const r=await apiFetch('/api/chats'); if(r.ok) data=await r.json(); }catch(e){}
+    try{ const r=await apiFetch('/api/chats',{},ONEC_BASE); if(r.ok) data=await r.json(); }catch(e){}
     const real=!!(data&&data.chats&&data.chats.length&&data.chats[0].id);
     if(real){
       CHATS=data.chats;
@@ -839,7 +839,7 @@
     const nearBottom = box.scrollHeight-box.scrollTop-box.clientHeight < 80;
     if(id){
       let msgs=[];
-      try{ const r=await apiFetch('/api/chat?id='+encodeURIComponent(id)); if(r.ok){ const d=await r.json(); msgs=d.msgs||[]; } }catch(e){}
+      try{ const r=await apiFetch('/api/chat?id='+encodeURIComponent(id),{},ONEC_BASE); if(r.ok){ const d=await r.json(); msgs=d.msgs||[]; } }catch(e){}
       box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+m.t+'">'+linkify(m.x)+'</div>').join(''):'<div style="color:var(--muted);font-size:12px">Нет сообщений</div>';
     }else{
       box.innerHTML=(fallbackMsgs||[]).map(m=>'<div class="bubble '+m.t+'">'+linkify(m.x)+'</div>').join('');
@@ -850,7 +850,7 @@
   async function refreshChats(){
     const tab=document.getElementById('tab-chats');
     if(!tab||tab.classList.contains('hide')){ if(chatsTimer){clearInterval(chatsTimer);chatsTimer=null;} return; }
-    try{ const r=await apiFetch('/api/chats'); if(r.ok){ const d=await r.json(); if(d.chats&&d.chats.length&&d.chats[0].id){ CHATS=d.chats; renderChatList(); const n=document.querySelector('#tab-chats .note'); if(n) n.innerHTML='🟢 <b>Живые переписки</b> · обновлено '+esc(d.updated||''); if(curChatId) openChat(curChatId,curChatName); } } }catch(e){}
+    try{ const r=await apiFetch('/api/chats',{},ONEC_BASE); if(r.ok){ const d=await r.json(); if(d.chats&&d.chats.length&&d.chats[0].id){ CHATS=d.chats; renderChatList(); const n=document.querySelector('#tab-chats .note'); if(n) n.innerHTML='🟢 <b>Живые переписки</b> · обновлено '+esc(d.updated||''); if(curChatId) openChat(curChatId,curChatName); } } }catch(e){}
   }
   async function sendReply(){
     const inp=document.getElementById('replyInput'); const text=inp.value.trim();
@@ -860,7 +860,7 @@
     const box=document.getElementById('msgs');
     box.insertAdjacentHTML('beforeend','<div class="bubble out">'+esc(text)+'</div>'); box.scrollTop=box.scrollHeight;
     try{
-      await apiFetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chatId:curChatId,text:text})});
+      await apiFetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chatId:curChatId,text:text})},ONEC_BASE);
     }catch(e){ alert('Не удалось отправить — проверь, запущен ли сервер.'); }
     inp.disabled=false; inp.focus();
     setTimeout(()=>{ if(curChatId) openChat(curChatId,curChatName); }, 1500);
