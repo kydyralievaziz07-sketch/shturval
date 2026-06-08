@@ -335,7 +335,10 @@ def build_inventory():
     # топ категорий по КОЛИЧЕСТВУ штук (для круговой диаграммы «чего больше всего»)
     cats_units = [{"title": k, "units": int(v["units"]), "count": v["count"]}
                   for k, v in sorted(by_cat.items(), key=lambda i: -i[1]["units"])][:8]
-    low.sort(key=lambda i: i["qty"])
+    # для «на исходе» берём разнообразие: по 20 товаров с остатком 1, 2 и 3
+    low_out = ([x for x in low if x["qty"] == 1][:20]
+               + [x for x in low if x["qty"] == 2][:20]
+               + [x for x in low if x["qty"] == 3][:20])
     return {
         "cats_units": cats_units,
         "total_sku": len(goods),
@@ -346,7 +349,7 @@ def build_inventory():
         "margin_value": round(retail_value - cost_value),
         "no_cost_units": int(no_cost_units),
         "categories": categories,
-        "low": low[:12],
+        "low": low_out,
         "updated": time.strftime("%H:%M:%S"),
     }
 

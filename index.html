@@ -770,7 +770,7 @@
     const d=window._invData; if(!d) return;
     const low=(d.low||[]).slice().sort((a,b)=>LOW_SORT==='asc'?a.qty-b.qty:b.qty-a.qty);
     document.getElementById('prod-low').innerHTML=low.length?
-      '<table><tbody>'+low.map(x=>'<tr><td>'+esc(x.title)+'</td><td style="text-align:right;width:90px"><span class="badge '+(x.qty<=0?'b-out':'b-low')+'">'+x.qty+' шт</span></td></tr>').join('')+'</tbody></table>':
+      '<div style="max-height:300px;overflow:auto"><table><tbody>'+low.map(x=>'<tr><td>'+esc(x.title)+'</td><td style="text-align:right;width:90px"><span class="badge '+(x.qty<=0?'b-out':'b-low')+'">'+x.qty+' шт</span></td></tr>').join('')+'</tbody></table></div>':
       '<span style="color:var(--muted);font-size:13px">Нет товаров на исходе 👍</span>';
   }
   // круговая диаграмма: чего больше всего по количеству
@@ -840,7 +840,7 @@
   if(ps){
     ps.addEventListener('input',()=>{
       clearTimeout(prodTimer);
-      prodTimer=setTimeout(()=>{ prodQ=ps.value.trim(); prodPage=1; loadProducts(); },350);
+      prodTimer=setTimeout(()=>{ prodQ=ps.value.trim(); prodPage=1; loadProducts(true); },350);
     });
   }
   // --- ВАЛЮТА: переключение сом / доллар с автоматическим курсом ---
