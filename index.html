@@ -158,6 +158,7 @@
     </div>
     <nav class="nav">
       <a class="active" data-tab="dash"><span class="ico">📊</span> Дашборд</a>
+      <a data-tab="crm"><span class="ico">🔌</span> CRM (живые данные)</a>
       <a data-tab="prod"><span class="ico">📦</span> Товары</a>
       <a data-tab="sales"><span class="ico">🛒</span> Продажи</a>
       <a data-tab="clients"><span class="ico">👥</span> Клиенты</a>
@@ -168,7 +169,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v0.4<br>Доступ: только владелец<br>Данные демонстрационные
+      Штурвал v0.5<br>Доступ: только владелец<br>Демо + живая CRM
     </div>
   </aside>
 
@@ -253,6 +254,16 @@
             <tr><td>Сушилка для белья</td><td>Хозтовары</td><td>0</td><td>0 ₸</td><td>0</td><td><span class="badge b-out">Нет в наличии</span></td></tr>
           </tbody>
         </table>
+      </div>
+    </section>
+
+    <!-- CRM LIVE (реальные данные из amoCRM) -->
+    <section id="tab-crm" class="hide">
+      <div id="crm-status" class="note">⏳ Подключаюсь к amoCRM…</div>
+      <div id="crm-kpis" class="kpis" style="margin-top:16px"></div>
+      <div class="grid2b">
+        <div class="card"><h3>🔻 Сделки по этапам</h3><div id="crm-stages">—</div></div>
+        <div class="card"><h3>🕐 Последние сделки</h3><div id="crm-recent">—</div></div>
       </div>
     </section>
 
@@ -428,6 +439,7 @@
 <script>
   const titles = {
     dash     :["Дашборд","Магазин Бизмарт — общая картина"],
+    crm      :["CRM — живые данные","Реальные сделки и воронки из amoCRM"],
     prod     :["Товары","Каталог, остатки и маржа"],
     sales    :["Продажи","Продажи за день и за период"],
     clients  :["Клиенты","Кто покупает и кто возвращается"],
@@ -446,6 +458,7 @@
       document.getElementById('tab-'+tab).classList.remove('hide');
       document.getElementById('page-title').textContent=titles[tab][0];
       document.getElementById('page-sub').textContent=titles[tab][1];
+      if(tab==='crm') loadCRM();
       window.scrollTo(0,0);
     });
   });
@@ -459,6 +472,37 @@
   function toggleDrawer(){
     document.getElementById('drawer').classList.toggle('open');
     document.getElementById('overlay').classList.toggle('open');
+  }
+  // --- ЖИВЫЕ ДАННЫЕ ИЗ amoCRM (через сервер-посредник) ---
+  const API_BASE='http://localhost:8787';
+  const fmt=n=>(n||0).toLocaleString('ru-RU')+' сом';
+  function esc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+  function kpiCard(label,val){return '<div class="card kpi"><div class="label">'+label+'</div><div class="value">'+val+'</div></div>';}
+  async function loadCRM(){
+    const st=document.getElementById('crm-status');
+    try{
+      const r=await fetch(API_BASE+'/api/overview');
+      if(!r.ok) throw 0;
+      const d=await r.json();
+      st.style.borderStyle='solid'; st.style.borderColor='#39d98a';
+      st.innerHTML='🟢 <b>Подключено к amoCRM</b> ('+esc(d.account)+') • обновлено '+esc(d.updated)+
+        (d.sampled?' • по последним ~'+d.total_count+' сделкам':'');
+      const succ=(d.stage_summary||[]).find(s=>/успешно/i.test(s.stage))||{count:0,sum:0};
+      document.getElementById('crm-kpis').innerHTML=
+        kpiCard('Успешных сделок',succ.count)+kpiCard('Сумма успешных',fmt(succ.sum))+
+        kpiCard('Сделок в выборке',d.total_count)+kpiCard('Сумма выборки',fmt(d.total_sum));
+      document.getElementById('crm-stages').innerHTML=
+        '<table><thead><tr><th>Этап</th><th>Сделок</th><th>Сумма</th></tr></thead><tbody>'+
+        (d.stage_summary||[]).map(s=>'<tr><td>'+esc(s.stage)+'</td><td>'+s.count+'</td><td>'+fmt(s.sum)+'</td></tr>').join('')+
+        '</tbody></table>';
+      document.getElementById('crm-recent').innerHTML=
+        '<table><thead><tr><th>Сделка</th><th>Сумма</th><th>Этап</th></tr></thead><tbody>'+
+        (d.recent||[]).map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+fmt(x.price)+'</td><td>'+esc(x.stage)+'</td></tr>').join('')+
+        '</tbody></table>';
+    }catch(e){
+      st.style.borderStyle='dashed'; st.style.borderColor='#ff6b6b';
+      st.innerHTML='🔴 <b>Нет связи с сервером-посредником.</b><br>Чтобы увидеть живые данные, запусти на компьютере файл <b>backend/Запустить-сервер.command</b> и обнови страницу.<br><span style="color:var(--muted)">На опубликованном сайте в интернете живые данные пока не работают — это следующий шаг.</span>';
+    }
   }
   // закрытие шторки уведомлений по клавише Esc
   document.addEventListener('keydown',e=>{

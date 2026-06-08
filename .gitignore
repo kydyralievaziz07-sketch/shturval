@@ -1,0 +1,8 @@
+# СЕКРЕТЫ — никогда не выкладывать на GitHub!
+backend/secret.env
+*.env
+*token*.txt
+
+# системное
+.DS_Store
+__pycache__/
