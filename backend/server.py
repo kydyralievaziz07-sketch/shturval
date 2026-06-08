@@ -205,7 +205,7 @@ def get_categories():
 def get_goods():
     """Возвращает список товаров из 1С (кэш 10 минут). Бросает исключение, если 1С недоступна и кэша нет."""
     now = time.time()
-    if _goods["goods"] is not None and now - _goods["t"] < 600:
+    if _goods["goods"] is not None and now - _goods["t"] < 120:
         return _goods["goods"]
     data = yaros_get("/goods")
     _goods["goods"] = data.get("goods", [])
@@ -316,7 +316,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, data)
         if self.path.startswith("/api/inventory"):
             try:
-                return self._send(200, cached("inventory", 600, build_inventory))
+                return self._send(200, cached("inventory", 120, build_inventory))
             except Exception as e:
                 return self._send(200, {"error": "Нет связи с 1С: " + str(e)})
         if self.path.startswith("/api/products"):

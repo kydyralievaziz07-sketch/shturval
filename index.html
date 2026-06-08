@@ -507,7 +507,7 @@
       document.getElementById('page-sub').textContent=titles[tab][1];
       if(tab==='crm') loadCRM();
       if(tab==='chats') loadChats();
-      if(tab==='prod'){ loadInventory(); loadProducts(); }
+      if(tab==='prod'){ loadInventory(); loadProducts(); startProdAuto(); }
       window.scrollTo(0,0);
     });
   });
@@ -600,7 +600,7 @@
   function renderInventory(d){
     const st=document.getElementById('prod-status');
     st.style.borderStyle='solid'; st.style.borderColor='#39d98a';
-    st.innerHTML='🟢 <b>Каталог из 1С</b> · обновлено '+esc(d.updated||'')+' · всего '+(d.total_sku||0).toLocaleString('ru-RU')+' позиций';
+    st.innerHTML='🟢 <b>Каталог из 1С</b> · обновлено '+esc(d.updated||'')+' · всего '+(d.total_sku||0).toLocaleString('ru-RU')+' позиций · <span style="color:var(--muted)">обновляется само каждую минуту</span>';
     document.getElementById('prod-kpis').innerHTML=
       kpiCard('Позиций (SKU)',(d.total_sku||0).toLocaleString('ru-RU'))+
       kpiCard('В наличии',(d.in_stock||0).toLocaleString('ru-RU'))+
@@ -627,9 +627,9 @@
       '<td><span class="money" data-som="'+x.cost+'">'+fmt(x.cost)+'</span></td>'+
       '<td>'+margin+'</td><td>'+x.qty+'</td><td>'+status+'</td></tr>';
   }
-  async function loadProducts(){
+  async function loadProducts(silent){
     const tb=document.getElementById('prodRows');
-    tb.innerHTML='<tr><td colspan="7" style="color:var(--muted)">Загрузка…</td></tr>';
+    if(!silent) tb.innerHTML='<tr><td colspan="7" style="color:var(--muted)">Загрузка…</td></tr>';
     try{
       const r=await fetch(API_BASE+'/api/products?page='+prodPage+'&q='+encodeURIComponent(prodQ));
       const d=await r.json();
@@ -642,6 +642,17 @@
     }catch(e){ tb.innerHTML='<tr><td colspan="7" style="color:var(--red)">Нет связи с сервером 1С</td></tr>'; }
   }
   function prodGo(delta){ prodPage+=delta; if(prodPage<1)prodPage=1; loadProducts(); }
+  // автообновление: пока вкладка «Товары» открыта — сами тянем свежие остатки
+  let prodAutoTimer=null;
+  function startProdAuto(){
+    if(prodAutoTimer) return;
+    prodAutoTimer=setInterval(()=>{
+      const tab=document.getElementById('tab-prod');
+      if(!tab || tab.classList.contains('hide')){ clearInterval(prodAutoTimer); prodAutoTimer=null; return; }
+      loadInventory();          // сводка склада
+      loadProducts(true);       // таблица — тихо, сохраняя текущую страницу и поиск
+    },60000);
+  }
   const ps=document.getElementById('prodSearch');
   if(ps){
     ps.addEventListener('input',()=>{
