@@ -61,6 +61,12 @@ def build_overview(subdomain, token):
         "stage_summary": stage_summary,
         "total_count": total_count, "total_sum": total_sum,
         "sampled": sampled, "updated": time.strftime("%H:%M:%S"),
+        "_diag": {
+            "pipes_keys": list(pipes.keys())[:5],
+            "pipes_error": pipes.get("_error"),
+            "recent_error": recent_raw.get("_error"),
+            "token_len": len(token),
+        },
     }
 
 class handler(BaseHTTPRequestHandler):
