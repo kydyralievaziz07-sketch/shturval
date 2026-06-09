@@ -40,6 +40,9 @@ def load_secret():
     cfg["SITE_PASSWORD"] = env("SITE_PASSWORD")
     # доп. пользователи с ролями (JSON-список): [{"pw":"...","name":"...","sections":["chats"]}]
     cfg["USERS_JSON"] = env("USERS_JSON")
+    # ИИ-помощник магазина (Anthropic Claude)
+    cfg["ANTHROPIC_API_KEY"] = env("ANTHROPIC_API_KEY")
+    cfg["ANTHROPIC_MODEL"] = env("ANTHROPIC_MODEL") or "claude-haiku-4-5-20251001"
     return cfg
 
 CFG = load_secret()
@@ -77,6 +80,7 @@ SECTION_OF = [
     ("/api/categories", "prod"), ("/api/add-product", "prod"),
     ("/api/chats", "chats"), ("/api/chat", "chats"), ("/api/send", "chats"),
     ("/api/bot-feedback", "chats"),
+    ("/api/assistant", "ai"),
 ]
 
 # Исправления для бота (обучение). Хранится в памяти процесса + дозапись в файл.
@@ -547,6 +551,117 @@ def search_products(q, page, per=50, cat=None, in_stock=False):
     return {"total": total, "page": page, "per": per, "items": out}
 
 
+# ====== ИИ-ПОМОЩНИК МАГАЗИНА (Anthropic Claude) ======
+AI_SYSTEM = (
+    "Ты — деловой ИИ-помощник магазина «Бизмарт» (товары для дома, Кыргызстан). "
+    "Отвечай ТОЛЬКО на вопросы про этот магазин: товары, остатки, цены, продажи, "
+    "клиенты, переписки, воронка, сотрудники, финансы, маркетинг этого бизнеса. "
+    "Если вопрос не про магазин (погода, политика, общие темы) — вежливо откажись "
+    "одной фразой и предложи спросить про магазин. "
+    "Валюта — сом (KGS), НЕ тенге и НЕ рубли. Отвечай по-русски, кратко и по делу, "
+    "с конкретными цифрами из данных ниже. Если данных не хватает — честно скажи. "
+    "Когда уместно — давай практичные рекомендации владельцу."
+)
+
+def _ai_context(crm, want_chats):
+    """Собирает сводку по магазину для ИИ из 1С, amoCRM, чатов и CRM."""
+    parts = []
+    try:
+        inv = cached("inventory", 120, build_inventory)
+        parts.append("СКЛАД (1С): позиций {}, в наличии {}, штук {}, склад в рознице {} сом, "
+                     "себестоимость {} сом, потенц. наценка {} сом.".format(
+            inv.get("total_sku"), inv.get("in_stock"), inv.get("total_units"),
+            inv.get("retail_value"), inv.get("cost_value"), inv.get("margin_value")))
+        cv = ", ".join("{} ({} сом)".format(c["title"], c["value"]) for c in (inv.get("cats_value") or [])[:8])
+        cu = ", ".join("{} ({} шт)".format(c["title"], c["units"]) for c in (inv.get("cats_units") or [])[:8])
+        parts.append("Категории по стоимости: " + cv)
+        parts.append("Категории по количеству: " + cu)
+        low = inv.get("low") or []
+        parts.append("Товаров на исходе (1-3 шт): {}.".format(len(low)))
+    except Exception as e:
+        parts.append("Склад (1С): данные недоступны (%s)." % e)
+    try:
+        ov = get_overview()
+        per = (ov.get("periods") or {})
+        for k, lbl in (("today", "сегодня"), ("week", "неделя"), ("month", "месяц")):
+            p = per.get(k) or {}
+            parts.append("amoCRM {}: сделок {}, сумма {} сом.".format(lbl, p.get("count"), p.get("sum")))
+    except Exception:
+        pass
+    try:
+        dist = {}
+        for st in _chat_stages.values():
+            dist[st] = dist.get(st, 0) + 1
+        if dist:
+            parts.append("Авто-воронка по перепискам: " + ", ".join("{}: {}".format(k, v) for k, v in dist.items()))
+    except Exception:
+        pass
+    if isinstance(crm, dict):
+        parts.append("CRM (наша): " + json.dumps(crm, ensure_ascii=False))
+    if want_chats:
+        try:
+            res = chatplace_call("chats_list", {"limit": 12})
+            items = res.get("items", []) if isinstance(res, dict) else []
+            samples = []
+            for it in items[:12]:
+                cid = it.get("id")
+                if not cid:
+                    continue
+                m = build_chat_messages(cid).get("msgs", [])[-6:]
+                txt = " | ".join(("клиент: " if x["t"] == "in" else "мы: ") + x["x"] for x in m)
+                if txt:
+                    samples.append("[{}] {}".format(it.get("clientName", "клиент"), txt[:400]))
+            if samples:
+                parts.append("ОБРАЗЦЫ ПЕРЕПИСОК (последние сообщения):\n" + "\n".join(samples))
+        except Exception:
+            pass
+    return "\n".join(parts)
+
+def ai_answer(question, crm, history):
+    key = CFG.get("ANTHROPIC_API_KEY", "")
+    if not key:
+        return {"need_key": True,
+                "answer": "ИИ-движок ещё не подключён. Как только добавим ключ Anthropic — я смогу "
+                          "анализировать переписки и отвечать на любые вопросы по магазину."}
+    ql = (question or "").lower()
+    want_chats = any(w in ql for w in ["перепис", "диалог", "чат", "клиент", "сливают", "сливаются",
+                                       "уход", "отказ", "почему не", "возраж"])
+    context = _ai_context(crm, want_chats)
+    msgs = []
+    for h in (history or [])[-6:]:
+        role = h.get("role"); content = h.get("content")
+        if role in ("user", "assistant") and content:
+            msgs.append({"role": role, "content": str(content)})
+    msgs.append({"role": "user",
+                 "content": "ДАННЫЕ МАГАЗИНА (на сейчас):\n" + context + "\n\nВОПРОС: " + question})
+    body = json.dumps({
+        "model": CFG.get("ANTHROPIC_MODEL"),
+        "max_tokens": 1024,
+        "system": AI_SYSTEM,
+        "messages": msgs,
+    }).encode("utf-8")
+    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, headers={
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "User-Agent": "Shturval/1.0",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            resp = json.loads(r.read().decode("utf-8"))
+        text = "".join(b.get("text", "") for b in resp.get("content", []) if b.get("type") == "text")
+        return {"answer": text or "Пустой ответ от ИИ."}
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8")[:300]
+        except Exception:
+            pass
+        return {"error": "ИИ вернул ошибку HTTP {}. {}".format(e.code, detail)}
+    except Exception as e:
+        return {"error": "Не удалось обратиться к ИИ: %s" % e}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -631,6 +746,16 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             return self._send(200, {"ok": True, "saved": len(fixes), "total": len(BOT_FEEDBACK)})
+        if self.path.startswith("/api/assistant"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            q = (body.get("question") or "").strip()
+            if not q:
+                return self._send(400, {"error": "пустой вопрос"})
+            return self._send(200, ai_answer(q, body.get("crm"), body.get("history")))
         self._send(404, {"error": "не найдено"})
 
     def do_GET(self):
