@@ -16,3 +16,5 @@ backend/chats-data.json
 __pycache__/
 ТЗ-CRM.md
 .github/workflows/
+backend/bot_feedback.log
+bot_feedback.log

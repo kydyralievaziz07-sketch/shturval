@@ -271,6 +271,7 @@
     </div>
     <nav class="nav">
       <a class="active" data-tab="dash"><span class="ico">📊</span> Дашборд</a>
+      <a data-tab="myday"><span class="ico">🎯</span> Мой день</a>
       <a data-tab="crm"><span class="ico">📡</span> Живые данные</a>
       <a data-tab="deals"><span class="ico">🧲</span> Штурвал CRM</a>
       <a data-tab="prod"><span class="ico">📦</span> Товары</a>
@@ -280,10 +281,11 @@
       <a data-tab="analytics"><span class="ico">📈</span> Аналитика</a>
       <a data-tab="fin"><span class="ico">💰</span> Финансы (1С)</a>
       <a data-tab="ai"><span class="ico">🤖</span> ИИ-помощник</a>
+      <a data-tab="staff"><span class="ico">🧑‍💼</span> Персонал</a>
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v2.4.0<br>CRM-дашборд 📊 + все заявки<br>обучение бота 🤖
+      Штурвал v2.5.0<br>Мой день 🎯 · Персонал 🧑‍💼<br>отчёты amoCRM 📊 + KPI
     </div>
   </aside>
 
@@ -377,8 +379,9 @@
       <div id="crm-kpis" class="kpis" style="margin-top:16px"></div>
       <div class="grid2b">
         <div class="card"><h3>🔻 Сделки по этапам</h3><div id="crm-stages">—</div></div>
-        <div class="card"><h3>🕐 Последние сделки</h3><div id="crm-recent">—</div></div>
+        <div class="card"><h3>🍩 Распределение по этапам</h3><div id="crm-donut">—</div></div>
       </div>
+      <div class="card" style="margin-top:16px"><h3>🕐 Последние сделки</h3><div id="crm-recent">—</div></div>
     </section>
 
     <!-- CHATS (предпросмотр) -->
@@ -418,6 +421,17 @@
           <div class="replybox"><input id="ck-reply" placeholder="Ответить клиенту…" onkeydown="if(event.key==='Enter')ckSend()"><button class="btn ghost" onclick="openBotFix()" title="Отметить, что бот ответил неправильно">⚠️ Бот ошибся</button><button class="btn" onclick="ckSend()">Отправить</button></div>
         </div>
       </div>
+    </section>
+
+    <!-- МОЙ ДЕНЬ — личный кабинет сотрудника -->
+    <section id="tab-myday" class="hide">
+      <div id="myday-body"></div>
+    </section>
+
+    <!-- ПЕРСОНАЛ — только для владельца -->
+    <section id="tab-staff" class="hide">
+      <div id="staff-status" class="note" style="margin-bottom:14px">⏳ Загружаю список сотрудников…</div>
+      <div id="staff-body"></div>
     </section>
 
     <!-- PRODUCTS (живые данные из 1С) -->
@@ -690,6 +704,7 @@
 <script>
   const titles = {
     dash     :["Дашборд","Магазин Бизмарт — общая картина"],
+    myday    :["Мой день","Твой план, продажи и KPI на сегодня"],
     crm      :["Живые данные","Реальные сделки и воронки из amoCRM"],
     deals    :["Штурвал CRM","Заявки, воронка, переписка и отчёты в одном окне"],
     chats    :["Чаты","Переписки с клиентами"],
@@ -700,6 +715,7 @@
     analytics:["Аналитика","ABC-анализ, остатки, прогнозы"],
     fin      :["Финансы (1С)","Деньги, закуп и остатки из 1С"],
     ai       :["ИИ-помощник","Подсказки, прогнозы и чат по данным"],
+    staff    :["Персонал","Сотрудники, роли и зоны ответственности"],
     set      :["Настройки","Доступы и интеграции"]
   };
   document.querySelectorAll('.nav a').forEach(link=>{
@@ -712,6 +728,8 @@
       document.getElementById('page-title').textContent=titles[tab][0];
       document.getElementById('page-sub').textContent=titles[tab][1];
       if(tab==='crm') loadCRM();
+      if(tab==='myday') renderMyDay();
+      if(tab==='staff') loadStaff();
       if(tab==='deals'){ renderBoard(); startDealsAuto(); }
       if(tab==='chats') loadChats();
       if(tab==='prod'){ loadInventory(); loadProducts(); startProdAuto(); }
@@ -758,17 +776,22 @@
     return r;
   }
   // --- пользователь и роли (что ему показывать) ---
-  let USER={name:'',sections:['all']};
+  let USER={name:'',sections:['all'],role:'',department:'',plan_day:0};
   function canSee(tab){ return USER.sections.indexOf('all')>=0 || USER.sections.indexOf(tab)>=0; }
+  function isOwner(){ return USER.sections.indexOf('all')>=0; }
   function applyUser(d){
-    USER={name:(d&&d.name)||'', sections:(d&&d.sections&&d.sections.length)?d.sections:['all']};
+    USER={name:(d&&d.name)||'', sections:(d&&d.sections&&d.sections.length)?d.sections:['all'],
+          role:(d&&d.role)||'', department:(d&&d.department)||'', plan_day:(d&&d.plan_day)||0};
     applyAccess();
   }
   function applyAccess(){
     let first=null;
     document.querySelectorAll('.nav a').forEach(a=>{
       const t=a.dataset.tab;
-      const show=(t==='set')||canSee(t);          // «Настройки» (выход) доступны всем
+      let show;
+      if(t==='set'||t==='myday') show=true;        // «Настройки» и «Мой день» — всем
+      else if(t==='staff') show=isOwner();         // «Персонал» — только владельцу
+      else show=canSee(t);
       a.style.display=show?'':'none';
       if(show && t!=='set' && !first) first=a;     // по умолчанию — первый рабочий раздел
     });
@@ -889,9 +912,24 @@
     st.innerHTML='🟢 <b>Подключено к amoCRM</b> ('+esc(d.account)+') • <b>'+lbl+'</b> • обновлено '+esc(d.updated)+
       (d.sampled?' • по последним ~'+d.total_count+' сделкам':'');
     const succ=(p.stage_summary||[]).find(s=>/успешно/i.test(s.stage))||{count:0,sum:0};
+    const avg=(p.count>0)?Math.round((p.sum||0)/p.count):0;
+    const conv=(p.count>0)?Math.round((succ.count||0)/p.count*100):0;
     document.getElementById('crm-kpis').innerHTML=
-      kpiCard('Успешных сделок',succ.count)+kpiCard('Сумма успешных',fmt(succ.sum))+
-      kpiCard('Сделок '+lbl,p.count)+kpiCard('Сумма '+lbl,fmt(p.sum));
+      kpiCard('Успешных сделок',succ.count)+kpiCard('Сумма успешных','<span class="money" data-som="'+(succ.sum||0)+'">'+fmt(succ.sum)+'</span>')+
+      kpiCard('Сделок '+lbl,p.count)+kpiCard('Сумма '+lbl,'<span class="money" data-som="'+(p.sum||0)+'">'+fmt(p.sum)+'</span>')+
+      kpiCard('Средний чек','<span class="money" data-som="'+avg+'">'+fmt(avg)+'</span>')+kpiCard('Конверсия',conv+'%');
+    // 🍩 пончик распределения сделок по этапам
+    (function(){ const box=document.getElementById('crm-donut'); if(!box) return;
+      const items=(p.stage_summary||[]).filter(s=>s.count>0);
+      if(!items.length){ box.innerHTML='<div style="color:var(--muted);font-size:13px">Нет данных</div>'; return; }
+      const total=items.reduce((s,x)=>s+x.count,0)||1;
+      const colors=['#4f8cff','#22d3ee','#ffb84d','#39d98a','#a78bfa','#ff6b6b','#f472b6','#94a3b8'];
+      let acc=0; const segs=items.map((x,i)=>{const f=acc/total*360;acc+=x.count;const t=acc/total*360;return colors[i%colors.length]+' '+f+'deg '+t+'deg';}).join(',');
+      const legend=items.map((x,i)=>'<div style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:7px">'+
+        '<span style="width:12px;height:12px;border-radius:3px;flex-shrink:0;background:'+colors[i%colors.length]+'"></span>'+
+        '<span>'+esc(x.stage)+'</span><span style="color:var(--muted);margin-left:auto">'+x.count+' · '+Math.round(x.count/total*100)+'%</span></div>').join('');
+      box.innerHTML='<div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap"><div style="width:140px;height:140px;border-radius:50%;flex-shrink:0;background:conic-gradient('+segs+')"><div style="width:56%;height:56%;margin:22% auto;background:var(--panel);border-radius:50%"></div></div><div style="flex:1;min-width:200px">'+legend+'</div></div>';
+    })();
     // этапы в порядке воронки amoCRM (Неразобранное → … → клиент получил → успешно)
     let stages=(p.stage_summary||[]).slice();
     const order=(d.pipelines&&d.pipelines[0]&&d.pipelines[0].stages)||[];
@@ -1429,6 +1467,97 @@
     pend.forEach(f=>f.applied=true); botfixPersist(); renderBotList();
     alert('🚀 Отправлено '+pend.length+' исправлений. Они попадут в базу знаний бота — он будет отвечать так, как ты указал.');
   }
+  // =================== МОЙ ДЕНЬ — личный кабинет сотрудника ===================
+  function dealInDept(d){
+    const dep=(USER.department||'').toLowerCase(); if(!dep) return true;
+    return (d.items||[]).some(i=>(((i.cat||'')+' '+(i.title||'')).toLowerCase()).indexOf(dep)>=0);
+  }
+  function isMineDeal(d){ const n=USER.name||''; return !n||!d.owner||d.owner===n; }
+  function renderMyDay(){
+    const box=document.getElementById('myday-body'); if(!box) return;
+    const PAID=['Оплачено','Отгружено','Закрыто'];
+    const dep=USER.department||''; const plan=+USER.plan_day||0; const owner=isOwner();
+    const ds=new Date(); ds.setHours(0,0,0,0); const dsT=ds.getTime();
+    const paidDeals=CRM.deals.filter(d=>PAID.indexOf(d.status)>=0);
+    const pick=d=>dep?dealInDept(d):(owner?true:isMineDeal(d));
+    const focusPaid=paidDeals.filter(pick);
+    const today=focusPaid.filter(d=>d.paid_at&&new Date(d.paid_at).getTime()>=dsT);
+    const doneSum=today.reduce((s,d)=>s+dealAmount(d),0);
+    const cnt=today.length; const avg=cnt?Math.round(doneSum/cnt):0;
+    const pct=plan>0?Math.min(100,Math.round(doneSum/plan*100)):0;
+    const left=Math.max(0,plan-doneSum);
+    // активные заявки в работе
+    const active=CRM.deals.filter(d=>['Закрыто','Отказ'].indexOf(d.status)<0 && pick(d));
+    const myTasks=CRM.tasks.filter(t=>!t.done);
+    // 7-дневный тренд продаж
+    const days=[]; for(let i=6;i>=0;i--){ const s=new Date(); s.setHours(0,0,0,0); s.setDate(s.getDate()-i); days.push(s); }
+    const buckets=days.map(s=>{ const a=s.getTime(),b=a+86400000;
+      const sum=focusPaid.filter(d=>{const t=d.paid_at?new Date(d.paid_at).getTime():0;return t>=a&&t<b;}).reduce((x,d)=>x+dealAmount(d),0);
+      return {lbl:s.toLocaleDateString('ru-RU',{weekday:'short'}),sum:sum}; });
+    const mx=Math.max(1,...buckets.map(x=>x.sum));
+    const bars='<div style="display:flex;align-items:flex-end;gap:10px;height:150px;padding-top:10px">'+
+      buckets.map((x,i)=>'<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end">'+
+        '<div style="font-size:11px;color:var(--muted)">'+(x.sum?Math.round(x.sum/1000)+'к':'')+'</div>'+
+        '<div style="width:100%;background:'+(i===6?'#39d98a':'#4f8cff')+';border-radius:6px 6px 0 0;height:'+Math.max(3,Math.round(x.sum/mx*110))+'px"></div>'+
+        '<div style="font-size:11px;color:var(--muted)">'+esc(x.lbl)+'</div></div>').join('')+'</div>';
+    const who=dep?('Отдел: <b>'+esc(dep)+'</b>'):(owner?'<b>Владелец</b> — общая картина':'Личные продажи');
+    const planBlock=plan>0?
+      '<div class="card" style="margin-bottom:16px"><h3>🎯 План на сегодня</h3>'+
+      '<div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:8px"><span>Выполнено: <b><span class="money" data-som="'+doneSum+'">'+fmt(doneSum)+'</span></b></span>'+
+      '<span style="color:var(--muted)">План: <span class="money" data-som="'+plan+'">'+fmt(plan)+'</span></span></div>'+
+      '<div class="progress" style="height:14px"><div style="width:'+pct+'%;background:'+(pct>=100?'#39d98a':'#4f8cff')+'"></div></div>'+
+      '<div style="margin-top:8px;font-size:13px;color:var(--muted)">'+(pct>=100?'🎉 План выполнен!':'Осталось до плана: <b style="color:var(--text)"><span class="money" data-som="'+left+'">'+fmt(left)+'</span></b> ('+pct+'%)')+'</div></div>'
+      :'<div class="note" style="margin-bottom:16px">План на день не задан. Чтобы поставить личный/отдельский план — скажи мне, я настрою.</div>';
+    box.innerHTML=
+      '<div class="card" style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">'+
+        '<div><div style="font-size:18px;font-weight:700">👋 Привет, '+esc(USER.name||'коллега')+'!</div>'+
+        '<div style="color:var(--muted);font-size:13px;margin-top:3px">'+who+(USER.role?' · '+esc(USER.role):'')+'</div></div>'+
+        '<div style="text-align:right"><div style="font-size:22px;font-weight:700">'+pct+'%</div><div style="color:var(--muted);font-size:12px">выполнение плана</div></div>'+
+      '</div>'+
+      planBlock+
+      '<div class="kpis" style="grid-template-columns:repeat(4,1fr)">'+
+        kpiCard('🛒 Продаж сегодня',cnt)+
+        kpiCard('💰 Сумма сегодня','<span class="money" data-som="'+doneSum+'">'+fmt(doneSum)+'</span>')+
+        kpiCard('🧾 Средний чек','<span class="money" data-som="'+avg+'">'+fmt(avg)+'</span>')+
+        kpiCard('⚙️ Заявок в работе',active.length)+
+      '</div>'+
+      '<div class="grid2b">'+
+        '<div class="card"><h3>📈 Продажи за 7 дней</h3>'+bars+'</div>'+
+        '<div class="card"><h3>⚙️ Мои заявки в работе</h3>'+
+          (active.length?'<div style="max-height:230px;overflow:auto"><table><tbody>'+
+            active.slice(0,30).map(d=>{const c=getClient(d.client_id);return '<tr><td>'+esc((c&&c.name)||'Без имени')+'</td><td style="text-align:right"><span class="badge b-low">'+esc(d.status)+'</span></td></tr>';}).join('')+
+            '</tbody></table></div>':'<div style="color:var(--muted);font-size:13px">Нет активных заявок 👍</div>')+
+        '</div>'+
+      '</div>'+
+      (myTasks.length?'<div class="card" style="margin-top:16px"><h3>📋 Задачи</h3>'+myTasks.slice(0,20).map(t=>'<div style="padding:6px 0;border-bottom:1px solid var(--line);font-size:13px">'+esc(t.title)+(t.due_at?' <span style="color:var(--muted)">· '+fmtDT(t.due_at)+'</span>':'')+'</div>').join('')+'</div>':'');
+    renderMoney();
+  }
+  // =================== ПЕРСОНАЛ (владелец) ===================
+  async function loadStaff(){
+    const st=document.getElementById('staff-status');
+    try{ const r=await apiFetch('/api/staff',{},ONEC_BASE); const d=await r.json(); renderStaff(d); if(st) st.style.display='none'; }
+    catch(e){ if(st){ st.style.display=''; st.innerHTML = e.message==='forbidden'?'⛔ Раздел доступен только владельцу.':'Не удалось загрузить. Сервер мог просыпаться — обнови через минуту.'; } }
+  }
+  function renderStaff(d){
+    const b=document.getElementById('staff-body'); if(!b) return; const staff=d.staff||[];
+    const secNames={all:'Все разделы',dash:'Дашборд',myday:'Мой день',crm:'Живые данные',deals:'CRM',chats:'Чаты',prod:'Товары',sales:'Продажи',clients:'Клиенты',market:'Рынок',analytics:'Аналитика',fin:'Финансы',ai:'ИИ-помощник',staff:'Персонал',set:'Настройки'};
+    const depts=new Set(staff.filter(s=>s.department).map(s=>s.department));
+    const rows=staff.map(s=>{
+      const secs=(s.sections||[]).map(x=>secNames[x]||x).join(', ')||'—';
+      return '<tr><td><b>'+esc(s.name)+'</b></td><td>'+esc(s.role||'—')+'</td><td>'+esc(s.department||'—')+'</td><td>'+(s.plan_day?('<span class="money" data-som="'+s.plan_day+'">'+fmt(s.plan_day)+'</span>'):'—')+'</td><td style="color:var(--muted);font-size:12px">'+esc(secs)+'</td></tr>';
+    }).join('');
+    b.innerHTML='<div class="kpis" style="grid-template-columns:repeat(3,1fr)">'+
+        kpiCard('👥 Сотрудников',staff.length)+
+        kpiCard('🏬 Отделов',depts.size)+
+        kpiCard('🎯 Общий план/день','<span class="money" data-som="'+staff.reduce((a,s)=>a+(+s.plan_day||0),0)+'">'+fmt(staff.reduce((a,s)=>a+(+s.plan_day||0),0))+'</span>')+
+      '</div>'+
+      '<div class="card"><h3>🧑‍💼 Сотрудники и зоны ответственности</h3>'+
+      '<table><thead><tr><th>Имя</th><th>Роль</th><th>Отдел</th><th>План/день</th><th>Видит разделы</th></tr></thead><tbody>'+
+      (rows||'<tr><td colspan="5" style="color:var(--muted)">Пока заведён только владелец.</td></tr>')+
+      '</tbody></table></div>'+
+      '<div class="note" style="margin-top:14px">➕ Чтобы добавить сотрудника (имя, пароль, <b>отдел</b>, <b>план на день</b>, какие разделы видит) — напиши мне, и я заведу его на сервере. Пароли тут не показываются ради безопасности 🔒.</div>';
+    renderMoney();
+  }
   function dropChatToStage(status){
     if(!dragChat) return; const nm=dragChat.name; dragChat=null;
     const d=ensureDeal(nm,status);
@@ -1496,7 +1625,7 @@
       }catch(e){ res.innerHTML='<div style="color:var(--red)">Нет доступа к товарам</div>'; res.style.display=''; }
     },350);
   }
-  function addItem(it){ const d=getDeal(curDealId); d.items=d.items||[]; d.items.push({id:uid(),title:it.title,qty:1,price:it.price||0}); crmPersist(); renderDealModal(); }
+  function addItem(it){ const d=getDeal(curDealId); d.items=d.items||[]; d.items.push({id:uid(),title:it.title,qty:1,price:it.price||0,cat:it.category||''}); crmPersist(); renderDealModal(); }
   function rmItem(i){ const d=getDeal(curDealId); d.items.splice(i,1); crmPersist(); renderDealModal(); }
   function addTask(){ const d=getDeal(curDealId); const t=document.getElementById('tk-title').value.trim(); const due=document.getElementById('tk-due').value; if(!t) return; CRM.tasks.push({id:uid(),deal_id:d.id,title:t,due_at:due,done:false,owner:(USER.name||'')}); logActivity(d.client_id,d.id,'заметка','Задача: '+t); crmPersist(); renderDealModal(); }
   function toggleTask(id){ const t=CRM.tasks.find(x=>x.id===id); if(t){ t.done=!t.done; crmPersist(); renderDealModal(); } }

@@ -60,7 +60,10 @@ def load_users():
                 pw = (u.get("pw") or "").strip()
                 if pw:
                     users[pw] = {"name": u.get("name", "Сотрудник"),
-                                 "sections": u.get("sections", [])}
+                                 "sections": u.get("sections", []),
+                                 "role": u.get("role", ""),
+                                 "department": u.get("department", ""),
+                                 "plan_day": u.get("plan_day", 0)}
         except Exception:
             pass
     return users
@@ -552,7 +555,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/auth"):
             u = self._user()
             return self._send(200 if u else 401, {"ok": bool(u),
-                "name": (u or {}).get("name", ""), "sections": (u or {}).get("sections", [])})
+                "name": (u or {}).get("name", ""), "sections": (u or {}).get("sections", []),
+                "role": (u or {}).get("role", ""), "department": (u or {}).get("department", ""),
+                "plan_day": (u or {}).get("plan_day", 0)})
         # всё остальное под /api/ — нужен вход и доступ к разделу
         if self.path.startswith("/api/"):
             u = self._user()
@@ -562,6 +567,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(403, {"error": "Нет доступа к этому разделу"})
         if self.path.startswith("/api/bot-feedback"):
             return self._send(200, {"fixes": BOT_FEEDBACK, "total": len(BOT_FEEDBACK)})
+        if self.path.startswith("/api/staff"):
+            u = self._user()
+            if not (u and "all" in u.get("sections", [])):
+                return self._send(403, {"error": "Только владелец видит персонал"})
+            staff = [{"name": v.get("name", ""), "sections": v.get("sections", []),
+                      "role": v.get("role", ""), "department": v.get("department", ""),
+                      "plan_day": v.get("plan_day", 0)} for v in USERS.values()]
+            return self._send(200, {"staff": staff, "total": len(staff)})
         if self.path.startswith("/api/overview"):
             return self._send(200, get_overview())
         if self.path.startswith("/api/categories"):
