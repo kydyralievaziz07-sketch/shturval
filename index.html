@@ -184,6 +184,16 @@
   .modal .row{display:flex;gap:10px}
   .modal .row>div{flex:1}
   .modal-foot{display:flex;gap:10px;margin-top:18px}
+
+  /* переключатели вкл/выкл в настройках */
+  .set-row{display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid var(--line)}
+  .set-row .lbl{font-size:14px}
+  .switch{position:relative;display:inline-block;width:48px;height:26px;flex-shrink:0}
+  .switch input{opacity:0;width:0;height:0}
+  .slider{position:absolute;inset:0;background:var(--panel2);border:1px solid var(--line);border-radius:20px;cursor:pointer;transition:.2s}
+  .slider:before{content:"";position:absolute;width:20px;height:20px;left:3px;top:2px;background:#fff;border-radius:50%;transition:.2s}
+  .switch input:checked + .slider{background:var(--accent);border-color:var(--accent)}
+  .switch input:checked + .slider:before{transform:translateX(21px)}
   @media(max-width:1000px){.kpis{grid-template-columns:repeat(2,1fr)}.grid2,.grid2b{grid-template-columns:1fr}}
   @media(max-width:760px){
     body{flex-direction:column}
@@ -234,7 +244,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v1.8.0<br>Личные кабинеты · темы 🎨<br>Настройки: тема · валюта · выход
+      Штурвал v1.8.1<br>Личные кабинеты · темы 🎨<br>Настройки: тумблеры темы и валюты
     </div>
   </aside>
 
@@ -517,21 +527,15 @@
         <h3>Настройки</h3>
         <div class="note" id="set-info">—</div>
 
-        <div style="margin-top:18px">
-          <div style="font-size:13px;color:var(--muted);margin-bottom:8px">🎨 Тема оформления</div>
-          <div class="period" id="themesw">
-            <button data-theme="dark">🌙 Тёмная</button>
-            <button data-theme="light">☀️ Светлая</button>
+        <div style="margin-top:16px">
+          <div class="set-row">
+            <span class="lbl">☀️ Светлая тема</span>
+            <label class="switch"><input type="checkbox" id="sw-theme" onchange="setTheme(this.checked?'light':'dark')"><span class="slider"></span></label>
           </div>
-        </div>
-
-        <div style="margin-top:18px">
-          <div style="font-size:13px;color:var(--muted);margin-bottom:8px">💱 Валюта отображения</div>
-          <div class="period" id="curswitch">
-            <button class="active" data-cur="KGS">Сом</button>
-            <button data-cur="USD">$</button>
+          <div class="set-row">
+            <span class="lbl">💱 Показывать в долларах ($) <span id="fxnote" style="font-size:11px;color:var(--muted)"></span></span>
+            <label class="switch"><input type="checkbox" id="sw-cur" onchange="setCur(this.checked?'USD':'KGS')"><span class="slider"></span></label>
           </div>
-          <span id="fxnote" style="font-size:11px;color:var(--muted);margin-left:10px"></span>
         </div>
 
         <div style="margin-top:22px"><button class="btn ghost" onclick="logout()">🚪 Выйти из аккаунта</button></div>
@@ -963,20 +967,22 @@
       if(found){frag.appendChild(document.createTextNode(t.slice(idx))); node.parentNode.replaceChild(frag,node);}
     });
   }
-  document.querySelectorAll('#curswitch button').forEach(b=>{
-    b.addEventListener('click',()=>{
-      document.querySelectorAll('#curswitch button').forEach(x=>x.classList.remove('active'));
-      b.classList.add('active'); CUR=b.dataset.cur; updateFx(); renderAll();
-    });
-  });
-  // --- ТЕМА ОФОРМЛЕНИЯ (тёмная/светлая) ---
+  // --- ВАЛЮТА (тумблер в Настройках: выкл = сом, вкл = доллар) ---
+  function setCur(c){
+    CUR=c; try{ localStorage.setItem('shturval_cur', c); }catch(e){}
+    const sw=document.getElementById('sw-cur'); if(sw) sw.checked=(c==='USD');
+    updateFx(); renderAll();
+  }
+  // --- ТЕМА (тумблер: выкл = тёмная, вкл = светлая) ---
   function setTheme(t){
     document.body.classList.toggle('light', t==='light');
     try{ localStorage.setItem('shturval_theme', t); }catch(e){}
-    document.querySelectorAll('#themesw button').forEach(x=>x.classList.toggle('active', x.dataset.theme===t));
+    const sw=document.getElementById('sw-theme'); if(sw) sw.checked=(t==='light');
   }
-  document.querySelectorAll('#themesw button').forEach(b=>b.addEventListener('click',()=>setTheme(b.dataset.theme)));
-  (function(){ let t='dark'; try{ t=localStorage.getItem('shturval_theme')||'dark'; }catch(e){} setTheme(t); })();
+  (function(){
+    let th='dark'; try{ th=localStorage.getItem('shturval_theme')||'dark'; }catch(e){} setTheme(th);
+    let cu='KGS'; try{ cu=localStorage.getItem('shturval_cur')||'KGS'; }catch(e){} setCur(cu);
+  })();
   tagDemoMoney();
   // автоматически тянем свежий курс доллара к сому
   fetch('https://open.er-api.com/v6/latest/USD').then(r=>r.json()).then(d=>{
