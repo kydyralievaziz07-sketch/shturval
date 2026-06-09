@@ -215,6 +215,18 @@
   .crm-res div:hover{background:var(--panel2)}
   .act{font-size:12px;color:var(--muted);padding:6px 0;border-bottom:1px solid var(--line)}
   .act b{color:var(--text)}
+  /* единый экран CRM: воронка сверху + чаты слева + диалог справа */
+  .funnelbar{display:flex;gap:8px;margin-bottom:12px}
+  .fchip{flex:1;min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 6px;text-align:center;transition:.15s}
+  .fchip:hover{border-color:var(--accent);transform:translateY(-2px)}
+  .fchip.drop{outline:2px dashed var(--accent);background:var(--panel2)}
+  .fchip .fc-n{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fchip .fc-c{font-size:17px;font-weight:700;color:var(--accent)}
+  .cockpit{display:grid;grid-template-columns:300px 1fr;gap:12px;height:64vh}
+  .ck-chats{border:1px solid var(--line);border-radius:12px;overflow-y:auto;background:var(--panel);min-height:0}
+  .ck-convo{border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;background:var(--bg);min-height:0;overflow:hidden}
+  .ck-head{padding:12px 14px;border-bottom:1px solid var(--line);background:var(--panel);display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:14px}
+  @media(max-width:760px){.cockpit{grid-template-columns:1fr;height:auto}.ck-chats{max-height:240px}.ck-convo{height:60vh}}
   /* сворачивающееся меню: узкая полоса, при наведении раскрывается (правая часть сдвигается) */
   @media(min-width:761px){
     .sidebar{width:66px;overflow:hidden;white-space:nowrap;transition:width .22s ease}
@@ -272,7 +284,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v2.0.0<br>CRM-воронка 🧲<br>заказы · задачи · переписка
+      Штурвал v2.1.0<br>Единый экран CRM 🧲💬<br>воронка + чаты + диалог
     </div>
   </aside>
 
@@ -388,14 +400,23 @@
 
     <!-- CRM — наша воронка заказов -->
     <section id="tab-deals" class="hide">
-      <div class="toolbar">
+      <div class="toolbar" style="margin-bottom:6px">
         <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
           <button class="btn" onclick="newDeal()">➕ Новый заказ</button>
           <span id="deals-today" style="font-size:13px;color:var(--muted)"></span>
         </div>
-        <span style="font-size:12px;color:var(--muted)">💾 прототип — данные сохраняются в этом браузере</span>
+        <span id="crm-stats" style="font-size:12px;color:var(--muted)"></span>
       </div>
-      <div class="board" id="board"></div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">🧲 Воронка — перетащи клиента из списка чатов на нужную стадию</div>
+      <div class="funnelbar" id="funnelbar"></div>
+      <div class="cockpit">
+        <div class="ck-chats" id="cockpit-chats"></div>
+        <div class="ck-convo">
+          <div class="ck-head" id="ck-head">← Выберите клиента в списке слева</div>
+          <div class="msgs" id="ck-msgs"></div>
+          <div class="replybox"><input id="ck-reply" placeholder="Ответить клиенту…" onkeydown="if(event.key==='Enter')ckSend()"><button class="btn" onclick="ckSend()">Отправить</button></div>
+        </div>
+      </div>
     </section>
 
     <!-- PRODUCTS (живые данные из 1С) -->
@@ -1188,34 +1209,59 @@
   function logActivity(cid,did,type,text){ CRM.activity.unshift({id:uid(),client_id:cid,deal_id:did,type:type,text:text,created_at:new Date().toISOString()}); }
   function fmtDT(s){ if(!s) return ''; const d=new Date(s); return isNaN(d)?esc(s):d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }
 
-  function renderBoard(){
-    const board=document.getElementById('board'); if(!board) return;
-    board.innerHTML=CRM_STATUSES.map(st=>{
-      const deals=CRM.deals.filter(d=>d.status===st);
-      const cards=deals.map(d=>{
-        const ov=dealOverdue(d.id);
-        const flag=ov==='overdue'?'<span class="task-flag red">🔴 просрочено</span>':ov==='none'?'<span class="task-flag red">нет задачи</span>':'<span class="task-flag ok">✓ задача</span>';
-        return '<div class="dcard" draggable="true" data-id="'+d.id+'" onclick="openDeal(\''+d.id+'\')">'+
-          '<div class="dc-name">'+esc(clientName(d.client_id))+'</div>'+
-          '<div class="dc-sum money" data-som="'+dealAmount(d)+'">'+fmt(dealAmount(d))+'</div>'+
-          '<div class="dc-meta"><span>'+esc(d.owner||'')+'</span>'+flag+'</div></div>';
-      }).join('');
-      return '<div class="col"><div class="col-h"><span>'+esc(st)+'</span><span class="cnt">'+deals.length+'</span></div>'+
-        '<div class="col-body" data-status="'+esc(st)+'">'+cards+'</div></div>';
-    }).join('');
-    bindDnD();
-    const end=new Date(); end.setHours(23,59,59,999);
-    const cnt=CRM.tasks.filter(t=>!t.done&&t.due_at&&new Date(t.due_at).getTime()<=end.getTime()).length;
-    const el=document.getElementById('deals-today'); if(el) el.innerHTML='📋 На сегодня: <b>'+cnt+'</b> задач';
-  }
-  let dragId=null;
-  function bindDnD(){
-    document.querySelectorAll('#board .dcard').forEach(c=>c.addEventListener('dragstart',e=>{ dragId=c.dataset.id; e.dataTransfer.effectAllowed='move'; }));
-    document.querySelectorAll('#board .col-body').forEach(b=>{
-      b.addEventListener('dragover',e=>{ e.preventDefault(); b.parentElement.classList.add('drag-target'); });
-      b.addEventListener('dragleave',()=>b.parentElement.classList.remove('drag-target'));
-      b.addEventListener('drop',e=>{ e.preventDefault(); b.parentElement.classList.remove('drag-target'); moveDeal(dragId,b.dataset.status); });
+  // === ЕДИНЫЙ ЭКРАН: воронка сверху + чаты слева + диалог справа ===
+  function renderBoard(){ renderFunnel(); loadCockpitChats(); renderToday(); renderCrmStats(); }
+  function renderToday(){ const end=new Date(); end.setHours(23,59,59,999); const cnt=CRM.tasks.filter(t=>!t.done&&t.due_at&&new Date(t.due_at).getTime()<=end.getTime()).length; const el=document.getElementById('deals-today'); if(el) el.innerHTML='📋 На сегодня: <b>'+cnt+'</b> задач'; }
+  function renderCrmStats(){ const el=document.getElementById('crm-stats'); if(!el) return; const total=CRM.deals.length; const paid=CRM.deals.filter(d=>['Оплачено','Отгружено','Закрыто'].indexOf(d.status)>=0); const sum=paid.reduce((s,d)=>s+dealAmount(d),0); const conv=total?Math.round(paid.length/total*100):0; el.innerHTML='Заявок: <b>'+total+'</b> · Оплачено: <b>'+paid.length+'</b> ('+conv+'%) · <span class="money" data-som="'+sum+'">'+fmt(sum)+'</span>'; renderMoney(); }
+  let dragChat=null;
+  function renderFunnel(){
+    const fb=document.getElementById('funnelbar'); if(!fb) return;
+    fb.innerHTML=CRM_STATUSES.map(st=>{ const n=CRM.deals.filter(d=>d.status===st).length; return '<div class="fchip" data-status="'+esc(st)+'"><div class="fc-n">'+esc(st)+'</div><div class="fc-c">'+n+'</div></div>'; }).join('');
+    fb.querySelectorAll('.fchip').forEach(ch=>{
+      ch.addEventListener('dragover',e=>{ e.preventDefault(); ch.classList.add('drop'); });
+      ch.addEventListener('dragleave',()=>ch.classList.remove('drop'));
+      ch.addEventListener('drop',e=>{ e.preventDefault(); ch.classList.remove('drop'); dropChatToStage(ch.dataset.status); });
     });
+  }
+  let COCKPIT_CHATS=[], ckCurId=null, ckCurName='';
+  async function loadCockpitChats(){
+    const box=document.getElementById('cockpit-chats'); if(!box) return;
+    if(!box.innerHTML.trim()) box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">Загрузка чатов…</div>';
+    try{
+      const r=await apiFetch('/api/chats',{},ONEC_BASE); const d=await r.json();
+      COCKPIT_CHATS=(d.chats||[]).filter(c=>c.id);
+      if(!COCKPIT_CHATS.length){ box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">Активных чатов нет</div>'; return; }
+      box.innerHTML=COCKPIT_CHATS.map((c,i)=>'<div class="chatitem'+(c.id===ckCurId?' active':'')+'" draggable="true" data-i="'+i+'"><div class="ci-name">'+esc(c.name)+'</div><div class="ci-last">'+esc(c.status||'')+'</div><div class="ci-time">'+esc(c.time||'')+'</div></div>').join('');
+      box.querySelectorAll('.chatitem').forEach(el=>{ const c=COCKPIT_CHATS[+el.dataset.i]; el.addEventListener('click',()=>openConvo(c)); el.addEventListener('dragstart',e=>{ dragChat=c; e.dataTransfer.effectAllowed='move'; }); });
+    }catch(e){ box.innerHTML='<div style="padding:14px;color:var(--red);font-size:13px">Нет доступа к чатам</div>'; }
+  }
+  function findClient(name){ return name?CRM.clients.find(x=>x.name&&x.name.toLowerCase()===name.toLowerCase()):null; }
+  function findDealByName(name){ const c=findClient(name); return c?CRM.deals.find(d=>d.client_id===c.id)||null:null; }
+  function ensureClient(name){ let c=findClient(name); if(!c){ c={id:uid(),name:name,phone:'',source:'instagram',created_at:new Date().toISOString()}; CRM.clients.push(c); } return c; }
+  function ensureDeal(name,status){ const c=ensureClient(name); let d=CRM.deals.find(x=>x.client_id===c.id); if(!d){ d={id:uid(),client_id:c.id,status:status||'Новая заявка',items:[],owner:(USER.name||''),created_at:new Date().toISOString(),comment:''}; CRM.deals.push(d); logActivity(c.id,d.id,'системное','Заказ создан из чата'); } return d; }
+  function ckHead(){ const head=document.getElementById('ck-head'); if(!head) return; const deal=findDealByName(ckCurName); head.innerHTML='<span><b>'+esc(ckCurName)+'</b>'+(deal?' · <span style="color:var(--muted)">'+esc(deal.status)+'</span>':' · <span style="color:var(--muted)">нет заказа</span>')+'</span><button class="btn ghost" style="padding:5px 10px" onclick="openDealForClient()">Открыть заказ</button>'; }
+  async function openConvo(c){
+    ckCurId=c.id; ckCurName=c.name;
+    document.querySelectorAll('#cockpit-chats .chatitem').forEach(el=>{ const cc=COCKPIT_CHATS[+el.dataset.i]; el.classList.toggle('active', cc&&cc.id===c.id); });
+    ckHead();
+    const box=document.getElementById('ck-msgs'); box.innerHTML='<div style="color:var(--muted);padding:10px">Загрузка…</div>';
+    try{ const r=await apiFetch('/api/chat?id='+encodeURIComponent(c.id),{},ONEC_BASE); const d=await r.json();
+      box.innerHTML=(d.msgs||[]).map(m=>'<div class="bubble '+m.t+'">'+linkify(m.x)+'</div>').join('')||'<div style="color:var(--muted);padding:10px">Нет сообщений</div>'; box.scrollTop=box.scrollHeight;
+    }catch(e){ box.innerHTML='<div style="color:var(--red);padding:10px">Не удалось загрузить</div>'; }
+  }
+  function ckSend(){
+    const inp=document.getElementById('ck-reply'); const t=inp.value.trim(); if(!t||!ckCurId) return; inp.value='';
+    const box=document.getElementById('ck-msgs'); box.insertAdjacentHTML('beforeend','<div class="bubble out">'+esc(t)+'</div>'); box.scrollTop=box.scrollHeight;
+    const d=findDealByName(ckCurName); if(d){ logActivity(d.client_id,d.id,'сообщение','Ответ: '+t); crmPersist(); }
+    apiFetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chatId:ckCurId,text:t})},ONEC_BASE).catch(()=>{});
+  }
+  function openDealForClient(){ if(!ckCurName) return; const d=ensureDeal(ckCurName); crmPersist(); openDeal(d.id); }
+  function dropChatToStage(status){
+    if(!dragChat) return; const nm=dragChat.name; dragChat=null;
+    const d=ensureDeal(nm,status);
+    if(status==='Отказ'){ pendingReject=d.id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; }
+    d.status=status; logActivity(d.client_id,d.id,'смена статуса','Статус → '+status+' (перетащено из чата)');
+    crmPersist(); renderFunnel(); renderCrmStats(); if(ckCurName&&ckCurName.toLowerCase()===nm.toLowerCase()) ckHead();
   }
   let pendingReject=null;
   function moveDeal(id,st){
