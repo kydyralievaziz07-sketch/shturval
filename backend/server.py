@@ -87,6 +87,13 @@ def _can(user, section):
     s = user.get("sections", [])
     return "all" in s or section in s
 
+def _allowed(user, path):
+    # дашборд показывает сводку amoCRM → доступ к /api/overview даём и роли "dash", и "crm"
+    if path.startswith("/api/overview"):
+        return _can(user, "crm") or _can(user, "dash")
+    sec = _section_for(path)
+    return (sec is None) or _can(user, sec)
+
 # --- простой кэш на 60 секунд, чтобы не дёргать amoCRM лишний раз ---
 _cache = {}
 def cached(key, ttl, producer):
@@ -478,8 +485,7 @@ class Handler(BaseHTTPRequestHandler):
             u = self._user()
             if not u:
                 return self._send(401, {"error": "Требуется вход"})
-            sec = _section_for(self.path)
-            if sec and not _can(u, sec):
+            if not _allowed(u, self.path):
                 return self._send(403, {"error": "Нет доступа к этому разделу"})
         if self.path.startswith("/api/send"):
             try:
@@ -529,8 +535,7 @@ class Handler(BaseHTTPRequestHandler):
             u = self._user()
             if not u:
                 return self._send(401, {"error": "Требуется вход"})
-            sec = _section_for(self.path)
-            if sec and not _can(u, sec):
+            if not _allowed(u, self.path):
                 return self._send(403, {"error": "Нет доступа к этому разделу"})
         if self.path.startswith("/api/overview"):
             return self._send(200, get_overview())
