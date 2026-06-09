@@ -285,7 +285,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v2.8.4<br>ИИ-помощник: ждёт пробуждения<br>сервера и сам повторяет запрос
+      Штурвал v2.8.5<br>КРИТ. фикс: CRM снова рисуется<br>(ошибка AUTO_ON ломала скрипт)
     </div>
   </aside>
 
@@ -1202,7 +1202,7 @@
   (function(){
     let th='dark'; try{ th=localStorage.getItem('shturval_theme')||'dark'; }catch(e){} setTheme(th);
     let cu='KGS'; try{ cu=localStorage.getItem('shturval_cur')||'KGS'; }catch(e){} setCur(cu);
-    const swa=document.getElementById('sw-auto'); if(swa) swa.checked=AUTO_ON;
+    const swa=document.getElementById('sw-auto'); if(swa){ let a=true; try{ a=localStorage.getItem('shturval_auto')!=='0'; }catch(e){} swa.checked=a; }
   })();
   tagDemoMoney();
   // автоматически тянем свежий курс доллара к сому
