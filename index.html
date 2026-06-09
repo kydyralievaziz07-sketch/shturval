@@ -285,7 +285,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v2.9.0<br>авто-воронка по-новому: менеджер<br>ответил→Связались, бот→Новая заявка
+      Штурвал v2.9.1<br>Клиенты: реальные данные из CRM<br>лучшие чеки за сегодня
     </div>
   </aside>
 
@@ -518,24 +518,16 @@
 
     <!-- CLIENTS -->
     <section id="tab-clients" class="hide">
-      <div class="kpis">
-        <div class="card kpi"><div class="label">Всего клиентов</div><div class="value">1 840</div></div>
-        <div class="card kpi"><div class="label">Постоянные</div><div class="value">312</div><div class="delta up">▲ покупают повторно</div></div>
-        <div class="card kpi"><div class="label">Новых за месяц</div><div class="value">84</div></div>
-        <div class="card kpi"><div class="label">Средний чек</div><div class="value">13 020 сом</div></div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">👥 Данные из нашей CRM (заявки и оплаты). Когда 1С начнёт отдавать продажи — добавятся реальные покупки.</div>
+      <div id="clients-kpis" class="kpis"></div>
+      <div class="card" style="margin-bottom:16px">
+        <h3>📦 Продажи из 1С</h3>
+        <div id="clients-1c"></div>
       </div>
       <div class="card">
-        <h3>Лучшие клиенты</h3>
-        <table>
-          <thead><tr><th>Клиент</th><th>Покупок</th><th>Всего потратил</th><th>Последняя покупка</th><th>Тип</th></tr></thead>
-          <tbody>
-            <tr><td>Айгерим С.</td><td>14</td><td>184 000 сом</td><td>сегодня</td><td><span class="badge b-a">VIP</span></td></tr>
-            <tr><td>Данияр К.</td><td>9</td><td>112 000 сом</td><td>сегодня</td><td><span class="badge b-a">Постоянный</span></td></tr>
-            <tr><td>Мадина Т.</td><td>6</td><td>78 000 сом</td><td>сегодня</td><td><span class="badge b-b">Постоянный</span></td></tr>
-            <tr><td>Ержан А.</td><td>1</td><td>21 900 сом</td><td>сегодня</td><td><span class="badge b-c">Новый</span></td></tr>
-          </tbody>
-        </table>
-        <div class="note" style="margin-top:16px">💡 Позже: рассылки постоянным клиентам, акции для «спящих», история покупок каждого.</div>
+        <h3>🏆 Лучшие клиенты — самые большие чеки за сегодня</h3>
+        <div id="clients-best">—</div>
+        <div class="note" style="margin-top:16px">💡 Позже: рассылки постоянным клиентам, акции для «спящих», полная история покупок каждого.</div>
       </div>
     </section>
 
@@ -758,6 +750,7 @@
       if(tab==='crm') loadCRM();
       if(tab==='myday') renderMyDay();
       if(tab==='staff') loadStaff();
+      if(tab==='clients') renderClients();
       if(tab==='ai') aiInit();
       if(tab==='deals'){ renderBoard(); startDealsAuto(); }
       if(tab==='chats') loadChats();
@@ -1692,6 +1685,47 @@
       if(wait) wait.innerHTML='⚠️ Сервер пока не ответил. Подождите минуту и спросите ещё раз — он «просыпается» после паузы.';
       done();
     }
+  }
+  // =================== КЛИЕНТЫ ===================
+  function renderClients(){
+    const PAID=['Оплачено','Отгружено','Закрыто'];
+    const clients=CRM.clients||[]; const deals=CRM.deals||[];
+    const paid=deals.filter(d=>PAID.indexOf(d.status)>=0);
+    // постоянные — клиенты с 2+ оплаченными сделками
+    const cnt={}; paid.forEach(d=>{ cnt[d.client_id]=(cnt[d.client_id]||0)+1; });
+    const repeat=Object.values(cnt).filter(n=>n>=2).length;
+    // новых за месяц
+    const monthAgo=Date.now()-30*86400000;
+    const newM=clients.filter(c=>c.created_at&&new Date(c.created_at).getTime()>=monthAgo).length;
+    // средний чек
+    const avg=paid.length?Math.round(paid.reduce((s,d)=>s+dealAmount(d),0)/paid.length):0;
+    const k=document.getElementById('clients-kpis');
+    if(k) k.innerHTML=
+      kpiCard('👥 Всего клиентов (CRM)',clients.length)+
+      kpiCard('🔁 Постоянные',repeat)+
+      kpiCard('🆕 Новых за месяц',newM)+
+      kpiCard('🧾 Средний чек','<span class="money" data-som="'+avg+'">'+fmt(avg)+'</span>');
+    const c1=document.getElementById('clients-1c');
+    if(c1) c1.innerHTML=
+      '<div class="kpis" style="margin:0">'+
+      kpiCard('Клиентов (1С)','—')+kpiCard('Средний чек (1С)','—')+
+      kpiCard('Покупок (1С)','—')+kpiCard('Товаров продано сегодня','—')+'</div>'+
+      '<div class="note" style="margin-top:12px">⏳ Эти цифры появятся автоматически, когда 1С начнёт отдавать продажи. Сейчас ждём метод выгрузки продаж от 1С-программиста.</div>';
+    renderClientsBest();
+    renderMoney();
+  }
+  function renderClientsBest(){
+    const PAID=['Оплачено','Отгружено','Закрыто'];
+    const start=new Date(); start.setHours(0,0,0,0); const s=start.getTime();
+    const today=(CRM.deals||[]).filter(d=>PAID.indexOf(d.status)>=0 && d.paid_at && new Date(d.paid_at).getTime()>=s);
+    const by={};
+    today.forEach(d=>{ const cl=getClient(d.client_id); const nm=(cl&&cl.name)||'Без имени'; if(!by[nm]) by[nm]={sum:0,cnt:0}; by[nm].sum+=dealAmount(d); by[nm].cnt++; });
+    const rows=Object.keys(by).map(nm=>({name:nm,sum:by[nm].sum,cnt:by[nm].cnt})).sort((a,b)=>b.sum-a.sum);
+    const box=document.getElementById('clients-best'); if(!box) return;
+    if(!rows.length){ box.innerHTML='<div style="color:var(--muted);font-size:13px">Сегодня оплат ещё не было. Как только клиент оплатит (стадия «Оплачено» в CRM) — он появится здесь, с самым большим чеком вверху.</div>'; return; }
+    box.innerHTML='<table><thead><tr><th>Клиент</th><th>Чек за сегодня</th><th>Покупок сегодня</th></tr></thead><tbody>'+
+      rows.map((r,i)=>'<tr><td>'+(i===0?'🥇 ':i===1?'🥈 ':i===2?'🥉 ':'')+esc(r.name)+'</td><td><b><span class="money" data-som="'+r.sum+'">'+fmt(r.sum)+'</span></b></td><td>'+r.cnt+'</td></tr>').join('')+
+      '</tbody></table>';
   }
   // =================== ПЕРСОНАЛ (владелец) ===================
   async function loadStaff(){
