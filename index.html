@@ -194,6 +194,27 @@
   .slider:before{content:"";position:absolute;width:20px;height:20px;left:3px;top:2px;background:#fff;border-radius:50%;transition:.2s}
   .switch input:checked + .slider{background:var(--accent);border-color:var(--accent)}
   .switch input:checked + .slider:before{transform:translateX(21px)}
+
+  /* CRM-воронка (канбан) */
+  .board{display:flex;gap:12px;overflow-x:auto;padding-bottom:10px;align-items:flex-start}
+  .col{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:240px;min-width:240px;flex-shrink:0;display:flex;flex-direction:column;max-height:74vh}
+  .col-h{padding:11px 13px;font-size:13px;font-weight:600;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+  .col-h .cnt{color:var(--muted);font-weight:400;font-size:12px;background:var(--panel2);border-radius:20px;padding:0 8px}
+  .col-body{padding:10px;overflow-y:auto;display:flex;flex-direction:column;gap:9px;flex:1;min-height:50px}
+  .col.drag-target{outline:2px dashed var(--accent);outline-offset:-4px}
+  .dcard{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:11px;cursor:grab;font-size:13px}
+  .dcard:hover{border-color:#33415a}
+  .dcard .dc-name{font-weight:600;margin-bottom:4px}
+  .dcard .dc-sum{color:var(--green);font-weight:600}
+  .dcard .dc-meta{color:var(--muted);font-size:12px;margin-top:6px;display:flex;justify-content:space-between;align-items:center;gap:6px}
+  .task-flag{font-size:11px;padding:1px 8px;border-radius:20px;white-space:nowrap}
+  .task-flag.red{background:rgba(255,107,107,.15);color:var(--red)}
+  .task-flag.ok{background:rgba(57,217,138,.15);color:var(--green)}
+  .crm-res{max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:10px;margin-top:6px}
+  .crm-res div{padding:8px 10px;border-bottom:1px solid var(--line);cursor:pointer;font-size:13px}
+  .crm-res div:hover{background:var(--panel2)}
+  .act{font-size:12px;color:var(--muted);padding:6px 0;border-bottom:1px solid var(--line)}
+  .act b{color:var(--text)}
   /* сворачивающееся меню: узкая полоса, при наведении раскрывается (правая часть сдвигается) */
   @media(min-width:761px){
     .sidebar{width:66px;overflow:hidden;white-space:nowrap;transition:width .22s ease}
@@ -238,7 +259,8 @@
     </div>
     <nav class="nav">
       <a class="active" data-tab="dash"><span class="ico">📊</span> Дашборд</a>
-      <a data-tab="crm"><span class="ico">🔌</span> CRM (живые данные)</a>
+      <a data-tab="crm"><span class="ico">📡</span> amoCRM</a>
+      <a data-tab="deals"><span class="ico">🧲</span> CRM</a>
       <a data-tab="chats"><span class="ico">💬</span> Чаты</a>
       <a data-tab="prod"><span class="ico">📦</span> Товары</a>
       <a data-tab="sales"><span class="ico">🛒</span> Продажи</a>
@@ -250,7 +272,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v1.9.0<br>Сворачивающееся меню ↔<br>наведи мышку — раскроется
+      Штурвал v2.0.0<br>CRM-воронка 🧲<br>заказы · задачи · переписка
     </div>
   </aside>
 
@@ -362,6 +384,18 @@
           </div>
         </div>
       </div>
+    </section>
+
+    <!-- CRM — наша воронка заказов -->
+    <section id="tab-deals" class="hide">
+      <div class="toolbar">
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <button class="btn" onclick="newDeal()">➕ Новый заказ</button>
+          <span id="deals-today" style="font-size:13px;color:var(--muted)"></span>
+        </div>
+        <span style="font-size:12px;color:var(--muted)">💾 прототип — данные сохраняются в этом браузере</span>
+      </div>
+      <div class="board" id="board"></div>
     </section>
 
     <!-- PRODUCTS (живые данные из 1С) -->
@@ -579,6 +613,20 @@
     </div>
   </div>
 
+  <!-- ОКНО: КАРТОЧКА ЗАКАЗА / НОВЫЙ ЗАКАЗ -->
+  <div class="modal-bg" id="dealbg"><div class="modal" id="dealmodal" style="width:600px"></div></div>
+
+  <!-- ОКНО: ПРИЧИНА ОТКАЗА -->
+  <div class="modal-bg" id="rejectbg"><div class="modal" style="width:380px">
+    <h3>Причина отказа</h3>
+    <label>Выберите причину</label>
+    <select id="reject-reason"></select>
+    <div class="modal-foot">
+      <button class="btn" onclick="confirmReject()">Сохранить</button>
+      <button class="btn ghost" onclick="document.getElementById('rejectbg').classList.remove('open')">Отмена</button>
+    </div>
+  </div></div>
+
   <!-- NOTIFICATIONS DRAWER -->
   <div class="overlay" id="overlay" onclick="toggleDrawer()"></div>
   <div class="drawer" id="drawer">
@@ -593,8 +641,9 @@
 <script>
   const titles = {
     dash     :["Дашборд","Магазин Бизмарт — общая картина"],
-    crm      :["CRM — живые данные","Реальные сделки и воронки из amoCRM"],
-    chats    :["Чаты","Переписки с клиентами (предпросмотр)"],
+    crm      :["amoCRM — живые данные","Реальные сделки и воронки из amoCRM"],
+    deals    :["CRM — воронка заказов","Заказы, задачи и переписка в одном окне"],
+    chats    :["Чаты","Переписки с клиентами"],
     prod     :["Товары","Каталог, остатки и маржа"],
     sales    :["Продажи","Продажи за день и за период"],
     clients  :["Клиенты","Кто покупает и кто возвращается"],
@@ -614,6 +663,7 @@
       document.getElementById('page-title').textContent=titles[tab][0];
       document.getElementById('page-sub').textContent=titles[tab][1];
       if(tab==='crm') loadCRM();
+      if(tab==='deals') renderBoard();
       if(tab==='chats') loadChats();
       if(tab==='prod'){ loadInventory(); loadProducts(); startProdAuto(); }
       window.scrollTo(0,0);
@@ -681,7 +731,7 @@
   }
   function updateSettings(){
     const el=document.getElementById('set-info'); if(!el) return;
-    const names={dash:'Дашборд',crm:'CRM',chats:'Чаты',prod:'Товары',sales:'Продажи',clients:'Клиенты',market:'Рынок',analytics:'Аналитика',fin:'Финансы',ai:'ИИ-помощник',set:'Настройки'};
+    const names={dash:'Дашборд',crm:'amoCRM',deals:'CRM',chats:'Чаты',prod:'Товары',sales:'Продажи',clients:'Клиенты',market:'Рынок',analytics:'Аналитика',fin:'Финансы',ai:'ИИ-помощник',set:'Настройки'};
     const all=USER.sections.indexOf('all')>=0;
     const list=all?'все разделы':(USER.sections.map(s=>names[s]||s).join(', ')||'—');
     el.innerHTML='Вы вошли как <b>'+esc(USER.name||'Пользователь')+'</b>.<br>Доступные разделы: '+esc(list)+'.<br>Вход защищён паролем 🔒.';
@@ -1116,6 +1166,142 @@
       else { msg.style.color='var(--amber)'; msg.innerHTML='⏳ '+esc(d.error||'Не удалось сохранить'); }
     }catch(e){ msg.style.color='var(--red)'; msg.textContent='Нет связи с сервером'; }
     btn.disabled=false;
+  }
+
+  // ===================== CRM (наша воронка) — прототип на localStorage =====================
+  const CRM_STATUSES=['Новая заявка','Связались','Выставили счёт','Оплачено','Отгружено','Закрыто','Отказ'];
+  const REJECT_REASONS=['Дорого','Передумал','Нет в наличии','Не отвечает','Купил у конкурента','Другое'];
+  let CRM={clients:[],deals:[],tasks:[],activity:[]};
+  try{ const s=JSON.parse(localStorage.getItem('shturval_crm')); if(s) CRM=Object.assign(CRM,s); }catch(e){}
+  function crmPersist(){ try{ localStorage.setItem('shturval_crm',JSON.stringify(CRM)); }catch(e){} }
+  function uid(){ return 'd'+Date.now().toString(36)+Math.floor(Math.random()*1e6).toString(36); }
+  function getClient(id){ return CRM.clients.find(c=>c.id===id)||{}; }
+  function getDeal(id){ return CRM.deals.find(d=>d.id===id)||null; }
+  function clientName(id){ return getClient(id).name||'Без имени'; }
+  function dealTasks(id){ return CRM.tasks.filter(t=>t.deal_id===id); }
+  function dealAmount(d){ return (d.items||[]).reduce((s,i)=>s+(i.price*i.qty),0); }
+  function dealOverdue(id){
+    const open=dealTasks(id).filter(t=>!t.done);
+    if(!open.length) return 'none';
+    return open.some(t=>t.due_at && new Date(t.due_at).getTime()<Date.now())?'overdue':'ok';
+  }
+  function logActivity(cid,did,type,text){ CRM.activity.unshift({id:uid(),client_id:cid,deal_id:did,type:type,text:text,created_at:new Date().toISOString()}); }
+  function fmtDT(s){ if(!s) return ''; const d=new Date(s); return isNaN(d)?esc(s):d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }
+
+  function renderBoard(){
+    const board=document.getElementById('board'); if(!board) return;
+    board.innerHTML=CRM_STATUSES.map(st=>{
+      const deals=CRM.deals.filter(d=>d.status===st);
+      const cards=deals.map(d=>{
+        const ov=dealOverdue(d.id);
+        const flag=ov==='overdue'?'<span class="task-flag red">🔴 просрочено</span>':ov==='none'?'<span class="task-flag red">нет задачи</span>':'<span class="task-flag ok">✓ задача</span>';
+        return '<div class="dcard" draggable="true" data-id="'+d.id+'" onclick="openDeal(\''+d.id+'\')">'+
+          '<div class="dc-name">'+esc(clientName(d.client_id))+'</div>'+
+          '<div class="dc-sum money" data-som="'+dealAmount(d)+'">'+fmt(dealAmount(d))+'</div>'+
+          '<div class="dc-meta"><span>'+esc(d.owner||'')+'</span>'+flag+'</div></div>';
+      }).join('');
+      return '<div class="col"><div class="col-h"><span>'+esc(st)+'</span><span class="cnt">'+deals.length+'</span></div>'+
+        '<div class="col-body" data-status="'+esc(st)+'">'+cards+'</div></div>';
+    }).join('');
+    bindDnD();
+    const end=new Date(); end.setHours(23,59,59,999);
+    const cnt=CRM.tasks.filter(t=>!t.done&&t.due_at&&new Date(t.due_at).getTime()<=end.getTime()).length;
+    const el=document.getElementById('deals-today'); if(el) el.innerHTML='📋 На сегодня: <b>'+cnt+'</b> задач';
+  }
+  let dragId=null;
+  function bindDnD(){
+    document.querySelectorAll('#board .dcard').forEach(c=>c.addEventListener('dragstart',e=>{ dragId=c.dataset.id; e.dataTransfer.effectAllowed='move'; }));
+    document.querySelectorAll('#board .col-body').forEach(b=>{
+      b.addEventListener('dragover',e=>{ e.preventDefault(); b.parentElement.classList.add('drag-target'); });
+      b.addEventListener('dragleave',()=>b.parentElement.classList.remove('drag-target'));
+      b.addEventListener('drop',e=>{ e.preventDefault(); b.parentElement.classList.remove('drag-target'); moveDeal(dragId,b.dataset.status); });
+    });
+  }
+  let pendingReject=null;
+  function moveDeal(id,st){
+    const d=getDeal(id); if(!d||d.status===st) return;
+    if(st==='Отказ'){ pendingReject=id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; }
+    d.status=st; logActivity(d.client_id,d.id,'смена статуса','Статус → '+st); crmPersist(); renderBoard();
+  }
+  function confirmReject(){
+    const d=getDeal(pendingReject); if(!d) return;
+    d.status='Отказ'; d.reject_reason=document.getElementById('reject-reason').value;
+    logActivity(d.client_id,d.id,'смена статуса','Отказ: '+d.reject_reason);
+    crmPersist(); document.getElementById('rejectbg').classList.remove('open'); renderBoard(); if(curDealId===d.id) renderDealModal();
+  }
+  function newDeal(){
+    const cid=uid(), did=uid();
+    CRM.clients.push({id:cid,name:'',phone:'',source:'instagram',created_at:new Date().toISOString()});
+    CRM.deals.push({id:did,client_id:cid,status:'Новая заявка',items:[],owner:(USER.name||''),created_at:new Date().toISOString(),comment:''});
+    logActivity(cid,did,'системное','Создан заказ'); crmPersist(); renderBoard(); openDeal(did);
+  }
+  let curDealId=null;
+  function openDeal(id){ curDealId=id; renderDealModal(); document.getElementById('dealbg').classList.add('open'); }
+  function closeDeal(){ document.getElementById('dealbg').classList.remove('open'); renderBoard(); }
+  function renderDealModal(){
+    const d=getDeal(curDealId); if(!d) return; const c=getClient(d.client_id); const items=(d.items||[]);
+    const itemsHtml=items.length?items.map((it,i)=>'<div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;padding:6px 0;border-bottom:1px solid var(--line)"><span>'+esc(it.title)+' <span style="color:var(--muted)">× '+it.qty+'</span></span><span><span class="money" data-som="'+(it.price*it.qty)+'">'+fmt(it.price*it.qty)+'</span> <span onclick="rmItem('+i+')" style="color:var(--red);cursor:pointer;margin-left:6px">✕</span></span></div>').join(''):'<div style="color:var(--muted);font-size:13px">Товары не добавлены</div>';
+    const tasksHtml=dealTasks(d.id).map(t=>'<div style="display:flex;align-items:center;gap:8px;font-size:13px;padding:5px 0"><input type="checkbox" '+(t.done?'checked':'')+' onchange="toggleTask(\''+t.id+'\')"><span style="'+(t.done?'text-decoration:line-through;color:var(--muted)':'')+'">'+esc(t.title)+'</span><span style="margin-left:auto;font-size:12px;color:'+(!t.done&&t.due_at&&new Date(t.due_at).getTime()<Date.now()?'var(--red)':'var(--muted)')+'">'+fmtDT(t.due_at)+'</span></div>').join('')||'<div style="color:var(--muted);font-size:13px">Задач нет</div>';
+    const actHtml=CRM.activity.filter(a=>a.deal_id===d.id).slice(0,20).map(a=>'<div class="act"><b>'+esc(a.type)+'</b> · '+esc(a.text)+'<span style="float:right">'+fmtDT(a.created_at)+'</span></div>').join('')||'<div style="color:var(--muted);font-size:13px">Пока пусто</div>';
+    document.getElementById('dealmodal').innerHTML=
+      '<div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0">Заказ</h3><span onclick="closeDeal()" style="cursor:pointer;color:var(--muted);font-size:18px">✕</span></div>'+
+      '<div class="row" style="margin-top:8px"><div><label>Клиент</label><input value="'+esc(c.name)+'" placeholder="Имя клиента" oninput="updClient(\'name\',this.value)"></div>'+
+      '<div><label>Телефон</label><input value="'+esc(c.phone||'')+'" placeholder="+996…" oninput="updClient(\'phone\',this.value)"></div></div>'+
+      '<div class="row"><div><label>Статус</label><select onchange="updStatus(this.value)">'+CRM_STATUSES.map(s=>'<option '+(s===d.status?'selected':'')+'>'+esc(s)+'</option>').join('')+'</select></div>'+
+      '<div><label>Ответственный</label><input value="'+esc(d.owner||'')+'" oninput="updDeal(\'owner\',this.value)"></div></div>'+
+      '<label style="margin-top:12px">Товары (из 1С) · сумма: <b><span class="money" data-som="'+dealAmount(d)+'">'+fmt(dealAmount(d))+'</span></b></label>'+itemsHtml+
+      '<input id="di-search" placeholder="🔍 найти товар в 1С и добавить…" oninput="searchItems(this.value)" style="margin-top:8px">'+
+      '<div class="crm-res" id="di-res" style="display:none"></div>'+
+      '<label style="margin-top:14px">Задачи</label>'+tasksHtml+
+      '<div class="row" style="margin-top:6px"><div style="flex:2"><input id="tk-title" placeholder="Что сделать (напр. перезвонить)"></div><div style="flex:1.4"><input id="tk-due" type="datetime-local"></div><button class="btn" style="align-self:flex-end" onclick="addTask()">+</button></div>'+
+      '<label style="margin-top:14px">💬 Переписка клиента (Instagram)</label>'+
+      '<div id="dl-chat" style="font-size:13px"><button class="btn ghost" onclick="loadDealChat()">Загрузить переписку</button></div>'+
+      '<label style="margin-top:14px">История</label>'+actHtml+
+      '<div class="modal-foot"><button class="btn ghost" onclick="delDeal()">🗑 Удалить</button><button class="btn" onclick="closeDeal()">Готово</button></div>';
+    renderMoney();
+  }
+  function updClient(f,v){ const d=getDeal(curDealId); const c=getClient(d.client_id); c[f]=v; c.last_contact_at=new Date().toISOString(); crmPersist(); }
+  function updDeal(f,v){ const d=getDeal(curDealId); d[f]=v; crmPersist(); }
+  function updStatus(v){ const d=getDeal(curDealId); if(v==='Отказ'){ pendingReject=d.id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; } d.status=v; logActivity(d.client_id,d.id,'смена статуса','Статус → '+v); crmPersist(); }
+  let itemTimer=null;
+  function searchItems(q){
+    clearTimeout(itemTimer); const res=document.getElementById('di-res');
+    if(!q.trim()){ res.style.display='none'; return; }
+    itemTimer=setTimeout(async()=>{
+      try{ const r=await apiFetch('/api/products?q='+encodeURIComponent(q.trim()),{},ONEC_BASE); const dd=await r.json();
+        const items=(dd.items||[]).slice(0,15);
+        res.innerHTML=items.length?items.map((it,i)=>'<div data-i="'+i+'">'+esc(it.title)+' · '+fmt(it.price)+'</div>').join(''):'<div style="color:var(--muted)">Ничего не найдено</div>';
+        res.style.display='';
+        res.querySelectorAll('div[data-i]').forEach(el=>el.addEventListener('click',()=>addItem(items[+el.dataset.i])));
+      }catch(e){ res.innerHTML='<div style="color:var(--red)">Нет доступа к товарам</div>'; res.style.display=''; }
+    },350);
+  }
+  function addItem(it){ const d=getDeal(curDealId); d.items=d.items||[]; d.items.push({id:uid(),title:it.title,qty:1,price:it.price||0}); crmPersist(); renderDealModal(); }
+  function rmItem(i){ const d=getDeal(curDealId); d.items.splice(i,1); crmPersist(); renderDealModal(); }
+  function addTask(){ const d=getDeal(curDealId); const t=document.getElementById('tk-title').value.trim(); const due=document.getElementById('tk-due').value; if(!t) return; CRM.tasks.push({id:uid(),deal_id:d.id,title:t,due_at:due,done:false,owner:(USER.name||'')}); logActivity(d.client_id,d.id,'заметка','Задача: '+t); crmPersist(); renderDealModal(); }
+  function toggleTask(id){ const t=CRM.tasks.find(x=>x.id===id); if(t){ t.done=!t.done; crmPersist(); renderDealModal(); } }
+  function delDeal(){ if(!confirm('Удалить этот заказ?')) return; const d=getDeal(curDealId); CRM.deals=CRM.deals.filter(x=>x.id!==d.id); CRM.tasks=CRM.tasks.filter(x=>x.deal_id!==d.id); crmPersist(); closeDeal(); }
+  async function loadDealChat(){
+    const d=getDeal(curDealId); const c=getClient(d.client_id); const box=document.getElementById('dl-chat');
+    if(!c.name){ box.innerHTML='<span style="color:var(--muted)">Сначала впишите имя клиента (как в Instagram)</span>'; return; }
+    box.innerHTML='<span style="color:var(--muted)">Ищу переписку…</span>';
+    try{
+      const r=await apiFetch('/api/chats',{},ONEC_BASE); const dd=await r.json();
+      const chat=(dd.chats||[]).find(x=>x.name&&x.name.toLowerCase().indexOf(c.name.toLowerCase())>=0);
+      if(!chat){ box.innerHTML='<span style="color:var(--muted)">Переписка не найдена (имя в Instagram может отличаться)</span>'; return; }
+      const r2=await apiFetch('/api/chat?id='+encodeURIComponent(chat.id),{},ONEC_BASE); const md=await r2.json();
+      const msgs=(md.msgs||[]).map(m=>'<div class="bubble '+m.t+'" style="max-width:90%">'+linkify(m.x)+'</div>').join('');
+      box.innerHTML='<div class="msgs" style="max-height:220px;background:var(--bg);border-radius:10px;padding:10px;margin-bottom:8px">'+(msgs||'<span style="color:var(--muted)">Нет сообщений</span>')+'</div>'+
+        '<div style="display:flex;gap:8px"><input id="dl-reply" placeholder="Ответить клиенту…" style="flex:1"><button class="btn" onclick="dealReply(\''+chat.id+'\')">→</button></div>';
+      const mb=box.querySelector('.msgs'); if(mb) mb.scrollTop=mb.scrollHeight;
+    }catch(e){ box.innerHTML='<span style="color:var(--red)">Не удалось загрузить (нужен доступ к чатам)</span>'; }
+  }
+  async function dealReply(chatId){
+    const inp=document.getElementById('dl-reply'); const txt=inp.value.trim(); if(!txt) return; inp.value='';
+    const d=getDeal(curDealId);
+    try{ await apiFetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chatId:chatId,text:txt})},ONEC_BASE);
+      logActivity(d.client_id,d.id,'сообщение','Ответ: '+txt); crmPersist(); setTimeout(loadDealChat,1300);
+    }catch(e){ alert('Не удалось отправить'); }
   }
 </script>
 </body>
