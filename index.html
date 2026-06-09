@@ -285,7 +285,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v2.5.2<br>пустой доступ [] = только Мой день<br>счётчик «Новая заявка» = все чаты
+      Штурвал v2.6.0<br>🤖 авто-воронка: бот сам<br>раскладывает чаты по стадиям
     </div>
   </aside>
 
@@ -611,6 +611,10 @@
           <div class="set-row">
             <span class="lbl">💱 Показывать в долларах ($) <span id="fxnote" style="font-size:11px;color:var(--muted)"></span></span>
             <label class="switch"><input type="checkbox" id="sw-cur" onchange="setCur(this.checked?'USD':'KGS')"><span class="slider"></span></label>
+          </div>
+          <div class="set-row">
+            <span class="lbl">🤖 Авто-воронка по переписке <span style="font-size:11px;color:var(--muted)">бот сам раскладывает чаты по стадиям</span></span>
+            <label class="switch"><input type="checkbox" id="sw-auto" onchange="setAuto(this.checked)"><span class="slider"></span></label>
           </div>
         </div>
 
@@ -1137,6 +1141,7 @@
   (function(){
     let th='dark'; try{ th=localStorage.getItem('shturval_theme')||'dark'; }catch(e){} setTheme(th);
     let cu='KGS'; try{ cu=localStorage.getItem('shturval_cur')||'KGS'; }catch(e){} setCur(cu);
+    const swa=document.getElementById('sw-auto'); if(swa) swa.checked=AUTO_ON;
   })();
   tagDemoMoney();
   // автоматически тянем свежий курс доллара к сому
@@ -1383,7 +1388,29 @@
   async function fetchChats(){
     try{ const r=await apiFetch('/api/chats',{},ONEC_BASE); const d=await r.json(); COCKPIT_CHATS=(d.chats||[]).filter(c=>c.id); }
     catch(e){ COCKPIT_CHATS=[]; }
+    autoClassify();
     renderLeft(); renderFunnel(); renderCrmStats(); renderCrmDash();
+  }
+  // Авто-воронка: раскладываем чаты по стадиям из подсказки сервера (c.stage).
+  // Сделки, которые двигали ВРУЧНУЮ (d.manual===true), не трогаем.
+  let AUTO_ON=true; try{ AUTO_ON=localStorage.getItem('shturval_auto')!=='0'; }catch(e){}
+  function setAuto(on){ AUTO_ON=!!on; try{localStorage.setItem('shturval_auto',on?'1':'0');}catch(e){} const sw=document.getElementById('sw-auto'); if(sw) sw.checked=AUTO_ON; if(on){ autoClassify(); renderFunnel&&renderFunnel(); renderLeft&&renderLeft(); renderCrmDash&&renderCrmDash(); } }
+  function autoClassify(){
+    if(!AUTO_ON) return; let changed=false;
+    COCKPIT_CHATS.forEach(c=>{
+      const sug=c.stage; if(!sug||sug==='Новая заявка') return;   // нет сигнала → остаётся новой
+      let d=findDealByName(c.name);
+      if(d&&d.manual) return;                                      // вручную перемещённые не трогаем
+      if(!d) d=ensureDeal(c.name,sug);
+      if(d.status!==sug){
+        d.status=sug; d.auto=true;
+        if(sug==='Оплачено'&&!d.paid_at) d.paid_at=new Date().toISOString();
+        if(sug==='Отказ'&&!d.reject_reason) d.reject_reason='Авто (по переписке)';
+        logActivity(d.client_id,d.id,'системное','🤖 Авто-этап по переписке → '+sug);
+        changed=true;
+      }
+    });
+    if(changed) crmPersist();
   }
   function renderLeft(){
     const box=document.getElementById('cockpit-chats'); if(!box) return;
@@ -1565,7 +1592,7 @@
     if(!dragChat) return; const nm=dragChat.name; dragChat=null;
     const d=ensureDeal(nm,status);
     if(status==='Отказ'){ pendingReject=d.id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; }
-    d.status=status; if(status==='Оплачено'&&!d.paid_at) d.paid_at=new Date().toISOString();
+    d.status=status; d.manual=true; if(status==='Оплачено'&&!d.paid_at) d.paid_at=new Date().toISOString();
     logActivity(d.client_id,d.id,'смена статуса','Статус → '+status+' (перетащено)');
     crmPersist(); renderFunnel(); renderCrmStats(); renderCrmDash(); renderLeft(); if(ckCurName&&ckCurName.toLowerCase()===nm.toLowerCase()) ckHead();
   }
@@ -1573,11 +1600,11 @@
   function moveDeal(id,st){
     const d=getDeal(id); if(!d||d.status===st) return;
     if(st==='Отказ'){ pendingReject=id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; }
-    d.status=st; logActivity(d.client_id,d.id,'смена статуса','Статус → '+st); crmPersist(); renderBoard();
+    d.status=st; d.manual=true; logActivity(d.client_id,d.id,'смена статуса','Статус → '+st); crmPersist(); renderBoard();
   }
   function confirmReject(){
     const d=getDeal(pendingReject); if(!d) return;
-    d.status='Отказ'; d.reject_reason=document.getElementById('reject-reason').value;
+    d.status='Отказ'; d.manual=true; d.reject_reason=document.getElementById('reject-reason').value;
     logActivity(d.client_id,d.id,'смена статуса','Отказ: '+d.reject_reason);
     crmPersist(); document.getElementById('rejectbg').classList.remove('open'); renderBoard(); if(curDealId===d.id) renderDealModal();
   }
@@ -1614,7 +1641,7 @@
   }
   function updClient(f,v){ const d=getDeal(curDealId); const c=getClient(d.client_id); c[f]=v; c.last_contact_at=new Date().toISOString(); crmPersist(); }
   function updDeal(f,v){ const d=getDeal(curDealId); d[f]=v; crmPersist(); }
-  function updStatus(v){ const d=getDeal(curDealId); if(v==='Отказ'){ pendingReject=d.id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; } d.status=v; if(v==='Оплачено'&&!d.paid_at) d.paid_at=new Date().toISOString(); logActivity(d.client_id,d.id,'смена статуса','Статус → '+v); crmPersist(); renderBoard&&renderBoard(); }
+  function updStatus(v){ const d=getDeal(curDealId); if(v==='Отказ'){ pendingReject=d.id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; } d.status=v; d.manual=true; if(v==='Оплачено'&&!d.paid_at) d.paid_at=new Date().toISOString(); logActivity(d.client_id,d.id,'смена статуса','Статус → '+v); crmPersist(); renderBoard&&renderBoard(); }
   let itemTimer=null;
   function searchItems(q){
     clearTimeout(itemTimer); const res=document.getElementById('di-res');

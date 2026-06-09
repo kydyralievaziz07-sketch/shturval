@@ -234,6 +234,75 @@ def chatplace_call(name, arguments):
     except Exception:
         return resp.get("result", {})
 
+# ====== АВТО-ВОРОНКА: классификация чатов по содержанию переписки ======
+# Ключевые слова (нижний регистр). Достаточно вхождения подстроки.
+PAY_KW = ["оплат", "оплачено", "оплатил", "перевел", "перевёл", "перевела", "перечислил",
+          "скинул чек", "скинула чек", "отправил чек", "отправила чек", "чек отправ",
+          "квитанц", "вот чек", "чек вот", "perevel", "paid", "төлөдү", "акча салдым"]
+REJECT_KW = ["не надо", "не нужно", "ненужно", "не интерес", "неинтерес", "передума",
+             "не буду", "откаж", "спасибо, не", "спасибо не", "в другой раз", "не подойд",
+             "не актуально", "уже купил", "купил в другом", "дорого для меня", "керек эмес"]
+PRICE_KW = ["цена", "цену", "сколько стоит", "сколько за", "сколько будет", "стоит",
+            "по чем", "почем", "почём", "прайс", "стоимост", "канча турат", "канча",
+            "баасы"]
+
+def classify_chat(arr):
+    """Определяет стадию воронки по сообщениям чата. arr — как из chats_messages."""
+    msgs = [m for m in arr if (m.get("message") or "").strip()]
+    has_reply = any(m.get("side") == "operator" for m in arr)
+    # самые свежие сообщения — первыми (свежий смысл важнее)
+    msgs_sorted = sorted(msgs, key=lambda m: m.get("createdAt") or 0, reverse=True)
+    for m in msgs_sorted:
+        t = (m.get("message") or "").lower()
+        if any(k in t for k in PAY_KW):
+            return "Оплачено"
+        if any(k in t for k in REJECT_KW):
+            return "Отказ"
+        if any(k in t for k in PRICE_KW):
+            return "Выставили счёт"
+    return "Связались" if has_reply else "Новая заявка"
+
+_chat_stages = {}          # chat_id -> стадия воронки
+_chat_stages_t = 0
+
+def _analyze_chats(items):
+    """Прогоняет чаты через классификатор (в несколько потоков). Кэширует результат."""
+    global _chat_stages_t
+    from concurrent.futures import ThreadPoolExecutor
+    def one(it):
+        cid = it.get("id")
+        if not cid:
+            return None
+        try:
+            res = chatplace_call("chats_messages", {"chatId": cid, "limit": 30})
+            arr = res if isinstance(res, list) else res.get("items", [])
+            return (cid, classify_chat(arr))
+        except Exception:
+            return None
+    out = {}
+    try:
+        with ThreadPoolExecutor(max_workers=5) as ex:
+            for r in ex.map(one, items):
+                if r:
+                    out[r[0]] = r[1]
+    except Exception:
+        pass
+    if out:
+        _chat_stages.update(out)
+        _chat_stages_t = time.time()
+
+def _chat_analyzer():
+    """Фоновый поток: постоянно анализирует чаты и раскладывает их по воронке."""
+    while True:
+        try:
+            if CFG.get("CHATPLACE_KEY"):
+                res = chatplace_call("chats_list", {"limit": 200})
+                items = res.get("items", []) if isinstance(res, dict) else []
+                _analyze_chats(items)
+        except Exception:
+            pass
+        time.sleep(180)
+
 def build_chats():
     res = chatplace_call("chats_list", {"limit": 200})
     items = res.get("items", []) if isinstance(res, dict) else []
@@ -246,9 +315,11 @@ def build_chats():
         ts = it.get("lastMessageAt")
         tm = time.strftime("%H:%M", time.localtime(ts)) if ts else ""
         chats.append({"id": it.get("id"), "name": it.get("clientName", "клиент"),
-                      "time": tm, "status": it.get("statusName", ""), "ts": ts or 0})
+                      "time": tm, "status": it.get("statusName", ""), "ts": ts or 0,
+                      "stage": _chat_stages.get(it.get("id"), "")})
     return {"source": "Instagram", "updated": time.strftime("%H:%M:%S"),
-            "today": today, "active": active, "total": len(items), "chats": chats}
+            "today": today, "active": active, "total": len(items),
+            "analyzed": len(_chat_stages), "chats": chats}
 
 def build_chat_messages(cid):
     res = chatplace_call("chats_messages", {"chatId": cid, "limit": 40})
@@ -628,4 +699,7 @@ if __name__ == "__main__":
     # фоновый прогрев каталога 1С и сводки amoCRM (чтобы запросы отвечали мгновенно)
     if CFG.get("YAROS_URL") or CFG.get("AMO_TOKEN"):
         threading.Thread(target=_warmer, daemon=True).start()
+    # фоновый анализ чатов → авто-раскладка по воронке
+    if CFG.get("CHATPLACE_KEY"):
+        threading.Thread(target=_chat_analyzer, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
