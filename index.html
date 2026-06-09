@@ -10,6 +10,11 @@
     --text:#e7eaf0; --muted:#9aa3b2; --accent:#4f8cff; --green:#39d98a;
     --red:#ff6b6b; --amber:#ffb84d; --purple:#a78bfa; --radius:14px;
   }
+  /* светлая тема */
+  body.light{
+    --bg:#eef1f6; --panel:#ffffff; --panel2:#f1f4f9; --line:#dfe4ec;
+    --text:#1b2030; --muted:#697586;
+  }
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     background:var(--bg);color:var(--text);display:flex;min-height:100vh}
@@ -229,7 +234,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v1.7.0<br>Личные кабинеты с ролями 👥<br>у каждого свой пароль и разделы
+      Штурвал v1.8.0<br>Личные кабинеты · темы 🎨<br>Настройки: тема · валюта · выход
     </div>
   </aside>
 
@@ -247,11 +252,6 @@
           <button class="active" data-period="week">Неделя</button>
           <button data-period="month">Месяц</button>
         </div>
-        <div class="period" id="curswitch" title="Валюта отображения">
-          <button class="active" data-cur="KGS">Сом</button>
-          <button data-cur="USD">$</button>
-        </div>
-        <span id="fxnote" style="font-size:11px;color:var(--muted)"></span>
         <button class="bell" onclick="toggleDrawer()" aria-label="Уведомления: 5 новых">🔔<span class="bcount">5</span></button>
         <div class="user">Владелец <div class="avatar">Б</div></div>
       </div>
@@ -515,8 +515,26 @@
     <section id="tab-set" class="hide">
       <div class="card">
         <h3>Настройки</h3>
-        <div class="note">Сейчас сайт <b>только для тебя (владельца)</b>, вход защищён паролем 🔒. Позже: подключение <b>рынка</b>, настройка ИИ, цели продаж, и — когда решишь — <b>личные кабинеты для других клиентов</b>.</div>
-        <div style="margin-top:16px"><button class="btn ghost" onclick="logout()">🚪 Выйти из аккаунта</button></div>
+        <div class="note" id="set-info">—</div>
+
+        <div style="margin-top:18px">
+          <div style="font-size:13px;color:var(--muted);margin-bottom:8px">🎨 Тема оформления</div>
+          <div class="period" id="themesw">
+            <button data-theme="dark">🌙 Тёмная</button>
+            <button data-theme="light">☀️ Светлая</button>
+          </div>
+        </div>
+
+        <div style="margin-top:18px">
+          <div style="font-size:13px;color:var(--muted);margin-bottom:8px">💱 Валюта отображения</div>
+          <div class="period" id="curswitch">
+            <button class="active" data-cur="KGS">Сом</button>
+            <button data-cur="USD">$</button>
+          </div>
+          <span id="fxnote" style="font-size:11px;color:var(--muted);margin-left:10px"></span>
+        </div>
+
+        <div style="margin-top:22px"><button class="btn ghost" onclick="logout()">🚪 Выйти из аккаунта</button></div>
       </div>
     </section>
 
@@ -639,13 +657,24 @@
   function applyAccess(){
     let first=null;
     document.querySelectorAll('.nav a').forEach(a=>{
-      if(canSee(a.dataset.tab)){ a.style.display=''; if(!first) first=a; }
-      else a.style.display='none';
+      const t=a.dataset.tab;
+      const show=(t==='set')||canSee(t);          // «Настройки» (выход) доступны всем
+      a.style.display=show?'':'none';
+      if(show && t!=='set' && !first) first=a;     // по умолчанию — первый рабочий раздел
     });
+    if(!first) first=document.querySelector('.nav a[data-tab="set"]');  // если разделов нет — хотя бы Настройки
     const u=document.querySelector('.user'); if(u&&u.childNodes[0]) u.childNodes[0].nodeValue=(USER.name||'Пользователь')+' ';
     const av=document.querySelector('.avatar'); if(av) av.textContent=(USER.name||'?').slice(0,1).toUpperCase();
+    updateSettings();
     const active=document.querySelector('.nav a.active');
     if((!active||active.style.display==='none')&&first) first.click();
+  }
+  function updateSettings(){
+    const el=document.getElementById('set-info'); if(!el) return;
+    const names={dash:'Дашборд',crm:'CRM',chats:'Чаты',prod:'Товары',sales:'Продажи',clients:'Клиенты',market:'Рынок',analytics:'Аналитика',fin:'Финансы',ai:'ИИ-помощник',set:'Настройки'};
+    const all=USER.sections.indexOf('all')>=0;
+    const list=all?'все разделы':(USER.sections.map(s=>names[s]||s).join(', ')||'—');
+    el.innerHTML='Вы вошли как <b>'+esc(USER.name||'Пользователь')+'</b>.<br>Доступные разделы: '+esc(list)+'.<br>Вход защищён паролем 🔒.';
   }
   function showLogin(show){
     const el=document.getElementById('login');
@@ -940,6 +969,14 @@
       b.classList.add('active'); CUR=b.dataset.cur; updateFx(); renderAll();
     });
   });
+  // --- ТЕМА ОФОРМЛЕНИЯ (тёмная/светлая) ---
+  function setTheme(t){
+    document.body.classList.toggle('light', t==='light');
+    try{ localStorage.setItem('shturval_theme', t); }catch(e){}
+    document.querySelectorAll('#themesw button').forEach(x=>x.classList.toggle('active', x.dataset.theme===t));
+  }
+  document.querySelectorAll('#themesw button').forEach(b=>b.addEventListener('click',()=>setTheme(b.dataset.theme)));
+  (function(){ let t='dark'; try{ t=localStorage.getItem('shturval_theme')||'dark'; }catch(e){} setTheme(t); })();
   tagDemoMoney();
   // автоматически тянем свежий курс доллара к сому
   fetch('https://open.er-api.com/v6/latest/USD').then(r=>r.json()).then(d=>{
