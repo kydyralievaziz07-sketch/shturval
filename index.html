@@ -285,7 +285,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v2.5.1<br>счётчик «Новая заявка» = все чаты<br>Мой день 🎯 · Персонал 🧑‍💼
+      Штурвал v2.5.2<br>пустой доступ [] = только Мой день<br>счётчик «Новая заявка» = все чаты
     </div>
   </aside>
 
@@ -780,7 +780,9 @@
   function canSee(tab){ return USER.sections.indexOf('all')>=0 || USER.sections.indexOf(tab)>=0; }
   function isOwner(){ return USER.sections.indexOf('all')>=0; }
   function applyUser(d){
-    USER={name:(d&&d.name)||'', sections:(d&&d.sections&&d.sections.length)?d.sections:['all'],
+    // ВАЖНО: пустой массив [] = «нет доступа к разделам» (только Мой день/Настройки),
+    // а НЕ «показать всё». ['all'] ставим только если поле sections вообще не пришло.
+    USER={name:(d&&d.name)||'', sections:(d&&Array.isArray(d.sections))?d.sections:['all'],
           role:(d&&d.role)||'', department:(d&&d.department)||'', plan_day:(d&&d.plan_day)||0};
     applyAccess();
   }
