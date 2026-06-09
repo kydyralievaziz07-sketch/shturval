@@ -285,7 +285,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v2.8.3<br>фикс: чаты не падают (429)<br>+ понятное сообщение о лимите
+      Штурвал v2.8.4<br>ИИ-помощник: ждёт пробуждения<br>сервера и сам повторяет запрос
     </div>
   </aside>
 
@@ -1657,22 +1657,36 @@
       paid_count:paid.length, paid_sum:paid.reduce((s,d)=>s+dealAmount(d),0),
       reject_reasons:reasons, new_leads:newLeadsCount?newLeadsCount():0 };
   }
-  async function aiSend(){
+  function aiSend(){
     const inp=document.getElementById('ai-input'); const q=(inp.value||'').trim(); if(!q) return;
     inp.value=''; aiBubble('user',esc(q));
-    const btn=document.getElementById('ai-send-btn'); if(btn){ btn.disabled=true; btn.textContent='…'; }
     const wait=aiBubble('ai','<span style="color:var(--muted)">думаю над ответом…</span>');
+    aiRequest(q,wait,1);
+  }
+  async function aiRequest(q,wait,attempt){
+    const btn=document.getElementById('ai-send-btn'); if(btn){ btn.disabled=true; btn.textContent='…'; }
+    const done=()=>{ if(btn){ btn.disabled=false; btn.textContent='Спросить'; } const box=document.getElementById('ai-msgs'); if(box) box.scrollTop=box.scrollHeight; };
+    let ctrl, to; try{ ctrl=new AbortController(); to=setTimeout(()=>ctrl.abort(),75000); }catch(_){}
     try{
       const r=await apiFetch('/api/assistant',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({question:q, crm:crmSummaryForAi(), history:AI_HISTORY.slice(-6)})},ONEC_BASE);
+        body:JSON.stringify({question:q, crm:crmSummaryForAi(), history:AI_HISTORY.slice(-6)}), signal:ctrl?ctrl.signal:undefined},ONEC_BASE);
+      if(to) clearTimeout(to);
       const d=await r.json();
       const ans=d.answer||d.error||'Не удалось получить ответ.';
       if(wait) wait.innerHTML=linkify?linkify(ans):esc(ans);
       AI_HISTORY.push({role:'user',content:q},{role:'assistant',content:ans});
       if(d.need_key && wait){ wait.innerHTML+='<div style="margin-top:8px;font-size:12px;color:var(--muted)">⚙️ ИИ-движок пока не подключён. Дай мне ключ Anthropic — и помощник заговорит по-настоящему.</div>'; }
+      done();
     }catch(e){
-      if(wait) wait.innerHTML=(e&&e.message==='forbidden')?'⛔ Нет доступа.':'⚠️ Сервер не ответил (мог просыпаться). Попробуй ещё раз через минуту.';
-    }finally{ if(btn){ btn.disabled=false; btn.textContent='Спросить'; } const box=document.getElementById('ai-msgs'); if(box) box.scrollTop=box.scrollHeight; }
+      if(to) clearTimeout(to);
+      if(e&&e.message==='forbidden'){ if(wait) wait.innerHTML='⛔ Нет доступа к помощнику.'; done(); return; }
+      if(attempt<4){
+        if(wait) wait.innerHTML='<span style="color:var(--muted)">⏳ Сервер просыпается, подождите немного… (попытка '+attempt+'/3)</span>';
+        setTimeout(()=>aiRequest(q,wait,attempt+1),9000); return;   // не трогаем кнопку — продолжаем ждать
+      }
+      if(wait) wait.innerHTML='⚠️ Сервер пока не ответил. Подождите минуту и спросите ещё раз — он «просыпается» после паузы.';
+      done();
+    }
   }
   // =================== ПЕРСОНАЛ (владелец) ===================
   async function loadStaff(){
