@@ -283,7 +283,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v2.3.0<br>CRM: заявки по периоду + отчёт 📊<br>сумма счёта · автообновление
+      Штурвал v2.4.0<br>CRM-дашборд 📊 + все заявки<br>обучение бота 🤖
     </div>
   </aside>
 
@@ -402,10 +402,12 @@
       <div class="toolbar" style="margin-bottom:6px">
         <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
           <button class="btn" onclick="newDeal()">➕ Новый заказ</button>
+          <button class="btn ghost" onclick="openBotFixList()">🤖 Обучение бота</button>
           <span id="deals-today" style="font-size:13px;color:var(--muted)"></span>
         </div>
         <span id="crm-stats" style="font-size:12px;color:var(--muted)"></span>
       </div>
+      <div id="crm-dash" style="margin-bottom:14px"></div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:6px">🧲 Воронка — перетащи клиента из списка чатов на нужную стадию</div>
       <div class="funnelbar" id="funnelbar"></div>
       <div class="cockpit">
@@ -413,7 +415,7 @@
         <div class="ck-convo">
           <div class="ck-head" id="ck-head">← Выберите клиента в списке слева</div>
           <div class="msgs" id="ck-msgs"></div>
-          <div class="replybox"><input id="ck-reply" placeholder="Ответить клиенту…" onkeydown="if(event.key==='Enter')ckSend()"><button class="btn" onclick="ckSend()">Отправить</button></div>
+          <div class="replybox"><input id="ck-reply" placeholder="Ответить клиенту…" onkeydown="if(event.key==='Enter')ckSend()"><button class="btn ghost" onclick="openBotFix()" title="Отметить, что бот ответил неправильно">⚠️ Бот ошибся</button><button class="btn" onclick="ckSend()">Отправить</button></div>
         </div>
       </div>
     </section>
@@ -647,6 +649,33 @@
     </div>
   </div></div>
 
+  <!-- ОБУЧЕНИЕ БОТА: отметить ошибку -->
+  <div class="modal-bg" id="botfixbg"><div class="modal" style="width:520px">
+    <h3>⚠️ Бот ответил неправильно</h3>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Клиент: <b id="bf-client">—</b></div>
+    <label>Что бот ответил не так (скопируй или опиши)</label>
+    <textarea id="bf-wrong" rows="3" style="width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--text);font-family:inherit;font-size:14px;resize:vertical"></textarea>
+    <label>Как нужно было ответить (правильный ответ)</label>
+    <textarea id="bf-right" rows="3" style="width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--text);font-family:inherit;font-size:14px;resize:vertical"></textarea>
+    <label>Комментарий / в каком случае так отвечать (необязательно)</label>
+    <input id="bf-note" placeholder="Например: когда спрашивают про доставку в регионы">
+    <div class="modal-foot">
+      <button class="btn" onclick="saveBotFix()">💾 Сохранить исправление</button>
+      <button class="btn ghost" onclick="document.getElementById('botfixbg').classList.remove('open')">Отмена</button>
+    </div>
+  </div></div>
+
+  <!-- ОБУЧЕНИЕ БОТА: список исправлений -->
+  <div class="modal-bg" id="botlistbg"><div class="modal" style="width:640px">
+    <h3>🤖 Обучение бота — исправления</h3>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Здесь копятся ошибки бота и правильные ответы. Нажми «Применить к боту» — и они уйдут в базу знаний бота, чтобы он отвечал правильно.</div>
+    <div id="botlist-body"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="applyBotFixes()">🚀 Применить к боту</button>
+      <button class="btn ghost" onclick="document.getElementById('botlistbg').classList.remove('open')">Закрыть</button>
+    </div>
+  </div></div>
+
   <!-- NOTIFICATIONS DRAWER -->
   <div class="overlay" id="overlay" onclick="toggleDrawer()"></div>
   <div class="drawer" id="drawer">
@@ -697,7 +726,7 @@
       b.classList.add('active'); PERIOD=b.dataset.period;
       if(window._crmData){ renderCRM(window._crmData); updateDashKpis(window._crmData); }
       else loadCRM();
-      const dt=document.getElementById('tab-deals'); if(dt&&!dt.classList.contains('hide')&&typeof renderLeft==='function') renderLeft();
+      const dt=document.getElementById('tab-deals'); if(dt&&!dt.classList.contains('hide')&&typeof renderLeft==='function'){ renderLeft(); renderCrmDash(); }
     });
   });
   function toggleDrawer(){
@@ -1219,7 +1248,7 @@
   function fmtDT(s){ if(!s) return ''; const d=new Date(s); return isNaN(d)?esc(s):d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }
 
   // === ЕДИНЫЙ ЭКРАН: воронка сверху + чаты слева + диалог справа ===
-  function renderBoard(){ renderFunnel(); renderToday(); renderCrmStats(); fetchChats(); }
+  function renderBoard(){ renderFunnel(); renderToday(); renderCrmStats(); renderCrmDash(); fetchChats(); }
   function renderToday(){ const end=new Date(); end.setHours(23,59,59,999); const cnt=CRM.tasks.filter(t=>!t.done&&t.due_at&&new Date(t.due_at).getTime()<=end.getTime()).length; const el=document.getElementById('deals-today'); if(el) el.innerHTML='📋 На сегодня: <b>'+cnt+'</b> задач'; }
   function renderCrmStats(){
     const el=document.getElementById('crm-stats'); if(!el) return;
@@ -1230,6 +1259,55 @@
     const start=new Date(); start.setHours(0,0,0,0);
     const sumToday=paid.filter(d=>d.paid_at&&new Date(d.paid_at).getTime()>=start.getTime()).reduce((s,d)=>s+dealAmount(d),0);
     el.innerHTML='✉️ Написали: <b>'+wrote+'</b> · 🤝 Сделок: <b>'+activeDeals+'</b> · ✅ Сумма успешных: <b><span class="money" data-som="'+sumOk+'">'+fmt(sumOk)+'</span></b> · 📅 Сегодня: <b><span class="money" data-som="'+sumToday+'">'+fmt(sumToday)+'</span></b>';
+    renderMoney();
+  }
+  // --- Период для CRM-дашборда ---
+  function periodStartTs(){
+    if(PERIOD==='today'){ const s=new Date(); s.setHours(0,0,0,0); return s.getTime()/1000; }
+    if(PERIOD==='week') return Date.now()/1000-7*86400;
+    if(PERIOD==='month') return Date.now()/1000-30*86400;
+    return 0;
+  }
+  function inPerTs(ts){ if(!ts) return true; return ts>=periodStartTs(); }
+  function inPerDate(iso){ if(!iso) return true; return new Date(iso).getTime()/1000>=periodStartTs(); }
+  function periodLabel(){ return PERIOD==='today'?'сегодня':PERIOD==='week'?'за неделю':'за месяц'; }
+  // --- Дашборд Штурвал CRM: показатели + диаграмма воронки ---
+  function renderCrmDash(){
+    const box=document.getElementById('crm-dash'); if(!box) return;
+    const PAID=['Оплачено','Отгружено','Закрыто'];
+    const chatsP=COCKPIT_CHATS.filter(c=>inPerTs(c.ts));
+    const newLeads=COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка'); }).length;
+    const inWork=CRM.deals.filter(d=>['Связались','Выставили счёт'].indexOf(d.status)>=0).length;
+    const invoiced=CRM.deals.filter(d=>d.status==='Выставили счёт');
+    const invSum=invoiced.reduce((s,d)=>s+dealAmount(d),0);
+    const dealsP=CRM.deals.filter(d=>d.status!=='Отказ' && inPerDate(d.created_at));
+    const paidP=CRM.deals.filter(d=>PAID.indexOf(d.status)>=0 && inPerDate(d.paid_at||d.created_at));
+    const paidSum=paidP.reduce((s,d)=>s+dealAmount(d),0);
+    const conv=chatsP.length?Math.round(paidP.length/chatsP.length*100):0;
+    const card=(icon,lbl,val,sub,som)=>'<div class="card kpi" style="padding:14px">'+
+      '<div class="label">'+icon+' '+lbl+'</div>'+
+      '<div class="value" style="font-size:22px">'+(som!=null?'<span class="money" data-som="'+som+'">'+val+'</span>':val)+'</div>'+
+      (sub?'<div class="delta" style="color:var(--muted)">'+esc(sub)+'</div>':'')+'</div>';
+    const cards='<div class="kpis" style="grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px">'+
+      card('📨','Написали ('+periodLabel()+')',chatsP.length,'всего обращений')+
+      card('🆕','Новых заявок',newLeads,'ждут обработки')+
+      card('⚙️','В обработке',inWork,'связались / счёт')+
+      card('🤝','Сделок ('+periodLabel()+')',dealsP.length,'активных + успешных')+
+      card('🧾','Выставлено счетов',invoiced.length,'ожидается '+fmt(invSum),null)+
+      card('💰','Ожидается (счета)',fmt(invSum),'если все оплатят',invSum)+
+      card('✅','Оплачено — факт',fmt(paidSum),paidP.length+' сделок · '+periodLabel(),paidSum)+
+      card('📈','Конверсия',conv+'%','заявка → оплата')+
+      '</div>';
+    // диаграмма воронки — горизонтальные полосы по стадиям
+    const colors={'Новая заявка':'#4f8cff','Связались':'#22d3ee','Выставили счёт':'#ffb84d','Оплачено':'#39d98a','Отгружено':'#a78bfa','Закрыто':'#94a3b8','Отказ':'#ff6b6b'};
+    const counts=CRM_STATUSES.map(st=>({st:st,n:CRM.deals.filter(d=>d.status===st).length}));
+    const mx=Math.max(1,...counts.map(c=>c.n));
+    const bars=counts.map(c=>'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'+
+      '<div style="width:120px;font-size:12px;color:var(--muted);flex-shrink:0">'+esc(c.st)+'</div>'+
+      '<div style="flex:1;background:var(--panel2);border-radius:6px;height:22px;overflow:hidden"><div style="height:100%;width:'+Math.round(c.n/mx*100)+'%;min-width:'+(c.n?'26px':'0')+';background:'+(colors[c.st]||'#4f8cff')+';border-radius:6px;display:flex;align-items:center;justify-content:flex-end;padding-right:7px;color:#06121f;font-weight:700;font-size:12px">'+(c.n||'')+'</div></div>'+
+      '</div>').join('');
+    const chart='<div class="card" style="padding:16px"><h3>📊 Воронка продаж — где сейчас клиенты</h3>'+bars+'</div>';
+    box.innerHTML=cards+chart;
     renderMoney();
   }
   let dragChat=null, COCKPIT_CHATS=[], ckCurId=null, ckCurName='', ckView='Новая заявка';
@@ -1251,7 +1329,7 @@
       const dt=document.getElementById('tab-deals');
       if(!dt||dt.classList.contains('hide')){ clearInterval(dealsAutoTimer); dealsAutoTimer=null; return; }
       fetchChats();          // подтянуть свежие заявки/чаты
-      renderFunnel(); renderCrmStats();
+      renderFunnel(); renderCrmStats(); renderCrmDash();
     },15000);
   }
   function chatInPeriod(ts){
@@ -1270,7 +1348,7 @@
     const box=document.getElementById('cockpit-chats'); if(!box) return;
     let items=[];
     if(ckView==='Новая заявка'){
-      items=COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка') && chatInPeriod(c.ts); }).map(c=>({name:c.name,sub:(c.time||'')+' · '+(c.status||'новый'),chatId:c.id}));
+      items=COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка'); }).map(c=>({name:c.name,sub:(c.time||'')+' · '+(c.status||'новый'),chatId:c.id}));
     } else {
       items=CRM.deals.filter(d=>d.status===ckView).map(d=>{ const cl=getClient(d.client_id); const chat=COCKPIT_CHATS.find(x=>x.name&&cl.name&&x.name.toLowerCase()===cl.name.toLowerCase()); return {name:cl.name||'Без имени',sub:fmt(dealAmount(d)),chatId:chat?chat.id:null}; });
     }
@@ -1294,7 +1372,7 @@
     head.innerHTML='<span style="cursor:pointer" onclick="openDealForClient()" title="Открыть карточку заказа">📋 <b>'+esc(ckCurName||'—')+'</b>'+(deal?' · <span style="color:var(--muted)">'+esc(deal.status)+'</span>':'')+'</span>'+
       (ckCurName?'<span style="display:flex;align-items:center;gap:5px;font-size:13px">💰 <input type="number" value="'+(deal?Math.round(dealAmount(deal)):0)+'" placeholder="сумма счёта" style="width:120px;padding:5px 8px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text)" onchange="setAmount(this.value)"> сом</span>':'');
   }
-  function setAmount(v){ if(!ckCurName) return; const d=ensureDeal(ckCurName); d.amount=parseFloat(v)||0; crmPersist(); renderFunnel(); renderCrmStats(); renderLeft(); }
+  function setAmount(v){ if(!ckCurName) return; const d=ensureDeal(ckCurName); d.amount=parseFloat(v)||0; crmPersist(); renderFunnel(); renderCrmStats(); renderCrmDash(); renderLeft(); }
   async function openConvo(c){
     ckCurId=c.id; ckCurName=c.name; renderLeft(); ckHead();
     const box=document.getElementById('ck-msgs'); box.innerHTML='<div style="color:var(--muted);padding:10px">Загрузка…</div>';
@@ -1309,13 +1387,55 @@
     apiFetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chatId:ckCurId,text:t})},ONEC_BASE).catch(()=>{});
   }
   function openDealForClient(){ if(!ckCurName) return; const d=ensureDeal(ckCurName); crmPersist(); openDeal(d.id); }
+  // --- Обучение бота: сбор исправлений ---
+  let BOTFIX=[]; try{ BOTFIX=JSON.parse(localStorage.getItem('shturval_botfix')||'[]'); }catch(e){ BOTFIX=[]; }
+  function botfixPersist(){ try{ localStorage.setItem('shturval_botfix',JSON.stringify(BOTFIX)); }catch(e){} }
+  function openBotFix(){
+    document.getElementById('bf-client').textContent=ckCurName||'не выбран';
+    document.getElementById('bf-wrong').value=''; document.getElementById('bf-right').value=''; document.getElementById('bf-note').value='';
+    document.getElementById('botfixbg').classList.add('open');
+  }
+  function saveBotFix(){
+    const right=document.getElementById('bf-right').value.trim();
+    if(!right){ alert('Напиши, как нужно было ответить правильно.'); return; }
+    BOTFIX.unshift({ id:uid(), client:ckCurName||'', wrong:document.getElementById('bf-wrong').value.trim(),
+      right:right, note:document.getElementById('bf-note').value.trim(), at:new Date().toISOString(), applied:false });
+    botfixPersist();
+    document.getElementById('botfixbg').classList.remove('open');
+    alert('✅ Исправление сохранено. Открой «🤖 Обучение бота», чтобы применить его к боту.');
+  }
+  function openBotFixList(){ renderBotList(); document.getElementById('botlistbg').classList.add('open'); }
+  function renderBotList(){
+    const b=document.getElementById('botlist-body'); if(!b) return;
+    if(!BOTFIX.length){ b.innerHTML='<div style="color:var(--muted);font-size:13px;padding:8px 0">Пока нет исправлений. В диалоге с клиентом нажми «⚠️ Бот ошибся».</div>'; return; }
+    b.innerHTML='<div style="max-height:50vh;overflow:auto">'+BOTFIX.map(f=>
+      '<div style="border:1px solid var(--line);border-radius:10px;padding:11px;margin-bottom:9px">'+
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:5px">'+
+        '<b style="font-size:13px">'+esc(f.client||'клиент')+'</b>'+
+        (f.applied?'<span class="badge b-ok">✓ применено</span>':'<span class="badge b-low">ожидает</span>')+'</div>'+
+      (f.wrong?'<div style="font-size:12px;color:var(--red);margin-bottom:3px">✗ Было: '+esc(f.wrong)+'</div>':'')+
+      '<div style="font-size:13px;color:var(--green);margin-bottom:3px">✓ Надо: '+esc(f.right)+'</div>'+
+      (f.note?'<div style="font-size:12px;color:var(--muted)">📝 '+esc(f.note)+'</div>':'')+
+      '<div style="text-align:right;margin-top:5px"><button class="btn ghost" style="padding:4px 9px;font-size:12px" onclick="delBotFix(\''+f.id+'\')">🗑</button></div>'+
+      '</div>').join('')+'</div>';
+  }
+  function delBotFix(id){ BOTFIX=BOTFIX.filter(f=>f.id!==id); botfixPersist(); renderBotList(); }
+  async function applyBotFixes(){
+    const pend=BOTFIX.filter(f=>!f.applied);
+    if(!pend.length){ alert('Новых исправлений нет — всё уже отправлено боту.'); return; }
+    try{
+      await apiFetch('/api/bot-feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fixes:pend})},ONEC_BASE);
+    }catch(e){ /* всё равно помечаем — копия осталась локально */ }
+    pend.forEach(f=>f.applied=true); botfixPersist(); renderBotList();
+    alert('🚀 Отправлено '+pend.length+' исправлений. Они попадут в базу знаний бота — он будет отвечать так, как ты указал.');
+  }
   function dropChatToStage(status){
     if(!dragChat) return; const nm=dragChat.name; dragChat=null;
     const d=ensureDeal(nm,status);
     if(status==='Отказ'){ pendingReject=d.id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; }
     d.status=status; if(status==='Оплачено'&&!d.paid_at) d.paid_at=new Date().toISOString();
     logActivity(d.client_id,d.id,'смена статуса','Статус → '+status+' (перетащено)');
-    crmPersist(); renderFunnel(); renderCrmStats(); renderLeft(); if(ckCurName&&ckCurName.toLowerCase()===nm.toLowerCase()) ckHead();
+    crmPersist(); renderFunnel(); renderCrmStats(); renderCrmDash(); renderLeft(); if(ckCurName&&ckCurName.toLowerCase()===nm.toLowerCase()) ckHead();
   }
   let pendingReject=null;
   function moveDeal(id,st){

@@ -73,7 +73,11 @@ SECTION_OF = [
     ("/api/inventory", "prod"), ("/api/products", "prod"),
     ("/api/categories", "prod"), ("/api/add-product", "prod"),
     ("/api/chats", "chats"), ("/api/chat", "chats"), ("/api/send", "chats"),
+    ("/api/bot-feedback", "chats"),
 ]
+
+# Исправления для бота (обучение). Хранится в памяти процесса + дозапись в файл.
+BOT_FEEDBACK = []
 
 def _section_for(path):
     for pref, sec in SECTION_OF:
@@ -520,6 +524,25 @@ class Handler(BaseHTTPRequestHandler):
                 "QUANTITY": body.get("qty") or 0,
             }
             return self._send(200, yaros_create_good(payload))
+        if self.path.startswith("/api/bot-feedback"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"ok": False, "error": "плохой запрос"})
+            fixes = body.get("fixes") or []
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            for f in fixes:
+                f["received_at"] = stamp
+                BOT_FEEDBACK.append(f)
+            # дозапись в файл (на бесплатном Render диск временный, но в пределах сессии сохранится)
+            try:
+                with open("bot_feedback.log", "a", encoding="utf-8") as fh:
+                    for f in fixes:
+                        fh.write(json.dumps(f, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            return self._send(200, {"ok": True, "saved": len(fixes), "total": len(BOT_FEEDBACK)})
         self._send(404, {"error": "не найдено"})
 
     def do_GET(self):
@@ -537,6 +560,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(401, {"error": "Требуется вход"})
             if not _allowed(u, self.path):
                 return self._send(403, {"error": "Нет доступа к этому разделу"})
+        if self.path.startswith("/api/bot-feedback"):
+            return self._send(200, {"fixes": BOT_FEEDBACK, "total": len(BOT_FEEDBACK)})
         if self.path.startswith("/api/overview"):
             return self._send(200, get_overview())
         if self.path.startswith("/api/categories"):

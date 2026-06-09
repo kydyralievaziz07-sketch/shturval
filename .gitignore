@@ -14,3 +14,5 @@ backend/chats-data.json
 # системное
 .DS_Store
 __pycache__/
+ТЗ-CRM.md
+.github/workflows/
