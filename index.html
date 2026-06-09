@@ -284,7 +284,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v2.1.0<br>Единый экран CRM 🧲💬<br>воронка + чаты + диалог
+      Штурвал v2.2.0<br>Кликабельная воронка 🧲<br>стадии открывают своих клиентов
     </div>
   </aside>
 
@@ -808,10 +808,19 @@
   async function loadCRM(attempt){
     attempt=attempt||1;
     const st=document.getElementById('crm-status');
+    // мгновенно показываем последние сохранённые цифры, пока сервер отвечает/просыпается
+    if(attempt===1 && !window._crmData){
+      try{ const c=localStorage.getItem('shturval_ov');
+        if(c){ const d=JSON.parse(c); window._crmData=d; renderCRM(d); updateDashKpis(d);
+          st.style.borderStyle='dashed'; st.style.borderColor='#8a93a5';
+          st.innerHTML='📦 <b>Последние сохранённые данные</b> (обновлено '+esc(d.updated||'')+') · обновляю…'; }
+      }catch(_){}
+    }
     try{
       const r=await apiFetch('/api/overview',{},ONEC_BASE);
       if(!r.ok) throw 0;
       window._crmData=await r.json();
+      try{localStorage.setItem('shturval_ov',JSON.stringify(window._crmData));}catch(_){}
       renderCRM(window._crmData); updateDashKpis(window._crmData);
     }catch(e){
       if(e&&(e.message==='unauthorized'||e.message==='forbidden')) return;
@@ -1210,40 +1219,52 @@
   function fmtDT(s){ if(!s) return ''; const d=new Date(s); return isNaN(d)?esc(s):d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }
 
   // === ЕДИНЫЙ ЭКРАН: воронка сверху + чаты слева + диалог справа ===
-  function renderBoard(){ renderFunnel(); loadCockpitChats(); renderToday(); renderCrmStats(); }
+  function renderBoard(){ renderFunnel(); renderToday(); renderCrmStats(); fetchChats(); }
   function renderToday(){ const end=new Date(); end.setHours(23,59,59,999); const cnt=CRM.tasks.filter(t=>!t.done&&t.due_at&&new Date(t.due_at).getTime()<=end.getTime()).length; const el=document.getElementById('deals-today'); if(el) el.innerHTML='📋 На сегодня: <b>'+cnt+'</b> задач'; }
   function renderCrmStats(){ const el=document.getElementById('crm-stats'); if(!el) return; const total=CRM.deals.length; const paid=CRM.deals.filter(d=>['Оплачено','Отгружено','Закрыто'].indexOf(d.status)>=0); const sum=paid.reduce((s,d)=>s+dealAmount(d),0); const conv=total?Math.round(paid.length/total*100):0; el.innerHTML='Заявок: <b>'+total+'</b> · Оплачено: <b>'+paid.length+'</b> ('+conv+'%) · <span class="money" data-som="'+sum+'">'+fmt(sum)+'</span>'; renderMoney(); }
-  let dragChat=null;
+  let dragChat=null, COCKPIT_CHATS=[], ckCurId=null, ckCurName='', ckView='Новая заявка';
   function renderFunnel(){
     const fb=document.getElementById('funnelbar'); if(!fb) return;
-    fb.innerHTML=CRM_STATUSES.map(st=>{ const n=CRM.deals.filter(d=>d.status===st).length; return '<div class="fchip" data-status="'+esc(st)+'"><div class="fc-n">'+esc(st)+'</div><div class="fc-c">'+n+'</div></div>'; }).join('');
+    fb.innerHTML=CRM_STATUSES.map(st=>{ const n=CRM.deals.filter(d=>d.status===st).length; return '<div class="fchip'+(st===ckView?' active':'')+'" data-status="'+esc(st)+'"><div class="fc-n">'+esc(st)+'</div><div class="fc-c">'+n+'</div></div>'; }).join('');
     fb.querySelectorAll('.fchip').forEach(ch=>{
+      ch.addEventListener('click',()=>setView(ch.dataset.status));
       ch.addEventListener('dragover',e=>{ e.preventDefault(); ch.classList.add('drop'); });
       ch.addEventListener('dragleave',()=>ch.classList.remove('drop'));
       ch.addEventListener('drop',e=>{ e.preventDefault(); ch.classList.remove('drop'); dropChatToStage(ch.dataset.status); });
     });
   }
-  let COCKPIT_CHATS=[], ckCurId=null, ckCurName='';
-  async function loadCockpitChats(){
+  function setView(stage){ ckView=stage; renderFunnel(); renderLeft(); }
+  async function fetchChats(){
+    try{ const r=await apiFetch('/api/chats',{},ONEC_BASE); const d=await r.json(); COCKPIT_CHATS=(d.chats||[]).filter(c=>c.id); }
+    catch(e){ COCKPIT_CHATS=[]; }
+    renderLeft();
+  }
+  function renderLeft(){
     const box=document.getElementById('cockpit-chats'); if(!box) return;
-    if(!box.innerHTML.trim()) box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">Загрузка чатов…</div>';
-    try{
-      const r=await apiFetch('/api/chats',{},ONEC_BASE); const d=await r.json();
-      COCKPIT_CHATS=(d.chats||[]).filter(c=>c.id);
-      if(!COCKPIT_CHATS.length){ box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">Активных чатов нет</div>'; return; }
-      box.innerHTML=COCKPIT_CHATS.map((c,i)=>'<div class="chatitem'+(c.id===ckCurId?' active':'')+'" draggable="true" data-i="'+i+'"><div class="ci-name">'+esc(c.name)+'</div><div class="ci-last">'+esc(c.status||'')+'</div><div class="ci-time">'+esc(c.time||'')+'</div></div>').join('');
-      box.querySelectorAll('.chatitem').forEach(el=>{ const c=COCKPIT_CHATS[+el.dataset.i]; el.addEventListener('click',()=>openConvo(c)); el.addEventListener('dragstart',e=>{ dragChat=c; e.dataTransfer.effectAllowed='move'; }); });
-    }catch(e){ box.innerHTML='<div style="padding:14px;color:var(--red);font-size:13px">Нет доступа к чатам</div>'; }
+    let items=[];
+    if(ckView==='Новая заявка'){
+      items=COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return !d||d.status==='Новая заявка'; }).map(c=>({name:c.name,sub:c.status||'новый',chatId:c.id}));
+    } else {
+      items=CRM.deals.filter(d=>d.status===ckView).map(d=>{ const cl=getClient(d.client_id); const chat=COCKPIT_CHATS.find(x=>x.name&&cl.name&&x.name.toLowerCase()===cl.name.toLowerCase()); return {name:cl.name||'Без имени',sub:fmt(dealAmount(d)),chatId:chat?chat.id:null}; });
+    }
+    if(!items.length){ box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">В стадии «'+esc(ckView)+'» пока пусто</div>'; return; }
+    box.innerHTML=items.map((it,i)=>'<div class="chatitem'+(it.chatId&&it.chatId===ckCurId?' active':'')+'" draggable="true" data-i="'+i+'"><div class="ci-name">'+esc(it.name)+'</div><div class="ci-last">'+esc(it.sub)+'</div></div>').join('');
+    box.querySelectorAll('.chatitem').forEach(el=>{ const it=items[+el.dataset.i];
+      el.addEventListener('click',()=>openItem(it));
+      el.addEventListener('dragstart',e=>{ dragChat={name:it.name,id:it.chatId}; e.dataTransfer.effectAllowed='move'; });
+    });
+  }
+  function openItem(it){
+    if(it.chatId){ openConvo({id:it.chatId,name:it.name}); }
+    else { ckCurId=null; ckCurName=it.name; ckHead(); const b=document.getElementById('ck-msgs'); if(b) b.innerHTML='<div style="color:var(--muted);padding:10px">Переписка в Instagram не найдена для «'+esc(it.name)+'». Нажми на имя сверху — откроется карточка заказа.</div>'; }
   }
   function findClient(name){ return name?CRM.clients.find(x=>x.name&&x.name.toLowerCase()===name.toLowerCase()):null; }
   function findDealByName(name){ const c=findClient(name); return c?CRM.deals.find(d=>d.client_id===c.id)||null:null; }
   function ensureClient(name){ let c=findClient(name); if(!c){ c={id:uid(),name:name,phone:'',source:'instagram',created_at:new Date().toISOString()}; CRM.clients.push(c); } return c; }
   function ensureDeal(name,status){ const c=ensureClient(name); let d=CRM.deals.find(x=>x.client_id===c.id); if(!d){ d={id:uid(),client_id:c.id,status:status||'Новая заявка',items:[],owner:(USER.name||''),created_at:new Date().toISOString(),comment:''}; CRM.deals.push(d); logActivity(c.id,d.id,'системное','Заказ создан из чата'); } return d; }
-  function ckHead(){ const head=document.getElementById('ck-head'); if(!head) return; const deal=findDealByName(ckCurName); head.innerHTML='<span><b>'+esc(ckCurName)+'</b>'+(deal?' · <span style="color:var(--muted)">'+esc(deal.status)+'</span>':' · <span style="color:var(--muted)">нет заказа</span>')+'</span><button class="btn ghost" style="padding:5px 10px" onclick="openDealForClient()">Открыть заказ</button>'; }
+  function ckHead(){ const head=document.getElementById('ck-head'); if(!head) return; const deal=findDealByName(ckCurName); head.innerHTML='<span style="cursor:pointer" onclick="openDealForClient()" title="Открыть карточку заказа">📋 <b>'+esc(ckCurName||'—')+'</b>'+(deal?' · <span style="color:var(--muted)">'+esc(deal.status)+'</span>':'')+'</span>'; }
   async function openConvo(c){
-    ckCurId=c.id; ckCurName=c.name;
-    document.querySelectorAll('#cockpit-chats .chatitem').forEach(el=>{ const cc=COCKPIT_CHATS[+el.dataset.i]; el.classList.toggle('active', cc&&cc.id===c.id); });
-    ckHead();
+    ckCurId=c.id; ckCurName=c.name; renderLeft(); ckHead();
     const box=document.getElementById('ck-msgs'); box.innerHTML='<div style="color:var(--muted);padding:10px">Загрузка…</div>';
     try{ const r=await apiFetch('/api/chat?id='+encodeURIComponent(c.id),{},ONEC_BASE); const d=await r.json();
       box.innerHTML=(d.msgs||[]).map(m=>'<div class="bubble '+m.t+'">'+linkify(m.x)+'</div>').join('')||'<div style="color:var(--muted);padding:10px">Нет сообщений</div>'; box.scrollTop=box.scrollHeight;
@@ -1260,8 +1281,8 @@
     if(!dragChat) return; const nm=dragChat.name; dragChat=null;
     const d=ensureDeal(nm,status);
     if(status==='Отказ'){ pendingReject=d.id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; }
-    d.status=status; logActivity(d.client_id,d.id,'смена статуса','Статус → '+status+' (перетащено из чата)');
-    crmPersist(); renderFunnel(); renderCrmStats(); if(ckCurName&&ckCurName.toLowerCase()===nm.toLowerCase()) ckHead();
+    d.status=status; logActivity(d.client_id,d.id,'смена статуса','Статус → '+status+' (перетащено)');
+    crmPersist(); renderFunnel(); renderCrmStats(); renderLeft(); if(ckCurName&&ckCurName.toLowerCase()===nm.toLowerCase()) ckHead();
   }
   let pendingReject=null;
   function moveDeal(id,st){
