@@ -18,3 +18,5 @@ __pycache__/
 .github/workflows/
 backend/bot_feedback.log
 bot_feedback.log
+backend/payroll.json
+payroll.json

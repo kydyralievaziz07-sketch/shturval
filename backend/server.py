@@ -66,7 +66,10 @@ def load_users():
                                  "sections": u.get("sections", []),
                                  "role": u.get("role", ""),
                                  "department": u.get("department", ""),
-                                 "plan_day": u.get("plan_day", 0)}
+                                 "plan_day": u.get("plan_day", 0),
+                                 "salary_month": u.get("salary_month", 0),
+                                 "daily_rate": u.get("daily_rate", 0),
+                                 "bonus_month": u.get("bonus_month", 0)}
         except Exception:
             pass
     return users
@@ -782,6 +785,70 @@ def ai_answer(question, crm, history):
         return {"error": "Не удалось обратиться к ИИ: %s" % e}
 
 
+# ====== ЗАРПЛАТА / КАДРЫ ======
+# ВНИМАНИЕ: на бесплатном Render диск временный — данные сбрасываются при перезапуске.
+# Для постоянного хранения нужна база данных (следующий шаг).
+PAYROLL_FILE = os.path.join(HERE, "payroll.json")
+
+def _payroll_load():
+    try:
+        return json.load(open(PAYROLL_FILE, encoding="utf-8"))
+    except Exception:
+        return {}
+
+PAYROLL = _payroll_load()
+
+def _payroll_save():
+    try:
+        json.dump(PAYROLL, open(PAYROLL_FILE, "w", encoding="utf-8"), ensure_ascii=False)
+    except Exception:
+        pass
+
+def _cur_month():
+    lt = time.localtime(); return "%04d-%02d" % (lt.tm_year, lt.tm_mon)
+
+def _today_str():
+    lt = time.localtime(); return "%04d-%02d-%02d" % (lt.tm_year, lt.tm_mon, lt.tm_mday)
+
+def payroll_rec(name):
+    """Запись зарплаты сотрудника за текущий месяц (сбрасывается с новым месяцем)."""
+    m = _cur_month()
+    r = PAYROLL.get(name)
+    if not r or r.get("month") != m:
+        r = {"month": m, "present_days": 0, "advance": 0, "bonus": 0, "last_present": ""}
+        PAYROLL[name] = r
+    return r
+
+def user_by_name(name):
+    for v in USERS.values():
+        if v.get("name") == name:
+            return v
+    return None
+
+def payroll_view(user):
+    name = user.get("name", "")
+    r = payroll_rec(name)
+    sal = float(user.get("salary_month") or 0)
+    rate = float(user.get("daily_rate") or 0)
+    if rate <= 0 and sal > 0:
+        rate = round(sal / 26.0)            # ~26 рабочих дней в месяце
+    accrued = round(r["present_days"] * rate)
+    return {"name": name, "role": user.get("role", ""), "department": user.get("department", ""),
+            "salary_month": sal, "daily_rate": rate, "bonus_month": float(user.get("bonus_month") or 0),
+            "present_days": r["present_days"], "accrued": accrued, "bonus": r["bonus"],
+            "advance": r["advance"], "to_receive": round(accrued + r["bonus"] - r["advance"]),
+            "marked_today": r.get("last_present") == _today_str()}
+
+def payroll_all():
+    seen = set(); out = []
+    for v in USERS.values():
+        nm = v.get("name", "")
+        if nm in seen or "all" in v.get("sections", []):  # владельца не показываем
+            continue
+        seen.add(nm); out.append(payroll_view(v))
+    return out
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -879,6 +946,35 @@ class Handler(BaseHTTPRequestHandler):
             if not q:
                 return self._send(400, {"error": "пустой вопрос"})
             return self._send(200, ai_answer(q, body.get("crm"), body.get("history")))
+        if self.path.startswith("/api/payroll"):
+            u = self._user()
+            if not (u and "all" in u.get("sections", [])):
+                return self._send(403, {"error": "Только владелец/HR может менять зарплаты"})
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            action = body.get("action"); name = (body.get("name") or "").strip()
+            tu = user_by_name(name)
+            if not tu:
+                return self._send(400, {"error": "сотрудник не найден"})
+            r = payroll_rec(name)
+            if action == "present":
+                if r.get("last_present") == _today_str():
+                    return self._send(200, {"ok": True, "already": True, "view": payroll_view(tu)})
+                r["present_days"] += 1; r["last_present"] = _today_str()
+            elif action == "unpresent":      # отменить отметку «пришёл сегодня»
+                if r.get("last_present") == _today_str():
+                    r["present_days"] = max(0, r["present_days"] - 1); r["last_present"] = ""
+            elif action == "advance":
+                r["advance"] = round(float(r.get("advance") or 0) + float(body.get("amount") or 0))
+            elif action == "bonus":
+                r["bonus"] = round(float(r.get("bonus") or 0) + float(body.get("amount") or 0))
+            else:
+                return self._send(400, {"error": "неизвестное действие"})
+            _payroll_save()
+            return self._send(200, {"ok": True, "view": payroll_view(tu)})
         self._send(404, {"error": "не найдено"})
 
     def do_GET(self):
@@ -900,6 +996,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(403, {"error": "Нет доступа к этому разделу"})
         if self.path.startswith("/api/bot-feedback"):
             return self._send(200, {"fixes": BOT_FEEDBACK, "total": len(BOT_FEEDBACK)})
+        if self.path.startswith("/api/payroll"):
+            u = self._user()
+            if not u:
+                return self._send(401, {"error": "вход"})
+            if "all" in u.get("sections", []):
+                return self._send(200, {"all": payroll_all()})
+            return self._send(200, {"me": payroll_view(u)})
         if self.path.startswith("/api/staff"):
             u = self._user()
             if not (u and "all" in u.get("sections", [])):

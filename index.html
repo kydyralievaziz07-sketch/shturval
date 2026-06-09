@@ -285,7 +285,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v2.9.1<br>Клиенты: реальные данные из CRM<br>лучшие чеки за сегодня
+      Штурвал v3.0.0<br>Зарплата сотрудников 💼<br>HR: явка, аванс, премия
     </div>
   </aside>
 
@@ -1611,12 +1611,12 @@
         '<div style="text-align:right"><div style="font-size:22px;font-weight:700">'+pct+'%</div><div style="color:var(--muted);font-size:12px">выполнение плана</div></div>'+
       '</div>'+
       planBlock+
-      '<div class="kpis" style="grid-template-columns:repeat(4,1fr)">'+
+      '<div class="kpis" style="grid-template-columns:repeat(3,1fr)">'+
         kpiCard('🛒 Продаж сегодня',cnt)+
         kpiCard('💰 Сумма сегодня','<span class="money" data-som="'+doneSum+'">'+fmt(doneSum)+'</span>')+
         kpiCard('🧾 Средний чек','<span class="money" data-som="'+avg+'">'+fmt(avg)+'</span>')+
-        kpiCard('⚙️ Заявок в работе',active.length)+
       '</div>'+
+      '<div id="myday-salary"></div>'+
       '<div class="grid2b">'+
         '<div class="card"><h3>📈 Продажи за 7 дней</h3>'+bars+'</div>'+
         '<div class="card"><h3>⚙️ Мои заявки в работе</h3>'+
@@ -1626,6 +1626,28 @@
         '</div>'+
       '</div>'+
       (myTasks.length?'<div class="card" style="margin-top:16px"><h3>📋 Задачи</h3>'+myTasks.slice(0,20).map(t=>'<div style="padding:6px 0;border-bottom:1px solid var(--line);font-size:13px">'+esc(t.title)+(t.due_at?' <span style="color:var(--muted)">· '+fmtDT(t.due_at)+'</span>':'')+'</div>').join('')+'</div>':'');
+    renderMoney();
+    loadMyPayroll();
+  }
+  // шкала «прогресс»: подпись, текущее/цель, цвет
+  function payBar(label,cur,goal,color){
+    const pct=goal>0?Math.min(100,Math.round(cur/goal*100)):0;
+    return '<div style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px">'+
+      '<span>'+label+'</span><span><b><span class="money" data-som="'+Math.round(cur)+'">'+fmt(cur)+'</span></b>'+(goal>0?' <span style="color:var(--muted)">/ <span class="money" data-som="'+Math.round(goal)+'">'+fmt(goal)+'</span></span>':'')+'</span></div>'+
+      '<div class="progress" style="height:13px"><div style="width:'+pct+'%;background:'+color+'"></div></div></div>';
+  }
+  async function loadMyPayroll(){
+    const box=document.getElementById('myday-salary'); if(!box) return;
+    let v=null;
+    try{ const r=await apiFetch('/api/payroll',{},ONEC_BASE); const d=await r.json(); v=d.me||((d.all||[])[0]); }catch(e){}
+    if(!v || !v.salary_month){ box.innerHTML=''; return; }   // зарплата не настроена — блок не показываем
+    box.innerHTML='<div class="card" style="margin-top:16px"><h3>💼 Зарплата за '+new Date().toLocaleDateString("ru-RU",{month:"long"})+'</h3>'+
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:12px">Отработано дней: <b style="color:var(--text)">'+v.present_days+'</b> · ставка '+fmt(v.daily_rate)+' сом/день</div>'+
+      payBar('💰 Зарплата (накоплено)',v.accrued,v.salary_month,'#39d98a')+
+      payBar('🎁 Премия',v.bonus,v.bonus_month,'#a78bfa')+
+      payBar('💸 Аванс (взято)',v.advance,v.salary_month,'#ffb84d')+
+      '<div style="border-top:1px solid var(--line);margin-top:6px;padding-top:12px;display:flex;justify-content:space-between;font-size:15px"><span>К выплате сейчас:</span><b><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span> сом</b></div>'+
+      '<div style="font-size:11px;color:var(--muted);margin-top:8px">Зарплата растёт каждый день, когда HR отмечает «пришёл на работу».</div></div>';
     renderMoney();
   }
   // =================== ИИ-ПОМОЩНИК МАГАЗИНА ===================
@@ -1728,9 +1750,14 @@
       '</tbody></table>';
   }
   // =================== ПЕРСОНАЛ (владелец) ===================
+  let STAFF_PAY={};
   async function loadStaff(){
     const st=document.getElementById('staff-status');
-    try{ const r=await apiFetch('/api/staff',{},ONEC_BASE); const d=await r.json(); renderStaff(d); if(st) st.style.display='none'; }
+    try{
+      const r=await apiFetch('/api/staff',{},ONEC_BASE); const d=await r.json();
+      STAFF_PAY={}; try{ const pr=await apiFetch('/api/payroll',{},ONEC_BASE); const pd=await pr.json(); (pd.all||[]).forEach(v=>STAFF_PAY[v.name]=v); }catch(_){}
+      window._staffData=d; renderStaff(d); if(st) st.style.display='none';
+    }
     catch(e){ if(st){ st.style.display=''; st.innerHTML = e.message==='forbidden'?'⛔ Раздел доступен только владельцу.':'Не удалось загрузить. Сервер мог просыпаться — обнови через минуту.'; } }
   }
   function renderStaff(d){
@@ -1741,17 +1768,48 @@
       const secs=(s.sections||[]).map(x=>secNames[x]||x).join(', ')||'—';
       return '<tr><td><b>'+esc(s.name)+'</b></td><td>'+esc(s.role||'—')+'</td><td>'+esc(s.department||'—')+'</td><td>'+(s.plan_day?('<span class="money" data-som="'+s.plan_day+'">'+fmt(s.plan_day)+'</span>'):'—')+'</td><td style="color:var(--muted);font-size:12px">'+esc(secs)+'</td></tr>';
     }).join('');
+    // HR / зарплата
+    const paid=staff.filter(s=>(STAFF_PAY[s.name]||{}).salary_month);
+    const hrRows=paid.map(s=>{ const v=STAFF_PAY[s.name]||{};
+      const btn=v.marked_today
+        ? '<button class="btn ghost" style="padding:4px 9px;font-size:12px;background:rgba(57,217,138,.15)" onclick="hrMark(\''+esc(s.name).replace(/\x27/g,"")+'\',\'unpresent\')">✓ был сегодня</button>'
+        : '<button class="btn" style="padding:4px 9px;font-size:12px" onclick="hrMark(\''+esc(s.name).replace(/\x27/g,"")+'\',\'present\')">Пришёл сегодня</button>';
+      return '<tr><td><b>'+esc(s.name)+'</b></td><td>'+v.present_days+'</td>'+
+        '<td><span class="money" data-som="'+v.accrued+'">'+fmt(v.accrued)+'</span></td>'+
+        '<td><span class="money" data-som="'+v.bonus+'">'+fmt(v.bonus)+'</span></td>'+
+        '<td><span class="money" data-som="'+v.advance+'">'+fmt(v.advance)+'</span></td>'+
+        '<td><b><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span></b></td>'+
+        '<td style="white-space:nowrap">'+btn+
+          ' <button class="btn ghost" style="padding:4px 8px;font-size:12px" onclick="hrAmount(\''+esc(s.name).replace(/\x27/g,"")+'\',\'advance\')">+ аванс</button>'+
+          ' <button class="btn ghost" style="padding:4px 8px;font-size:12px" onclick="hrAmount(\''+esc(s.name).replace(/\x27/g,"")+'\',\'bonus\')">+ премия</button>'+
+        '</td></tr>';
+    }).join('');
     b.innerHTML='<div class="kpis" style="grid-template-columns:repeat(3,1fr)">'+
         kpiCard('👥 Сотрудников',staff.length)+
         kpiCard('🏬 Отделов',depts.size)+
         kpiCard('🎯 Общий план/день','<span class="money" data-som="'+staff.reduce((a,s)=>a+(+s.plan_day||0),0)+'">'+fmt(staff.reduce((a,s)=>a+(+s.plan_day||0),0))+'</span>')+
       '</div>'+
+      '<div class="card" style="margin-bottom:16px"><h3>💼 Кадры и зарплата (HR) <span style="font-size:12px;color:var(--muted);font-weight:400">— отмечай явку и авансы</span></h3>'+
+      (hrRows?('<div style="overflow:auto"><table><thead><tr><th>Сотрудник</th><th>Дней</th><th>Зарплата</th><th>Премия</th><th>Аванс</th><th>К выплате</th><th>Действия</th></tr></thead><tbody>'+hrRows+'</tbody></table></div>'):'<div style="color:var(--muted);font-size:13px">Зарплата ни у кого не настроена. Скажи мне «поставь зарплату такому-то» — настрою.</div>')+
+      '<div class="note" style="margin-top:12px">«Пришёл сегодня» = +1 день к зарплате. ⚠️ Пока данные временные (сбрасываются при перезапуске сервера) — для постоянного хранения подключим базу данных.</div></div>'+
       '<div class="card"><h3>🧑‍💼 Сотрудники и зоны ответственности</h3>'+
       '<table><thead><tr><th>Имя</th><th>Роль</th><th>Отдел</th><th>План/день</th><th>Видит разделы</th></tr></thead><tbody>'+
       (rows||'<tr><td colspan="5" style="color:var(--muted)">Пока заведён только владелец.</td></tr>')+
       '</tbody></table></div>'+
-      '<div class="note" style="margin-top:14px">➕ Чтобы добавить сотрудника (имя, пароль, <b>отдел</b>, <b>план на день</b>, какие разделы видит) — напиши мне, и я заведу его на сервере. Пароли тут не показываются ради безопасности 🔒.</div>';
+      '<div class="note" style="margin-top:14px">➕ Чтобы добавить сотрудника (имя, пароль, <b>отдел</b>, <b>план/день</b>, <b>зарплата</b>, разделы) — напиши мне, я заведу его на сервере. Пароли тут не показываются 🔒.</div>';
     renderMoney();
+  }
+  async function hrMark(name,action){
+    try{ await apiFetch('/api/payroll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action,name:name})},ONEC_BASE); }
+    catch(e){ alert('Не удалось — сервер мог просыпаться, попробуй ещё раз.'); }
+    loadStaff();
+  }
+  async function hrAmount(name,action){
+    const v=prompt((action==='advance'?'Аванс для ':'Премия для ')+name+' (сом):','');
+    const amt=parseFloat((v||'').replace(/\s/g,'').replace(',','.')); if(!amt||amt<=0) return;
+    try{ await apiFetch('/api/payroll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action,name:name,amount:amt})},ONEC_BASE); }
+    catch(e){ alert('Не удалось — попробуй ещё раз.'); }
+    loadStaff();
   }
   function dropChatToStage(status){
     if(!dragChat) return; const nm=dragChat.name; dragChat=null;
