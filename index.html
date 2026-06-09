@@ -285,7 +285,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v2.8.2<br>фикс: чаты больше не падают (429)<br>бережный анализ воронки
+      Штурвал v2.8.3<br>фикс: чаты не падают (429)<br>+ понятное сообщение о лимите
     </div>
   </aside>
 
@@ -1416,7 +1416,7 @@
     box.innerHTML=cards+chart;
     renderMoney();
   }
-  let dragChat=null, COCKPIT_CHATS=[], ckCurId=null, ckCurName='', ckView='Новая заявка';
+  let dragChat=null, COCKPIT_CHATS=[], ckCurId=null, ckCurName='', ckView='Новая заявка', LAST_CHAT_ERR='';
   function newLeadsCount(){ return COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка'); }).length; }
   function renderFunnel(){
     const fb=document.getElementById('funnelbar'); if(!fb) return;
@@ -1447,8 +1447,8 @@
     return true;
   }
   async function fetchChats(){
-    try{ const r=await apiFetch('/api/chats',{},ONEC_BASE); const d=await r.json(); COCKPIT_CHATS=(d.chats||[]).filter(c=>c.id); }
-    catch(e){ COCKPIT_CHATS=[]; }
+    try{ const r=await apiFetch('/api/chats',{},ONEC_BASE); const d=await r.json(); COCKPIT_CHATS=(d.chats||[]).filter(c=>c.id); LAST_CHAT_ERR=(!COCKPIT_CHATS.length&&d.error)?d.error:''; }
+    catch(e){ COCKPIT_CHATS=[]; LAST_CHAT_ERR='нет связи с сервером'; }
     autoClassify();
     renderLeft(); renderFunnel(); renderCrmStats(); renderCrmDash();
   }
@@ -1481,7 +1481,14 @@
     } else {
       items=CRM.deals.filter(d=>d.status===ckView).map(d=>{ const cl=getClient(d.client_id); const chat=COCKPIT_CHATS.find(x=>x.name&&cl.name&&x.name.toLowerCase()===cl.name.toLowerCase()); return {name:cl.name||'Без имени',sub:fmt(dealAmount(d)),chatId:chat?chat.id:null}; });
     }
-    if(!items.length){ box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">В стадии «'+esc(ckView)+'» пока пусто</div>'; return; }
+    if(!items.length){
+      if(ckView==='Новая заявка' && LAST_CHAT_ERR){
+        box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">⏳ Чаты Instagram временно недоступны — ChatPlace ненадолго ограничил запросы. Это пройдёт само, заявки скоро появятся. Можно ничего не делать.</div>';
+      } else {
+        box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">В стадии «'+esc(ckView)+'» пока пусто</div>';
+      }
+      return;
+    }
     box.innerHTML=items.map((it,i)=>'<div class="chatitem'+(it.chatId&&it.chatId===ckCurId?' active':'')+'" draggable="true" data-i="'+i+'"><div class="ci-name">'+esc(it.name)+'</div><div class="ci-last">'+esc(it.sub)+'</div></div>').join('');
     box.querySelectorAll('.chatitem').forEach(el=>{ const it=items[+el.dataset.i];
       el.addEventListener('click',()=>openItem(it));
