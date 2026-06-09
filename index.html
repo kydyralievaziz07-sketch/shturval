@@ -285,7 +285,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v2.6.0<br>🤖 авто-воронка: бот сам<br>раскладывает чаты по стадиям
+      Штурвал v2.7.0<br>Товары: диаграмма по цене 📊<br>фильтры «на исходе» + категории 🗂
     </div>
   </aside>
 
@@ -444,23 +444,43 @@
           <div id="prod-cats"><span style="color:var(--muted);font-size:13px">—</span></div>
         </div>
         <div class="card">
-          <h3>⚠️ На исходе (остаток 1–3 шт)
-            <span style="margin-left:auto;display:inline-flex;gap:6px">
-              <button class="btn ghost" style="padding:4px 9px;font-size:12px;font-weight:400" onclick="setLowSort('asc')">меньше → больше</button>
-              <button class="btn ghost" style="padding:4px 9px;font-size:12px;font-weight:400" onclick="setLowSort('desc')">больше → меньше</button>
+          <h3>⚠️ На исходе</h3>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+            <span style="font-size:12px;color:var(--muted)">Остаток:</span>
+            <select id="low-qty" onchange="renderLow()" style="background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:5px 8px;color:var(--text);font-size:13px">
+              <option value="1">только 1 шт</option>
+              <option value="2">1–2 шт</option>
+              <option value="3" selected>1–3 шт</option>
+            </select>
+            <select id="low-cat" onchange="renderLow()" style="background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:5px 8px;color:var(--text);font-size:13px;max-width:170px">
+              <option value="">все категории</option>
+            </select>
+            <span style="display:inline-flex;gap:6px;margin-left:auto">
+              <button class="btn ghost" style="padding:4px 9px;font-size:12px;font-weight:400" onclick="setLowSort('asc')">↑ меньше</button>
+              <button class="btn ghost" style="padding:4px 9px;font-size:12px;font-weight:400" onclick="setLowSort('desc')">↓ больше</button>
             </span>
-          </h3>
+          </div>
           <div id="prod-low"><span style="color:var(--muted);font-size:13px">—</span></div>
         </div>
       </div>
       <div class="card">
-        <h3>📊 Чего больше всего на складе (по количеству)</h3>
+        <h3>📊 Чего больше всего на складе
+          <span style="margin-left:auto;display:inline-flex;gap:6px">
+            <button class="btn ghost" id="dn-units" style="padding:4px 9px;font-size:12px;font-weight:400" onclick="setDonutMode('units')">по количеству</button>
+            <button class="btn ghost" id="dn-value" style="padding:4px 9px;font-size:12px;font-weight:400" onclick="setDonutMode('value')">по стоимости</button>
+          </span>
+        </h3>
         <div id="prod-donut"><span style="color:var(--muted);font-size:13px">—</span></div>
+      </div>
+      <div class="card">
+        <h3>🗂 Категории на складе <span style="font-size:12px;color:var(--muted);font-weight:400">— нажми, чтобы посмотреть, что есть</span></h3>
+        <div id="prod-catbrowser"><span style="color:var(--muted);font-size:13px">—</span></div>
       </div>
       <div class="card">
         <div class="toolbar">
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <input id="prodSearch" class="search" aria-label="Поиск товара" placeholder="🔍 Поиск товара по названию…">
+            <span id="prod-catfilter" style="display:none;align-items:center;gap:6px;font-size:13px"></span>
             <button class="btn" onclick="openAddProduct()">➕ Добавить товар</button>
           </div>
           <div id="prod-pager" style="display:flex;gap:8px;align-items:center"></div>
@@ -969,7 +989,7 @@
     });
   });
   // --- ТОВАРЫ: живые данные из 1С (через сервер-посредник) ---
-  let prodPage=1, prodQ='', prodTimer=null;
+  let prodPage=1, prodQ='', prodCat='', prodTimer=null;
   let prodInvTimer=null;
   async function loadInventory(attempt){
     attempt=attempt||1;
@@ -1016,36 +1036,72 @@
       '<div class="progress"><div style="width:'+Math.round(c.value/maxv*100)+'%"></div></div></div>').join(''):
       '<span style="color:var(--muted);font-size:13px">Нет данных</span>';
     window._invData=d;
+    // наполняем выпадашку категорий для «на исходе»
+    const lc=document.getElementById('low-cat');
+    if(lc){ const cur=lc.value; const cats=[...new Set((d.low||[]).map(x=>x.category||'Без категории'))].sort();
+      lc.innerHTML='<option value="">все категории</option>'+cats.map(c=>'<option value="'+esc(c)+'">'+esc(c)+'</option>').join('');
+      lc.value=cur; }
     renderLow();
     renderDonut(d);
+    renderCatBrowser(d);
+    setDonutMode(DONUT_MODE);
   }
-  // «На исходе» с переключаемой сортировкой
+  // «На исходе» — фильтры по количеству и категории + сортировка
   let LOW_SORT='asc';
   function setLowSort(dir){ LOW_SORT=dir; renderLow(); }
   function renderLow(){
     const d=window._invData; if(!d) return;
-    const low=(d.low||[]).slice().sort((a,b)=>LOW_SORT==='asc'?a.qty-b.qty:b.qty-a.qty);
+    const maxq=parseInt((document.getElementById('low-qty')||{}).value||'3',10);
+    const cat=(document.getElementById('low-cat')||{}).value||'';
+    let low=(d.low||[]).filter(x=>x.qty<=maxq && (!cat||(x.category||'Без категории')===cat));
+    low=low.slice().sort((a,b)=>LOW_SORT==='asc'?a.qty-b.qty:b.qty-a.qty);
     document.getElementById('prod-low').innerHTML=low.length?
-      '<div style="max-height:300px;overflow:auto"><table><tbody>'+low.map(x=>'<tr><td>'+esc(x.title)+'</td><td style="text-align:right;width:90px"><span class="badge '+(x.qty<=0?'b-out':'b-low')+'">'+x.qty+' шт</span></td></tr>').join('')+'</tbody></table></div>':
-      '<span style="color:var(--muted);font-size:13px">Нет товаров на исходе 👍</span>';
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Найдено: '+low.length+'</div><div style="max-height:300px;overflow:auto"><table><tbody>'+low.map(x=>'<tr><td>'+esc(x.title)+'<div style="font-size:11px;color:var(--muted)">'+esc(x.category||'')+'</div></td><td style="text-align:right;width:90px"><span class="badge '+(x.qty<=0?'b-out':'b-low')+'">'+x.qty+' шт</span></td></tr>').join('')+'</tbody></table></div>':
+      '<span style="color:var(--muted);font-size:13px">Нет товаров на исходе по этому фильтру 👍</span>';
   }
-  // круговая диаграмма: чего больше всего по количеству
+  // круговая диаграмма: по количеству ИЛИ по стоимости
+  let DONUT_MODE='units';
+  function setDonutMode(m){ DONUT_MODE=m;
+    const u=document.getElementById('dn-units'), v=document.getElementById('dn-value');
+    if(u) u.style.background=(m==='units')?'var(--accent)':''; if(v) v.style.background=(m==='value')?'var(--accent)':'';
+    if(window._invData) renderDonut(window._invData);
+  }
   function renderDonut(d){
     const box=document.getElementById('prod-donut'); if(!box) return;
-    const items=(d.cats_units||[]).filter(c=>c.units>0);
+    const byVal=(DONUT_MODE==='value');
+    const key=byVal?'value':'units';
+    const items=((byVal?d.cats_value:d.cats_units)||[]).filter(c=>(c[key]||0)>0);
     if(!items.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет данных</span>'; return; }
-    const total=items.reduce((s,x)=>s+x.units,0)||1;
+    const total=items.reduce((s,x)=>s+(x[key]||0),0)||1;
     const colors=['#4f8cff','#39d98a','#ffb84d','#a78bfa','#ff6b6b','#22d3ee','#f472b6','#94a3b8'];
-    let acc=0; const segs=items.map((x,i)=>{const f=acc/total*360;acc+=x.units;const t=acc/total*360;return colors[i%colors.length]+' '+f+'deg '+t+'deg';}).join(',');
+    let acc=0; const segs=items.map((x,i)=>{const f=acc/total*360;acc+=(x[key]||0);const t=acc/total*360;return colors[i%colors.length]+' '+f+'deg '+t+'deg';}).join(',');
     const legend=items.map((x,i)=>'<div style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:7px">'+
       '<span style="width:12px;height:12px;border-radius:3px;flex-shrink:0;background:'+colors[i%colors.length]+'"></span>'+
       '<span>'+esc(x.title)+'</span>'+
-      '<span style="color:var(--muted);margin-left:auto;white-space:nowrap">'+x.units.toLocaleString('ru-RU')+' шт · '+Math.round(x.units/total*100)+'%</span></div>').join('');
+      '<span style="color:var(--muted);margin-left:auto;white-space:nowrap">'+(byVal?('<span class="money" data-som="'+x.value+'">'+fmt(x.value)+'</span>'):(x.units.toLocaleString('ru-RU')+' шт'))+' · '+Math.round((x[key]||0)/total*100)+'%</span></div>').join('');
     box.innerHTML='<div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap">'+
       '<div style="width:150px;height:150px;border-radius:50%;flex-shrink:0;background:conic-gradient('+segs+')">'+
       '<div style="width:56%;height:56%;margin:22% auto;background:var(--panel);border-radius:50%"></div></div>'+
       '<div style="flex:1;min-width:220px">'+legend+'</div></div>';
+    renderMoney();
   }
+  // браузер категорий: плитки → клик открывает товары категории
+  function renderCatBrowser(d){
+    const box=document.getElementById('prod-catbrowser'); if(!box) return;
+    const cats=(d.all_cats||[]).filter(c=>c.count>0);
+    if(!cats.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет данных</span>'; return; }
+    box.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:8px;max-height:260px;overflow:auto">'+
+      cats.map(c=>'<button class="btn ghost" style="text-align:left;padding:8px 12px;font-weight:400" onclick="browseCat(\''+esc(c.title).replace(/'/g,"\\'")+'\')">'+
+        '<span style="font-weight:600">'+esc(c.title)+'</span> <span style="color:var(--muted);font-size:12px">· '+c.count+' тов. · '+c.units.toLocaleString('ru-RU')+' шт</span></button>').join('')+'</div>';
+  }
+  function browseCat(name){
+    prodCat=name; prodPage=1; prodQ=''; const ps=document.getElementById('prodSearch'); if(ps) ps.value='';
+    const f=document.getElementById('prod-catfilter');
+    if(f){ f.style.display='inline-flex'; f.innerHTML='🗂 <b>'+esc(name)+'</b> <button class="btn ghost" style="padding:2px 8px;font-size:12px" onclick="clearCatFilter()">✕ сбросить</button>'; }
+    loadProducts(true);
+    const tbl=document.getElementById('prodRows'); if(tbl) tbl.closest('.card').scrollIntoView({behavior:'smooth',block:'start'});
+  }
+  function clearCatFilter(){ prodCat=''; prodPage=1; const f=document.getElementById('prod-catfilter'); if(f) f.style.display='none'; loadProducts(true); }
   function prodRow(x){
     const out = x.qty<=0;
     const status = out?'<span class="badge b-out">Нет</span>':(x.qty<=3?'<span class="badge b-low">Заканч.</span>':'<span class="badge b-ok">В наличии</span>');
@@ -1062,7 +1118,7 @@
     if(!ONEC_BASE){ tb.innerHTML='<tr><td colspan="7" style="color:var(--muted)">В облаке 1С подключается отдельным шагом</td></tr>'; return; }
     if(!silent && attempt===1) tb.innerHTML='<tr><td colspan="7" style="color:var(--muted)">Загрузка…</td></tr>';
     try{
-      const r=await apiFetch('/api/products?page='+prodPage+'&q='+encodeURIComponent(prodQ),{},ONEC_BASE);
+      const r=await apiFetch('/api/products?page='+prodPage+'&q='+encodeURIComponent(prodQ)+(prodCat?'&cat='+encodeURIComponent(prodCat)+'&in_stock=1':''),{},ONEC_BASE);
       const d=await r.json();
       tb.innerHTML=(d.items&&d.items.length)?d.items.map(prodRow).join(''):'<tr><td colspan="7" style="color:var(--muted)">Ничего не найдено</td></tr>';
       const per=d.per||50, pages=Math.max(1,Math.ceil((d.total||0)/per));

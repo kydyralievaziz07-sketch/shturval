@@ -459,19 +459,28 @@ def build_inventory():
         agg["units"] += qty
         agg["count"] += 1
         if qty <= 3:
-            low.append({"title": x.get("TITLE", ""), "qty": int(qty)})
+            low.append({"title": x.get("TITLE", ""), "qty": int(qty),
+                        "category": cat})
     categories = [{"title": k, "value": round(v["value"]),
                    "units": int(v["units"]), "count": v["count"]}
                   for k, v in sorted(by_cat.items(), key=lambda i: -i[1]["value"])][:8]
     # топ категорий по КОЛИЧЕСТВУ штук (для круговой диаграммы «чего больше всего»)
     cats_units = [{"title": k, "units": int(v["units"]), "count": v["count"]}
                   for k, v in sorted(by_cat.items(), key=lambda i: -i[1]["units"])][:8]
-    # для «на исходе» берём разнообразие: по 20 товаров с остатком 1, 2 и 3
-    low_out = ([x for x in low if x["qty"] == 1][:20]
-               + [x for x in low if x["qty"] == 2][:20]
-               + [x for x in low if x["qty"] == 3][:20])
+    # топ категорий по СТОИМОСТИ (для диаграммы «где больше всего денег»)
+    cats_value = [{"title": k, "value": round(v["value"]), "units": int(v["units"]),
+                   "count": v["count"]}
+                  for k, v in sorted(by_cat.items(), key=lambda i: -i[1]["value"])][:8]
+    # ВСЕ категории (для браузера категорий и фильтров)
+    all_cats = [{"title": k, "value": round(v["value"]), "units": int(v["units"]),
+                 "count": v["count"]}
+                for k, v in sorted(by_cat.items(), key=lambda i: -i[1]["count"])]
+    # «на исходе»: отдаём весь список (qty 1–3) с категорией — фильтрацию делает фронт
+    low_out = sorted(low, key=lambda x: x["qty"])[:800]
     return {
         "cats_units": cats_units,
+        "cats_value": cats_value,
+        "all_cats": all_cats,
         "total_sku": len(goods),
         "in_stock": in_stock,
         "total_units": int(total_units),
@@ -511,14 +520,19 @@ def yaros_create_good(payload):
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
-def search_products(q, page, per=50):
+def search_products(q, page, per=50, cat=None, in_stock=False):
     goods = get_goods()
     cats = get_categories()
     q = (q or "").strip().lower()
+    cat = (cat or "").strip().lower()
+    items = goods
     if q:
-        items = [x for x in goods if q in (x.get("TITLE", "") or "").lower()]
-    else:
-        items = goods
+        items = [x for x in items if q in (x.get("TITLE", "") or "").lower()]
+    if cat:
+        items = [x for x in items
+                 if cat in (cats.get(x.get("CATEGORY_ID"), "") or "").lower()]
+    if in_stock:
+        items = [x for x in items if _num(x.get("QUANTITY")) > 0]
     total = len(items)
     start = max(0, (page - 1) * per)
     out = []
@@ -662,12 +676,14 @@ class Handler(BaseHTTPRequestHandler):
             from urllib.parse import urlparse, parse_qs
             qs = parse_qs(urlparse(self.path).query)
             q = qs.get("q", [""])[0]
+            cat = qs.get("cat", [""])[0]
+            in_stock = qs.get("in_stock", ["0"])[0] in ("1", "true", "yes")
             try:
                 page = int(qs.get("page", ["1"])[0])
             except ValueError:
                 page = 1
             try:
-                return self._send(200, search_products(q, max(1, page)))
+                return self._send(200, search_products(q, max(1, page), cat=cat, in_stock=in_stock))
             except Exception as e:
                 return self._send(200, {"error": "Нет связи с 1С: " + str(e), "items": [], "total": 0})
         if self.path.startswith("/api/chats"):
