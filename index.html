@@ -285,7 +285,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v2.5.0<br>Мой день 🎯 · Персонал 🧑‍💼<br>отчёты amoCRM 📊 + KPI
+      Штурвал v2.5.1<br>счётчик «Новая заявка» = все чаты<br>Мой день 🎯 · Персонал 🧑‍💼
     </div>
   </aside>
 
@@ -1314,7 +1314,7 @@
     const box=document.getElementById('crm-dash'); if(!box) return;
     const PAID=['Оплачено','Отгружено','Закрыто'];
     const chatsP=COCKPIT_CHATS.filter(c=>inPerTs(c.ts));
-    const newLeads=COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка'); }).length;
+    const newLeads=newLeadsCount();
     const inWork=CRM.deals.filter(d=>['Связались','Выставили счёт'].indexOf(d.status)>=0).length;
     const invoiced=CRM.deals.filter(d=>d.status==='Выставили счёт');
     const invSum=invoiced.reduce((s,d)=>s+dealAmount(d),0);
@@ -1349,9 +1349,10 @@
     renderMoney();
   }
   let dragChat=null, COCKPIT_CHATS=[], ckCurId=null, ckCurName='', ckView='Новая заявка';
+  function newLeadsCount(){ return COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка'); }).length; }
   function renderFunnel(){
     const fb=document.getElementById('funnelbar'); if(!fb) return;
-    fb.innerHTML=CRM_STATUSES.map(st=>{ const n=CRM.deals.filter(d=>d.status===st).length; return '<div class="fchip'+(st===ckView?' active':'')+'" data-status="'+esc(st)+'"><div class="fc-n">'+esc(st)+'</div><div class="fc-c">'+n+'</div></div>'; }).join('');
+    fb.innerHTML=CRM_STATUSES.map(st=>{ const n=(st==='Новая заявка')?newLeadsCount():CRM.deals.filter(d=>d.status===st).length; return '<div class="fchip'+(st===ckView?' active':'')+'" data-status="'+esc(st)+'"><div class="fc-n">'+esc(st)+'</div><div class="fc-c">'+n+'</div></div>'; }).join('');
     fb.querySelectorAll('.fchip').forEach(ch=>{
       ch.addEventListener('click',()=>setView(ch.dataset.status));
       ch.addEventListener('dragover',e=>{ e.preventDefault(); ch.classList.add('drop'); });
@@ -1380,7 +1381,7 @@
   async function fetchChats(){
     try{ const r=await apiFetch('/api/chats',{},ONEC_BASE); const d=await r.json(); COCKPIT_CHATS=(d.chats||[]).filter(c=>c.id); }
     catch(e){ COCKPIT_CHATS=[]; }
-    renderLeft();
+    renderLeft(); renderFunnel(); renderCrmStats(); renderCrmDash();
   }
   function renderLeft(){
     const box=document.getElementById('cockpit-chats'); if(!box) return;
