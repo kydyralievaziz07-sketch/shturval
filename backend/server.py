@@ -617,12 +617,130 @@ def _ai_context(crm, want_chats):
             pass
     return "\n".join(parts)
 
+import re as _re
+_AI_STOP = set("сколько скольк сколка товар товара товаров товары позиц позиция позиции есть мне мои моих "
+               "для это эта этот отдел отделе отдела категория категории магазин магазине покажи показать "
+               "какой какие какая что где когда сейчас всего вот про над под при как нам наш наша "
+               "штук шт сом сума сумма деньги денег было будет".split())
+
+def _money(n):
+    try:
+        n = int(round(float(n)))
+    except Exception:
+        return str(n)
+    return "{:,}".format(n).replace(",", " ")
+
+def ai_local_answer(question, crm):
+    """Бесплатный режим: отвечает по данным магазина без ИИ-движка."""
+    q = (question or "").lower()
+    crm = crm if isinstance(crm, dict) else {}
+    inv, ov = {}, {}
+    try:
+        inv = cached("inventory", 120, build_inventory)
+    except Exception:
+        pass
+    try:
+        ov = get_overview()
+    except Exception:
+        pass
+    has = lambda *ws: any(w in q for w in ws)
+    period = "week"
+    if has("сегодня", "за день"):
+        period = "today"
+    elif has("месяц"):
+        period = "month"
+    plabel = {"today": "сегодня", "week": "за неделю", "month": "за месяц"}[period]
+
+    is_top = has("топ", "популярн", "ходов", "больше всего", "лучшие", "хит")
+    # 1) Категории / отдел / «сколько товаров»
+    if not is_top and has("товар", "позиц", "ассортимент", "отдел", "категор", "наличии"):
+        cats = inv.get("all_cats") or []
+        qwords = [w for w in _re.findall(r"[а-яёa-z]+", q) if len(w) >= 3 and w not in _AI_STOP]
+        matched = []
+        for c in cats:
+            tw = [w for w in _re.findall(r"[а-яёa-z]+", c["title"].lower()) if len(w) >= 3]
+            if any((qw[:4] in t or t[:4] in qw) for qw in qwords for t in tw):
+                matched.append(c)
+        if matched:
+            matched = sorted(matched, key=lambda c: -c["count"])[:15]
+            tc = sum(c["count"] for c in matched); tu = sum(c["units"] for c in matched)
+            lines = ["Нашёл по твоему запросу — всего {} позиций ({} шт на складе):".format(tc, tu)]
+            lines += ["• {} — {} поз., {} шт".format(c["title"], c["count"], c["units"]) for c in matched]
+            return "\n".join(lines)
+        if has("сколько", "всего", "общее"):
+            return ("Всего в каталоге 1С: {} позиций, в наличии {}, штук на складе {}. "
+                    "Уточни отдел/категорию (например: «сколько в мужской обуви») — посчитаю точнее."
+                    ).format(inv.get("total_sku"), inv.get("in_stock"), inv.get("total_units"))
+
+    # 2) На исходе / пополнить
+    if has("исход", "заканч", "пополн", "мало остал", "остаток мал", "дефицит"):
+        low = inv.get("low") or []
+        sample = low[:15]
+        lines = ["⚠️ На исходе (остаток 1–3 шт): {} позиций.".format(len(low))]
+        lines += ["• {} — {} шт ({})".format(x["title"], x["qty"], x.get("category", "")) for x in sample]
+        if len(low) > len(sample):
+            lines.append("…и ещё {}. В разделе «Товары» можно отфильтровать по категории.".format(len(low) - len(sample)))
+        return "\n".join(lines)
+
+    # 3) Продажи / выручка / сумма
+    if has("продаж", "выручк", "сумм", "оборот", "заработал", "доход"):
+        out = []
+        p = (ov.get("periods") or {}).get(period) or {}
+        if p:
+            out.append("amoCRM {}: сделок {}, сумма {} сом.".format(plabel, p.get("count"), _money(p.get("sum"))))
+        if crm.get("paid_count") is not None:
+            out.append("Наша CRM: оплачено {} сделок на {} сом.".format(crm.get("paid_count"), _money(crm.get("paid_sum"))))
+        return "\n".join(out) if out else "Пока нет данных по продажам за этот период."
+
+    # 4) Заявки / лиды
+    if has("заявк", "лид", "обращен", "написал"):
+        bs = crm.get("by_stage") or {}
+        out = ["Новых заявок (необработанных): {}.".format(crm.get("new_leads", 0))]
+        if bs:
+            out.append("По стадиям: " + ", ".join("{}: {}".format(k, v) for k, v in bs.items() if v))
+        return "\n".join(out)
+
+    # 5) Отказы / почему сливаются
+    if has("отказ", "сливают", "сливаются", "уход", "теряем", "почему не", "возраж", "бросают"):
+        rr = crm.get("reject_reasons") or {}
+        if rr:
+            top = sorted(rr.items(), key=lambda i: -i[1])
+            lines = ["Причины отказов (из CRM):"] + ["• {} — {}".format(k, v) for k, v in top]
+            lines.append("\n💡 Для глубокого разбора переписок («почему именно сливаются») нужен ИИ-движок — "
+                         "скажи, когда захочешь подключить ключ Anthropic.")
+            return "\n".join(lines)
+        return ("Пока нет отмеченных отказов в CRM. Глубокий разбор переписок (почему клиенты уходят) "
+                "умеет полноценный ИИ — подключается ключом Anthropic.")
+
+    # 6) Топ / популярные / больше всего
+    if is_top:
+        if has("деньг", "стоимост", "выручк", "сумм", "прибыл"):
+            cv = inv.get("cats_value") or []
+            return "Категории, где больше всего денег:\n" + "\n".join(
+                "• {} — {} сом ({} шт)".format(c["title"], _money(c["value"]), c["units"]) for c in cv[:8])
+        cu = inv.get("cats_units") or []
+        return "Категории, где больше всего товара (по количеству):\n" + "\n".join(
+            "• {} — {} шт".format(c["title"], c["units"]) for c in cu[:8])
+
+    # 7) Склад / стоимость / себестоимость / наценка
+    if has("склад", "стоимост", "себестоим", "наценк", "маржа", "капитал"):
+        return ("Склад (1С): {} позиций, {} шт в наличии.\n"
+                "Стоимость в рознице: {} сом\nСебестоимость: {} сом\nПотенц. наценка: {} сом."
+                ).format(inv.get("total_sku"), inv.get("total_units"),
+                         _money(inv.get("retail_value")), _money(inv.get("cost_value")),
+                         _money(inv.get("margin_value")))
+
+    # Не распознал — подсказываем возможности
+    return ("Я отвечаю по данным магазина. Спроси, например:\n"
+            "• «сколько товаров в мужской обуви»\n• «что на исходе»\n"
+            "• «сколько продаж за неделю»\n• «сколько новых заявок»\n"
+            "• «причины отказов»\n• «топ категорий по деньгам»\n• «стоимость склада»\n\n"
+            "💬 Свободный диалог и анализ переписок включатся, когда подключим ИИ-движок (ключ Anthropic).")
+
 def ai_answer(question, crm, history):
     key = CFG.get("ANTHROPIC_API_KEY", "")
     if not key:
-        return {"need_key": True,
-                "answer": "ИИ-движок ещё не подключён. Как только добавим ключ Anthropic — я смогу "
-                          "анализировать переписки и отвечать на любые вопросы по магазину."}
+        return {"free_mode": True, "answer": ai_local_answer(question, crm)}
     ql = (question or "").lower()
     want_chats = any(w in ql for w in ["перепис", "диалог", "чат", "клиент", "сливают", "сливаются",
                                        "уход", "отказ", "почему не", "возраж"])
