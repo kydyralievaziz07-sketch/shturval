@@ -269,46 +269,55 @@ def classify_chat(arr):
 _chat_stages = {}          # chat_id -> стадия воронки
 _chat_stages_t = 0
 
-def _analyze_chats(items):
-    """Прогоняет чаты через классификатор (в несколько потоков). Кэширует результат."""
-    global _chat_stages_t
-    from concurrent.futures import ThreadPoolExecutor
-    def one(it):
-        cid = it.get("id")
-        if not cid:
-            return None
-        try:
-            res = chatplace_call("chats_messages", {"chatId": cid, "limit": 30})
-            arr = res if isinstance(res, list) else res.get("items", [])
-            return (cid, classify_chat(arr))
-        except Exception:
-            return None
-    out = {}
-    try:
-        with ThreadPoolExecutor(max_workers=5) as ex:
-            for r in ex.map(one, items):
-                if r:
-                    out[r[0]] = r[1]
-    except Exception:
-        pass
-    if out:
-        _chat_stages.update(out)
-        _chat_stages_t = time.time()
+_analyze_idx = 0  # курсор по списку чатов — анализируем малыми порциями по кругу
 
 def _chat_analyzer():
-    """Фоновый поток: постоянно анализирует чаты и раскладывает их по воронке."""
+    """Фоновый поток: БЕРЕЖНО (по чуть-чуть) анализирует чаты и раскладывает по воронке.
+    ChatPlace жёстко лимитирует запросы (429), поэтому: переиспользуем кэш списка чатов,
+    обрабатываем по 5 чатов за цикл, последовательно, с паузами; на 429 — отступаем."""
+    global _analyze_idx
+    time.sleep(20)  # дать серверу прогреться, не стучаться сразу
     while True:
+        slept = 60
         try:
             if CFG.get("CHATPLACE_KEY"):
-                res = chatplace_call("chats_list", {"limit": 200})
-                items = res.get("items", []) if isinstance(res, dict) else []
-                _analyze_chats(items)
+                data = cached("chats", 30, build_chats)      # тот же кэш, без лишнего вызова
+                items = data.get("chats", []) if isinstance(data, dict) else []
+                if items:
+                    if _analyze_idx >= len(items):
+                        _analyze_idx = 0
+                    batch = items[_analyze_idx:_analyze_idx + 5]
+                    _analyze_idx += 5
+                    for it in batch:
+                        cid = it.get("id")
+                        if not cid:
+                            continue
+                        try:
+                            r = chatplace_call("chats_messages", {"chatId": cid, "limit": 20})
+                            arr = r if isinstance(r, list) else r.get("items", [])
+                            _chat_stages[cid] = classify_chat(arr)
+                        except urllib.error.HTTPError as e:
+                            if e.code == 429:
+                                slept = 180  # лимит — отдыхаем подольше
+                                break
+                        except Exception:
+                            pass
+                        time.sleep(2.5)      # пауза между запросами — бережём лимит
         except Exception:
             pass
-        time.sleep(180)
+        time.sleep(slept)
+
+_chats_last = {"source": "Instagram", "updated": "", "today": 0, "active": 0,
+               "total": 0, "analyzed": 0, "chats": []}
 
 def build_chats():
-    res = chatplace_call("chats_list", {"limit": 200})
+    """Список чатов. Если ChatPlace ответил 429/ошибкой — отдаём прошлый успешный
+    результат, чтобы платформа не падала в 502."""
+    global _chats_last
+    try:
+        res = chatplace_call("chats_list", {"limit": 200})
+    except Exception:
+        return _chats_last
     items = res.get("items", []) if isinstance(res, dict) else []
     now = time.time(); lt = time.localtime(now)
     start_today = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
@@ -321,9 +330,10 @@ def build_chats():
         chats.append({"id": it.get("id"), "name": it.get("clientName", "клиент"),
                       "time": tm, "status": it.get("statusName", ""), "ts": ts or 0,
                       "stage": _chat_stages.get(it.get("id"), "")})
-    return {"source": "Instagram", "updated": time.strftime("%H:%M:%S"),
-            "today": today, "active": active, "total": len(items),
-            "analyzed": len(_chat_stages), "chats": chats}
+    _chats_last = {"source": "Instagram", "updated": time.strftime("%H:%M:%S"),
+                   "today": today, "active": active, "total": len(items),
+                   "analyzed": len(_chat_stages), "chats": chats}
+    return _chats_last
 
 def build_chat_messages(cid):
     res = chatplace_call("chats_messages", {"chatId": cid, "limit": 40})
@@ -821,8 +831,11 @@ class Handler(BaseHTTPRequestHandler):
             cid = body.get("chatId"); text = (body.get("text") or "").strip()
             if not cid or not text:
                 return self._send(400, {"error": "нужны chatId и text"})
-            chatplace_call("chats_open", {"chatId": cid})        # берём диалог на себя (пауза ИИ)
-            chatplace_call("chats_send_message", {"chatId": cid, "text": text})
+            try:
+                chatplace_call("chats_open", {"chatId": cid})    # берём диалог на себя (пауза ИИ)
+                chatplace_call("chats_send_message", {"chatId": cid, "text": text})
+            except Exception as e:
+                return self._send(200, {"ok": False, "error": "ChatPlace: " + str(e)})
             _cache.pop("chats", None)                            # сбросить кэш списка
             return self._send(200, {"ok": True})
         if self.path.startswith("/api/add-product"):
@@ -931,7 +944,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"error": "Нет связи с 1С: " + str(e), "items": [], "total": 0})
         if self.path.startswith("/api/chats"):
             if CFG.get("CHATPLACE_KEY"):
-                return self._send(200, cached("chats", 8, build_chats))
+                try:
+                    return self._send(200, cached("chats", 30, build_chats))
+                except Exception as e:
+                    return self._send(200, {"chats": [], "total": 0, "error": "ChatPlace: " + str(e)})
             p = os.path.join(HERE, "chats-data.json")
             data = json.load(open(p, encoding="utf-8")) if os.path.exists(p) else {"chats": []}
             return self._send(200, data)
@@ -940,7 +956,10 @@ class Handler(BaseHTTPRequestHandler):
             cid = parse_qs(urlparse(self.path).query).get("id", [""])[0]
             if not cid:
                 return self._send(400, {"error": "нет id"})
-            return self._send(200, build_chat_messages(cid))
+            try:
+                return self._send(200, build_chat_messages(cid))
+            except Exception as e:
+                return self._send(200, {"msgs": [], "error": "ChatPlace: " + str(e)})
         self._send(404, {"error": "не найдено"})
 
     def log_message(self, *a):
