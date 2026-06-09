@@ -251,20 +251,12 @@ PRICE_KW = ["цена", "цену", "сколько стоит", "сколько
             "баасы"]
 
 def classify_chat(arr):
-    """Определяет стадию воронки по сообщениям чата. arr — как из chats_messages."""
-    msgs = [m for m in arr if (m.get("message") or "").strip()]
-    has_reply = any(m.get("side") == "operator" for m in arr)
-    # самые свежие сообщения — первыми (свежий смысл важнее)
-    msgs_sorted = sorted(msgs, key=lambda m: m.get("createdAt") or 0, reverse=True)
-    for m in msgs_sorted:
-        t = (m.get("message") or "").lower()
-        if any(k in t for k in PAY_KW):
-            return "Оплачено"
-        if any(k in t for k in REJECT_KW):
-            return "Отказ"
-        if any(k in t for k in PRICE_KW):
-            return "Выставили счёт"
-    return "Связались" if has_reply else "Новая заявка"
+    """Простое и точное правило по запросу владельца:
+    - ответил ЖИВОЙ менеджер (side == "operator") → «Связались»;
+    - ответил только бот (ai_assistant) или никто → остаётся «Новая заявка».
+    Стадии Оплачено/Выставили счёт/Отказ ставит менеджер вручную (перетаскиванием)."""
+    has_human = any(m.get("side") == "operator" for m in arr)
+    return "Связались" if has_human else "Новая заявка"
 
 _chat_stages = {}          # chat_id -> стадия воронки
 _chat_stages_t = 0
