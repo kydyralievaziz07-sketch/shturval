@@ -194,6 +194,12 @@
   .slider:before{content:"";position:absolute;width:20px;height:20px;left:3px;top:2px;background:#fff;border-radius:50%;transition:.2s}
   .switch input:checked + .slider{background:var(--accent);border-color:var(--accent)}
   .switch input:checked + .slider:before{transform:translateX(21px)}
+  /* сворачивающееся меню: узкая полоса, при наведении раскрывается (правая часть сдвигается) */
+  @media(min-width:761px){
+    .sidebar{width:66px;overflow:hidden;white-space:nowrap;transition:width .22s ease}
+    .sidebar:hover{width:240px;box-shadow:6px 0 30px rgba(0,0,0,.28);z-index:30}
+    .sidebar .nav a{overflow:hidden}
+  }
   @media(max-width:1000px){.kpis{grid-template-columns:repeat(2,1fr)}.grid2,.grid2b{grid-template-columns:1fr}}
   @media(max-width:760px){
     body{flex-direction:column}
@@ -244,7 +250,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v1.8.1<br>Личные кабинеты · темы 🎨<br>Настройки: тумблеры темы и валюты
+      Штурвал v1.9.0<br>Сворачивающееся меню ↔<br>наведи мышку — раскроется
     </div>
   </aside>
 
