@@ -271,9 +271,8 @@
     </div>
     <nav class="nav">
       <a class="active" data-tab="dash"><span class="ico">📊</span> Дашборд</a>
-      <a data-tab="crm"><span class="ico">📡</span> amoCRM</a>
-      <a data-tab="deals"><span class="ico">🧲</span> CRM</a>
-      <a data-tab="chats"><span class="ico">💬</span> Чаты</a>
+      <a data-tab="crm"><span class="ico">📡</span> Живые данные</a>
+      <a data-tab="deals"><span class="ico">🧲</span> Штурвал CRM</a>
       <a data-tab="prod"><span class="ico">📦</span> Товары</a>
       <a data-tab="sales"><span class="ico">🛒</span> Продажи</a>
       <a data-tab="clients"><span class="ico">👥</span> Клиенты</a>
@@ -284,7 +283,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v2.2.0<br>Кликабельная воронка 🧲<br>стадии открывают своих клиентов
+      Штурвал v2.3.0<br>CRM: заявки по периоду + отчёт 📊<br>сумма счёта · автообновление
     </div>
   </aside>
 
@@ -662,8 +661,8 @@
 <script>
   const titles = {
     dash     :["Дашборд","Магазин Бизмарт — общая картина"],
-    crm      :["amoCRM — живые данные","Реальные сделки и воронки из amoCRM"],
-    deals    :["CRM — воронка заказов","Заказы, задачи и переписка в одном окне"],
+    crm      :["Живые данные","Реальные сделки и воронки из amoCRM"],
+    deals    :["Штурвал CRM","Заявки, воронка, переписка и отчёты в одном окне"],
     chats    :["Чаты","Переписки с клиентами"],
     prod     :["Товары","Каталог, остатки и маржа"],
     sales    :["Продажи","Продажи за день и за период"],
@@ -684,7 +683,7 @@
       document.getElementById('page-title').textContent=titles[tab][0];
       document.getElementById('page-sub').textContent=titles[tab][1];
       if(tab==='crm') loadCRM();
-      if(tab==='deals') renderBoard();
+      if(tab==='deals'){ renderBoard(); startDealsAuto(); }
       if(tab==='chats') loadChats();
       if(tab==='prod'){ loadInventory(); loadProducts(); startProdAuto(); }
       window.scrollTo(0,0);
@@ -698,6 +697,7 @@
       b.classList.add('active'); PERIOD=b.dataset.period;
       if(window._crmData){ renderCRM(window._crmData); updateDashKpis(window._crmData); }
       else loadCRM();
+      const dt=document.getElementById('tab-deals'); if(dt&&!dt.classList.contains('hide')&&typeof renderLeft==='function') renderLeft();
     });
   });
   function toggleDrawer(){
@@ -1209,7 +1209,7 @@
   function getDeal(id){ return CRM.deals.find(d=>d.id===id)||null; }
   function clientName(id){ return getClient(id).name||'Без имени'; }
   function dealTasks(id){ return CRM.tasks.filter(t=>t.deal_id===id); }
-  function dealAmount(d){ return (d.items||[]).reduce((s,i)=>s+(i.price*i.qty),0); }
+  function dealAmount(d){ if(d&&d.amount>0) return d.amount; return (d.items||[]).reduce((s,i)=>s+(i.price*i.qty),0); }
   function dealOverdue(id){
     const open=dealTasks(id).filter(t=>!t.done);
     if(!open.length) return 'none';
@@ -1221,7 +1221,17 @@
   // === ЕДИНЫЙ ЭКРАН: воронка сверху + чаты слева + диалог справа ===
   function renderBoard(){ renderFunnel(); renderToday(); renderCrmStats(); fetchChats(); }
   function renderToday(){ const end=new Date(); end.setHours(23,59,59,999); const cnt=CRM.tasks.filter(t=>!t.done&&t.due_at&&new Date(t.due_at).getTime()<=end.getTime()).length; const el=document.getElementById('deals-today'); if(el) el.innerHTML='📋 На сегодня: <b>'+cnt+'</b> задач'; }
-  function renderCrmStats(){ const el=document.getElementById('crm-stats'); if(!el) return; const total=CRM.deals.length; const paid=CRM.deals.filter(d=>['Оплачено','Отгружено','Закрыто'].indexOf(d.status)>=0); const sum=paid.reduce((s,d)=>s+dealAmount(d),0); const conv=total?Math.round(paid.length/total*100):0; el.innerHTML='Заявок: <b>'+total+'</b> · Оплачено: <b>'+paid.length+'</b> ('+conv+'%) · <span class="money" data-som="'+sum+'">'+fmt(sum)+'</span>'; renderMoney(); }
+  function renderCrmStats(){
+    const el=document.getElementById('crm-stats'); if(!el) return;
+    const wrote=COCKPIT_CHATS.length;
+    const activeDeals=CRM.deals.filter(d=>['Закрыто','Отказ'].indexOf(d.status)<0).length;
+    const paid=CRM.deals.filter(d=>['Оплачено','Отгружено','Закрыто'].indexOf(d.status)>=0);
+    const sumOk=paid.reduce((s,d)=>s+dealAmount(d),0);
+    const start=new Date(); start.setHours(0,0,0,0);
+    const sumToday=paid.filter(d=>d.paid_at&&new Date(d.paid_at).getTime()>=start.getTime()).reduce((s,d)=>s+dealAmount(d),0);
+    el.innerHTML='✉️ Написали: <b>'+wrote+'</b> · 🤝 Сделок: <b>'+activeDeals+'</b> · ✅ Сумма успешных: <b><span class="money" data-som="'+sumOk+'">'+fmt(sumOk)+'</span></b> · 📅 Сегодня: <b><span class="money" data-som="'+sumToday+'">'+fmt(sumToday)+'</span></b>';
+    renderMoney();
+  }
   let dragChat=null, COCKPIT_CHATS=[], ckCurId=null, ckCurName='', ckView='Новая заявка';
   function renderFunnel(){
     const fb=document.getElementById('funnelbar'); if(!fb) return;
@@ -1234,6 +1244,23 @@
     });
   }
   function setView(stage){ ckView=stage; renderFunnel(); renderLeft(); }
+  let dealsAutoTimer=null;
+  function startDealsAuto(){
+    if(dealsAutoTimer) return;
+    dealsAutoTimer=setInterval(()=>{
+      const dt=document.getElementById('tab-deals');
+      if(!dt||dt.classList.contains('hide')){ clearInterval(dealsAutoTimer); dealsAutoTimer=null; return; }
+      fetchChats();          // подтянуть свежие заявки/чаты
+      renderFunnel(); renderCrmStats();
+    },15000);
+  }
+  function chatInPeriod(ts){
+    if(!ts) return true; const now=Date.now()/1000;
+    if(PERIOD==='today'){ const s=new Date(); s.setHours(0,0,0,0); return ts>=s.getTime()/1000; }
+    if(PERIOD==='week') return ts>=now-7*86400;
+    if(PERIOD==='month') return ts>=now-30*86400;
+    return true;
+  }
   async function fetchChats(){
     try{ const r=await apiFetch('/api/chats',{},ONEC_BASE); const d=await r.json(); COCKPIT_CHATS=(d.chats||[]).filter(c=>c.id); }
     catch(e){ COCKPIT_CHATS=[]; }
@@ -1243,7 +1270,7 @@
     const box=document.getElementById('cockpit-chats'); if(!box) return;
     let items=[];
     if(ckView==='Новая заявка'){
-      items=COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return !d||d.status==='Новая заявка'; }).map(c=>({name:c.name,sub:c.status||'новый',chatId:c.id}));
+      items=COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка') && chatInPeriod(c.ts); }).map(c=>({name:c.name,sub:(c.time||'')+' · '+(c.status||'новый'),chatId:c.id}));
     } else {
       items=CRM.deals.filter(d=>d.status===ckView).map(d=>{ const cl=getClient(d.client_id); const chat=COCKPIT_CHATS.find(x=>x.name&&cl.name&&x.name.toLowerCase()===cl.name.toLowerCase()); return {name:cl.name||'Без имени',sub:fmt(dealAmount(d)),chatId:chat?chat.id:null}; });
     }
@@ -1262,7 +1289,12 @@
   function findDealByName(name){ const c=findClient(name); return c?CRM.deals.find(d=>d.client_id===c.id)||null:null; }
   function ensureClient(name){ let c=findClient(name); if(!c){ c={id:uid(),name:name,phone:'',source:'instagram',created_at:new Date().toISOString()}; CRM.clients.push(c); } return c; }
   function ensureDeal(name,status){ const c=ensureClient(name); let d=CRM.deals.find(x=>x.client_id===c.id); if(!d){ d={id:uid(),client_id:c.id,status:status||'Новая заявка',items:[],owner:(USER.name||''),created_at:new Date().toISOString(),comment:''}; CRM.deals.push(d); logActivity(c.id,d.id,'системное','Заказ создан из чата'); } return d; }
-  function ckHead(){ const head=document.getElementById('ck-head'); if(!head) return; const deal=findDealByName(ckCurName); head.innerHTML='<span style="cursor:pointer" onclick="openDealForClient()" title="Открыть карточку заказа">📋 <b>'+esc(ckCurName||'—')+'</b>'+(deal?' · <span style="color:var(--muted)">'+esc(deal.status)+'</span>':'')+'</span>'; }
+  function ckHead(){
+    const head=document.getElementById('ck-head'); if(!head) return; const deal=findDealByName(ckCurName);
+    head.innerHTML='<span style="cursor:pointer" onclick="openDealForClient()" title="Открыть карточку заказа">📋 <b>'+esc(ckCurName||'—')+'</b>'+(deal?' · <span style="color:var(--muted)">'+esc(deal.status)+'</span>':'')+'</span>'+
+      (ckCurName?'<span style="display:flex;align-items:center;gap:5px;font-size:13px">💰 <input type="number" value="'+(deal?Math.round(dealAmount(deal)):0)+'" placeholder="сумма счёта" style="width:120px;padding:5px 8px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text)" onchange="setAmount(this.value)"> сом</span>':'');
+  }
+  function setAmount(v){ if(!ckCurName) return; const d=ensureDeal(ckCurName); d.amount=parseFloat(v)||0; crmPersist(); renderFunnel(); renderCrmStats(); renderLeft(); }
   async function openConvo(c){
     ckCurId=c.id; ckCurName=c.name; renderLeft(); ckHead();
     const box=document.getElementById('ck-msgs'); box.innerHTML='<div style="color:var(--muted);padding:10px">Загрузка…</div>';
@@ -1281,7 +1313,8 @@
     if(!dragChat) return; const nm=dragChat.name; dragChat=null;
     const d=ensureDeal(nm,status);
     if(status==='Отказ'){ pendingReject=d.id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; }
-    d.status=status; logActivity(d.client_id,d.id,'смена статуса','Статус → '+status+' (перетащено)');
+    d.status=status; if(status==='Оплачено'&&!d.paid_at) d.paid_at=new Date().toISOString();
+    logActivity(d.client_id,d.id,'смена статуса','Статус → '+status+' (перетащено)');
     crmPersist(); renderFunnel(); renderCrmStats(); renderLeft(); if(ckCurName&&ckCurName.toLowerCase()===nm.toLowerCase()) ckHead();
   }
   let pendingReject=null;
@@ -1329,7 +1362,7 @@
   }
   function updClient(f,v){ const d=getDeal(curDealId); const c=getClient(d.client_id); c[f]=v; c.last_contact_at=new Date().toISOString(); crmPersist(); }
   function updDeal(f,v){ const d=getDeal(curDealId); d[f]=v; crmPersist(); }
-  function updStatus(v){ const d=getDeal(curDealId); if(v==='Отказ'){ pendingReject=d.id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; } d.status=v; logActivity(d.client_id,d.id,'смена статуса','Статус → '+v); crmPersist(); }
+  function updStatus(v){ const d=getDeal(curDealId); if(v==='Отказ'){ pendingReject=d.id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; } d.status=v; if(v==='Оплачено'&&!d.paid_at) d.paid_at=new Date().toISOString(); logActivity(d.client_id,d.id,'смена статуса','Статус → '+v); crmPersist(); renderBoard&&renderBoard(); }
   let itemTimer=null;
   function searchItems(q){
     clearTimeout(itemTimer); const res=document.getElementById('di-res');

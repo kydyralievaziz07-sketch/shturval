@@ -228,7 +228,7 @@ def chatplace_call(name, arguments):
         return resp.get("result", {})
 
 def build_chats():
-    res = chatplace_call("chats_list", {"limit": 50})
+    res = chatplace_call("chats_list", {"limit": 200})
     items = res.get("items", []) if isinstance(res, dict) else []
     now = time.time(); lt = time.localtime(now)
     start_today = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
@@ -239,7 +239,7 @@ def build_chats():
         ts = it.get("lastMessageAt")
         tm = time.strftime("%H:%M", time.localtime(ts)) if ts else ""
         chats.append({"id": it.get("id"), "name": it.get("clientName", "клиент"),
-                      "time": tm, "status": it.get("statusName", "")})
+                      "time": tm, "status": it.get("statusName", ""), "ts": ts or 0})
     return {"source": "Instagram", "updated": time.strftime("%H:%M:%S"),
             "today": today, "active": active, "total": len(items), "chats": chats}
 
