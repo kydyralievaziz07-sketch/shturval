@@ -43,6 +43,9 @@ def load_secret():
     # ИИ-помощник магазина (Anthropic Claude)
     cfg["ANTHROPIC_API_KEY"] = env("ANTHROPIC_API_KEY")
     cfg["ANTHROPIC_MODEL"] = env("ANTHROPIC_MODEL") or "claude-haiku-4-5-20251001"
+    # База данных Supabase (постоянное хранение)
+    cfg["SUPABASE_URL"] = env("SUPABASE_URL")
+    cfg["SUPABASE_KEY"] = env("SUPABASE_KEY")
     return cfg
 
 CFG = load_secret()
