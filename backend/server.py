@@ -105,6 +105,20 @@ def load_users():
 
 USERS, USERS_BY_LOGIN = load_users()
 
+def all_users():
+    """Все пользователи без дублей. ВАЖНО: USERS ключуется по паролю, поэтому
+    сотрудники с общим паролем там схлопываются в одного — берём по логину."""
+    seen = set(); out = []
+    for v in list(USERS_BY_LOGIN.values()) + list(USERS.values()):
+        if id(v) in seen:
+            continue
+        seen.add(id(v)); out.append(v)
+    return out
+
+def _pkey(user):
+    """Ключ зарплаты — логин (уникален). Если логина нет — имя (старое поведение)."""
+    return (user.get("login") or user.get("name") or "").strip()
+
 # какой раздел нужен для каждого data-эндпоинта (для проверки прав)
 SECTION_OF = [
     ("/api/overview", "crm"),
@@ -915,17 +929,19 @@ def _present_in_month(days, m):
 
 def payroll_view(user):
     name = user.get("name", "")
-    r = payroll_rec(name)
+    key = _pkey(user)                       # зарплата ведётся по логину (уникален)
+    r = payroll_rec(key)
     days = r.get("days") or {}
     m = _cur_month(); today = _today_str()
     pd = _present_in_month(days, m) if days else int(r.get("present_days") or 0)
     sal = float(user.get("salary_month") or 0)
     rate = float(user.get("daily_rate") or 0)
     if rate <= 0 and sal > 0:
-        rate = round(sal / 26.0)            # ~26 рабочих дней в месяце
+        rate = round(sal / 30.0)            # оклад ÷ 30 (магазин работает каждый день)
     accrued = round(pd * rate)
     bonus = float(r.get("bonus") or 0); adv = float(r.get("advance") or 0)
-    return {"name": name, "role": user.get("role", ""), "department": user.get("department", ""),
+    return {"name": name, "login": user.get("login", ""),
+            "role": user.get("role", ""), "department": user.get("department", ""),
             "salary_month": sal, "daily_rate": rate, "bonus_month": float(user.get("bonus_month") or 0),
             "present_days": pd, "accrued": accrued, "bonus": bonus,
             "advance": adv, "to_receive": round(accrued + bonus - adv), "days": days,
@@ -933,11 +949,13 @@ def payroll_view(user):
 
 def payroll_all():
     seen = set(); out = []
-    for v in USERS.values():
-        nm = v.get("name", "")
-        if nm in seen or "all" in v.get("sections", []):  # владельца не показываем
+    for v in all_users():
+        if "all" in v.get("sections", []):  # владельца не показываем
             continue
-        seen.add(nm); out.append(payroll_view(v))
+        key = _pkey(v)
+        if not key or key in seen:
+            continue
+        seen.add(key); out.append(payroll_view(v))
     return out
 
 
@@ -1052,11 +1070,15 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.loads(self.rfile.read(length) or b"{}")
             except Exception:
                 return self._send(400, {"error": "плохой запрос"})
-            action = body.get("action"); name = (body.get("name") or "").strip()
-            tu = user_by_name(name)
+            action = body.get("action")
+            login = (body.get("login") or "").strip().lower()
+            name = (body.get("name") or "").strip()
+            tu = USERS_BY_LOGIN.get(login) if login else None
+            if not tu:
+                tu = user_by_name(name)
             if not tu:
                 return self._send(400, {"error": "сотрудник не найден"})
-            r = payroll_rec(name)
+            r = payroll_rec(_pkey(tu))
             days = r.get("days") or {}
             today = _today_str()
             if action == "present":
@@ -1109,9 +1131,11 @@ class Handler(BaseHTTPRequestHandler):
             u = self._user()
             if not (u and "all" in u.get("sections", [])):
                 return self._send(403, {"error": "Только владелец видит персонал"})
-            staff = [{"name": v.get("name", ""), "sections": v.get("sections", []),
+            staff = [{"name": v.get("name", ""), "login": v.get("login", ""),
+                      "sections": v.get("sections", []),
                       "role": v.get("role", ""), "department": v.get("department", ""),
-                      "plan_day": v.get("plan_day", 0)} for v in USERS.values()]
+                      "plan_day": v.get("plan_day", 0)}
+                     for v in all_users() if "all" not in v.get("sections", [])]
             return self._send(200, {"staff": staff, "total": len(staff)})
         if self.path.startswith("/api/overview"):
             return self._send(200, get_overview())

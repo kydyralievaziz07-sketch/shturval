@@ -287,7 +287,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.5.0<br>вход по логину + паролю (старый вход по паролю тоже работает)
+      Штурвал v3.6.0<br>Кадры: сотрудники по отделам (сворачиваются), календарь явки открывается по кнопке
     </div>
   </aside>
 
@@ -1819,7 +1819,7 @@
     const st=document.getElementById('staff-status');
     try{
       const r=await apiFetch('/api/staff',{},ONEC_BASE); const d=await r.json();
-      STAFF_PAY={}; try{ const pr=await apiFetch('/api/payroll',{},ONEC_BASE); const pd=await pr.json(); (pd.all||[]).forEach(v=>STAFF_PAY[v.name]=v); }catch(_){}
+      STAFF_PAY={}; try{ const pr=await apiFetch('/api/payroll',{},ONEC_BASE); const pd=await pr.json(); (pd.all||[]).forEach(v=>STAFF_PAY[v.login||v.name]=v); }catch(_){}
       window._staffData=d; renderStaff(d); if(st) st.style.display='none';
     }
     catch(e){ if(st){ st.style.display=''; st.innerHTML = e.message==='forbidden'?'⛔ Раздел доступен только владельцу.':'Не удалось загрузить. Сервер мог просыпаться — обнови через минуту.'; } }
@@ -1833,19 +1833,19 @@
       return '<tr><td><b>'+esc(s.name)+'</b></td><td>'+esc(s.role||'—')+'</td><td>'+esc(s.department||'—')+'</td><td>'+(s.plan_day?('<span class="money" data-som="'+s.plan_day+'">'+fmt(s.plan_day)+'</span>'):'—')+'</td><td style="color:var(--muted);font-size:12px">'+esc(secs)+'</td></tr>';
     }).join('');
     // HR / зарплата
-    const paid=staff.filter(s=>(STAFF_PAY[s.name]||{}).salary_month);
-    const hrRows=paid.map(s=>{ const v=STAFF_PAY[s.name]||{};
+    const paid=staff.filter(s=>(STAFF_PAY[s.login]||{}).salary_month);
+    const hrRows=paid.map(s=>{ const v=STAFF_PAY[s.login]||{}; const lg=jsn(s.login);
       const btn=v.marked_today
-        ? '<button class="btn ghost" style="padding:4px 9px;font-size:12px;background:rgba(57,217,138,.15)" onclick="hrMark(\''+esc(s.name).replace(/\x27/g,"")+'\',\'unpresent\')">✓ был сегодня</button>'
-        : '<button class="btn" style="padding:4px 9px;font-size:12px" onclick="hrMark(\''+esc(s.name).replace(/\x27/g,"")+'\',\'present\')">Пришёл сегодня</button>';
+        ? '<button class="btn ghost" style="padding:4px 9px;font-size:12px;background:rgba(57,217,138,.15)" onclick="hrMark(\''+lg+'\',\'unpresent\')">✓ был сегодня</button>'
+        : '<button class="btn" style="padding:4px 9px;font-size:12px" onclick="hrMark(\''+lg+'\',\'present\')">Пришёл сегодня</button>';
       return '<tr><td><b>'+esc(s.name)+'</b></td><td>'+v.present_days+'</td>'+
         '<td><span class="money" data-som="'+v.accrued+'">'+fmt(v.accrued)+'</span></td>'+
         '<td><span class="money" data-som="'+v.bonus+'">'+fmt(v.bonus)+'</span></td>'+
         '<td><span class="money" data-som="'+v.advance+'">'+fmt(v.advance)+'</span></td>'+
         '<td><b><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span></b></td>'+
         '<td style="white-space:nowrap">'+btn+
-          ' <button class="btn ghost" style="padding:4px 8px;font-size:12px" onclick="hrAmount(\''+esc(s.name).replace(/\x27/g,"")+'\',\'advance\')">+ аванс</button>'+
-          ' <button class="btn ghost" style="padding:4px 8px;font-size:12px" onclick="hrAmount(\''+esc(s.name).replace(/\x27/g,"")+'\',\'bonus\')">+ премия</button>'+
+          ' <button class="btn ghost" style="padding:4px 8px;font-size:12px" onclick="hrAmount(\''+lg+'\',\'advance\')">+ аванс</button>'+
+          ' <button class="btn ghost" style="padding:4px 8px;font-size:12px" onclick="hrAmount(\''+lg+'\',\'bonus\')">+ премия</button>'+
         '</td></tr>';
     }).join('');
     b.innerHTML='<div class="kpis" style="grid-template-columns:repeat(3,1fr)">'+
@@ -1877,15 +1877,15 @@
     }
     return false;
   }
-  async function hrMark(name,action){
-    const ok=await hrPost({action:action,name:name});
+  async function hrMark(login,action){
+    const ok=await hrPost({action:action,login:login});
     if(!ok) alert('Сервер просыпается — подожди минуту и нажми ещё раз.');
     hrRefresh();
   }
-  async function hrAmount(name,action){
-    const v=prompt((action==='advance'?'Аванс для ':'Премия для ')+name+' (сом):','');
+  async function hrAmount(login,action){
+    const v=prompt((action==='advance'?'Аванс (сом):':'Премия (сом):'),'');
     const amt=parseFloat((v||'').replace(/\s/g,'').replace(',','.')); if(!amt||amt<=0) return;
-    const ok=await hrPost({action:action,name:name,amount:amt});
+    const ok=await hrPost({action:action,login:login,amount:amt});
     if(!ok) alert('Не сохранилось — подожди минуту и попробуй ещё раз.');
     hrRefresh();
   }
@@ -1899,34 +1899,60 @@
     }catch(e){ if(st){ st.style.display=''; st.innerHTML='Не удалось загрузить (сервер мог просыпаться). Обнови через минуту.'; } }
   }
   function jsn(s){ return (s||'').replace(/'/g,''); }
+  const DEPT_ORDER=['Детский','1 этаж','Касса','Склад','Мужской','Женский','Онлайн','Маркетплейс','Обувь','Мобилограф'];
+  function hrToggle(id){ const el=document.getElementById(id); if(!el) return; const open=el.style.display==='none'; el.style.display=open?'':'none'; const c=document.getElementById(id+'-c'); if(c) c.textContent=open?'▼':'▶'; }
+  function hrAllDepts(open){ document.querySelectorAll('[id^="dept-"]').forEach(el=>{ if(/^dept-\d+$/.test(el.id)){ el.style.display=open?'':'none'; const c=document.getElementById(el.id+'-c'); if(c) c.textContent=open?'▼':'▶'; } }); }
   function renderHR(list){
     const b=document.getElementById('hr-body'); if(!b) return;
     const paid=(list||[]).filter(v=>v.salary_month||v.daily_rate);
     if(!paid.length){ b.innerHTML='<div class="card"><div style="color:var(--muted);font-size:13px">Пока нет сотрудников с настроенной зарплатой. Скажи владельцу настроить — и они появятся тут.</div></div>'; return; }
-    b.innerHTML=paid.map(hrCard).join('');
-    renderMoney();
+    // группируем по отделам
+    const groups={}; paid.forEach(v=>{ const d=v.department||'Без отдела'; (groups[d]=groups[d]||[]).push(v); });
+    const order=DEPT_ORDER.filter(d=>groups[d]).concat(Object.keys(groups).filter(d=>DEPT_ORDER.indexOf(d)<0));
+    const totalPay=paid.reduce((a,v)=>a+(+v.to_receive||0),0);
+    let html='<div class="kpis" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">'+
+        kpiCard('👥 Сотрудников',paid.length)+
+        kpiCard('🏬 Отделов',order.length)+
+        kpiCard('💰 Итого к выплате','<span class="money" data-som="'+totalPay+'">'+fmt(totalPay)+'</span>')+
+      '</div>'+
+      '<div style="display:flex;gap:8px;margin-bottom:12px">'+
+        '<button class="btn ghost" style="font-size:12px;padding:5px 10px" onclick="hrAllDepts(true)">▼ раскрыть все</button>'+
+        '<button class="btn ghost" style="font-size:12px;padding:5px 10px" onclick="hrAllDepts(false)">▶ свернуть все</button>'+
+      '</div>';
+    order.forEach((d,di)=>{
+      const arr=groups[d]; const bid='dept-'+di;
+      const dpay=arr.reduce((a,v)=>a+(+v.to_receive||0),0);
+      const here=arr.filter(v=>v.marked_today).length;
+      html+='<div class="card" style="margin-bottom:12px;padding:0;overflow:hidden">'+
+        '<div onclick="hrToggle(\''+bid+'\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:13px 16px;background:var(--panel2)">'+
+          '<div><b style="font-size:15px">🏬 '+esc(d)+'</b> <span style="color:var(--muted);font-size:13px">· '+arr.length+' чел. · сегодня ✓'+here+'</span></div>'+
+          '<div style="font-size:13px;color:var(--muted);white-space:nowrap">к выплате <b style="color:var(--text)"><span class="money" data-som="'+dpay+'">'+fmt(dpay)+'</span></b> <span id="'+bid+'-c" style="margin-left:6px">▼</span></div>'+
+        '</div>'+
+        '<div id="'+bid+'">'+arr.map((v,i)=>hrRow(v,bid+'-'+i)).join('')+'</div>'+
+      '</div>';
+    });
+    b.innerHTML=html; renderMoney();
   }
-  function hrCard(v){
-    const nm=jsn(v.name);
+  function hrRow(v,rid){
+    const lg=jsn(v.login||v.name); const calId=rid+'-cal';
     const presentBtn=v.marked_today
-      ? '<button class="btn" style="background:var(--green);color:#06121f" disabled>✓ был сегодня</button>'
-      : '<button class="btn" onclick="hrMark(\''+nm+'\',\'present\')">✅ Был сегодня</button>';
+      ? '<button class="btn" style="padding:5px 10px;font-size:12px;background:var(--green);color:#06121f" onclick="hrMark(\''+lg+'\',\'unpresent\')">✓ был</button>'
+      : '<button class="btn" style="padding:5px 10px;font-size:12px" onclick="hrMark(\''+lg+'\',\'present\')">Пришёл</button>';
     const absentBtn=v.marked_absent_today
-      ? '<button class="btn" style="background:var(--red);color:#fff" disabled>✗ не пришёл</button>'
-      : '<button class="btn ghost" onclick="hrMark(\''+nm+'\',\'absent\')">❌ Не пришёл</button>';
-    return '<div class="card" style="margin-bottom:16px">'+
-      '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:center">'+
-        '<div><h3 style="margin:0">'+esc(v.name)+'</h3><div style="font-size:12px;color:var(--muted)">'+esc(v.role||'Сотрудник')+(v.department?' · '+esc(v.department):'')+'</div></div>'+
-        '<div style="text-align:right;font-size:13px;color:var(--muted)">Отработано: <b style="color:var(--text)">'+v.present_days+'</b> дн · К выплате: <b style="color:var(--text)"><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span></b></div>'+
+      ? '<button class="btn" style="padding:5px 10px;font-size:12px;background:var(--red);color:#fff" onclick="hrMark(\''+lg+'\',\'unpresent\')">✗ не пришёл</button>'
+      : '<button class="btn ghost" style="padding:5px 10px;font-size:12px" onclick="hrMark(\''+lg+'\',\'absent\')">Не пришёл</button>';
+    return '<div style="border-top:1px solid var(--line);padding:10px 14px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">'+
+        '<div style="min-width:150px"><b>'+esc(v.name)+'</b> <span style="color:var(--muted);font-size:12px">· '+v.present_days+' дн</span></div>'+
+        '<div style="font-size:12px;color:var(--muted)">К выплате <b style="color:var(--text)"><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span></b>'+
+          ((v.advance||v.bonus)?(' <span style="opacity:.7">(ав '+fmt(v.advance)+' · пр '+fmt(v.bonus)+')</span>'):'')+'</div>'+
+        '<div style="display:flex;gap:6px;flex-wrap:wrap">'+presentBtn+absentBtn+
+          '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="hrAmount(\''+lg+'\',\'advance\')" title="Аванс">💸</button>'+
+          '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="hrAmount(\''+lg+'\',\'bonus\')" title="Премия">🎁</button>'+
+          '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="hrToggle(\''+calId+'\')" title="Календарь явки">📅</button>'+
+        '</div>'+
       '</div>'+
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'+
-        presentBtn+absentBtn+
-        '<button class="btn ghost" onclick="hrMark(\''+nm+'\',\'unpresent\')">↩ снять отметку</button>'+
-        '<button class="btn ghost" onclick="hrAmount(\''+nm+'\',\'advance\')">💸 + аванс</button>'+
-        '<button class="btn ghost" onclick="hrAmount(\''+nm+'\',\'bonus\')">🎁 + премия</button>'+
-      '</div>'+
-      '<div style="font-size:12px;color:var(--muted);margin-top:7px">Аванс: <span class="money" data-som="'+v.advance+'">'+fmt(v.advance)+'</span> · Премия: <span class="money" data-som="'+v.bonus+'">'+fmt(v.bonus)+'</span></div>'+
-      hrCalendar(v.days||{})+
+      '<div id="'+calId+'" style="display:none">'+hrCalendar(v.days||{})+'</div>'+
     '</div>';
   }
   function hrCalendar(days){
