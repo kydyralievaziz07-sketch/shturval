@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.2.0<br>Кадры 🗓: HR-менеджер, явка,<br>«не пришёл» + календарь
+      Штурвал v3.2.1<br>Кадры: кнопки сами повторяют<br>запрос (без ошибки на старте)
     </div>
   </aside>
 
@@ -1814,16 +1814,26 @@
     const hr=document.getElementById('tab-hr'); if(hr&&!hr.classList.contains('hide')){ loadHR(); return; }
     loadStaff();
   }
+  // POST с авто-повтором, пока сервер «просыпается» (до 4 попыток)
+  async function hrPost(body){
+    for(let i=1;i<=4;i++){
+      try{ const r=await apiFetch('/api/payroll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},ONEC_BASE);
+        const d=await r.json(); if(d&&d.error) throw new Error(d.error); return true; }
+      catch(e){ if(e&&e.message==='forbidden'){ alert('Нет прав на это действие.'); return false; }
+        await new Promise(res=>setTimeout(res,2500)); }   // подождать и повторить
+    }
+    return false;
+  }
   async function hrMark(name,action){
-    try{ await apiFetch('/api/payroll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action,name:name})},ONEC_BASE); }
-    catch(e){ alert('Не удалось — сервер мог просыпаться, попробуй ещё раз.'); }
+    const ok=await hrPost({action:action,name:name});
+    if(!ok) alert('Сервер просыпается — подожди минуту и нажми ещё раз.');
     hrRefresh();
   }
   async function hrAmount(name,action){
     const v=prompt((action==='advance'?'Аванс для ':'Премия для ')+name+' (сом):','');
     const amt=parseFloat((v||'').replace(/\s/g,'').replace(',','.')); if(!amt||amt<=0) return;
-    try{ await apiFetch('/api/payroll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action,name:name,amount:amt})},ONEC_BASE); }
-    catch(e){ alert('Не удалось — попробуй ещё раз.'); }
+    const ok=await hrPost({action:action,name:name,amount:amt});
+    if(!ok) alert('Не сохранилось — подожди минуту и попробуй ещё раз.');
     hrRefresh();
   }
   // ===== Кабинет «Кадры» (HR-менеджер) =====
