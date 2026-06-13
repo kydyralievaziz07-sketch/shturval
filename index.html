@@ -283,11 +283,10 @@
       <a data-tab="fin"><span class="ico">💰</span> Финансы (1С)</a>
       <a data-tab="ai"><span class="ico">🤖</span> ИИ-помощник</a>
       <a data-tab="hr"><span class="ico">🗓</span> Кадры</a>
-      <a data-tab="staff"><span class="ico">🧑‍💼</span> Персонал</a>
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.6.0<br>Кадры: сотрудники по отделам (сворачиваются), календарь явки открывается по кнопке
+      Штурвал v3.7.0<br>Кадры: планы по отделам (план/факт/% выполнения); вкладка «Персонал» убрана
     </div>
   </aside>
 
@@ -438,11 +437,6 @@
       <div id="hr-body"></div>
     </section>
 
-    <!-- ПЕРСОНАЛ — только для владельца -->
-    <section id="tab-staff" class="hide">
-      <div id="staff-status" class="note" style="margin-bottom:14px">⏳ Загружаю список сотрудников…</div>
-      <div id="staff-body"></div>
-    </section>
 
     <!-- PRODUCTS (живые данные из 1С) -->
     <section id="tab-prod" class="hide">
@@ -760,7 +754,6 @@
       document.getElementById('page-sub').textContent=titles[tab][1];
       if(tab==='crm') loadCRM();
       if(tab==='myday') renderMyDay();
-      if(tab==='staff') loadStaff();
       if(tab==='hr') loadHR();
       if(tab==='clients') renderClients();
       if(tab==='ai') aiInit();
@@ -1863,10 +1856,7 @@
       '<div class="note" style="margin-top:14px">➕ Чтобы добавить сотрудника (имя, пароль, <b>отдел</b>, <b>план/день</b>, <b>зарплата</b>, разделы) — напиши мне, я заведу его на сервере. Пароли тут не показываются 🔒.</div>';
     renderMoney();
   }
-  function hrRefresh(){
-    const hr=document.getElementById('tab-hr'); if(hr&&!hr.classList.contains('hide')){ loadHR(); return; }
-    loadStaff();
-  }
+  function hrRefresh(){ loadHR(); }
   // POST с авто-повтором, пока сервер «просыпается» (до 4 попыток)
   async function hrPost(body){
     for(let i=1;i<=4;i++){
@@ -1890,13 +1880,50 @@
     hrRefresh();
   }
   // ===== Кабинет «Кадры» (HR-менеджер) =====
+  let DEPT_PLANS=[];
   async function loadHR(){
     const st=document.getElementById('hr-status');
     try{
       const r=await apiFetch('/api/payroll',{},ONEC_BASE); const d=await r.json();
       const list=d.all||(d.me?[d.me]:[]);
+      try{ const rp=await apiFetch('/api/deptplan',{},ONEC_BASE); const dp=await rp.json(); DEPT_PLANS=dp.departments||[]; }catch(_){ DEPT_PLANS=[]; }
       renderHR(list); if(st) st.style.display='none';
     }catch(e){ if(st){ st.style.display=''; st.innerHTML='Не удалось загрузить (сервер мог просыпаться). Обнови через минуту.'; } }
+  }
+  // --- Планы по отделам ---
+  async function dpPost(body){
+    try{ const r=await apiFetch('/api/deptplan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},ONEC_BASE);
+      const d=await r.json(); if(d&&d.error) throw new Error(d.error);
+      if(d&&d.departments){ DEPT_PLANS=d.departments; renderDeptPlans(); } return true;
+    }catch(e){ alert(e.message==='forbidden'?'Менять план может только владелец.':'Не удалось сохранить (сервер мог просыпаться). Попробуй ещё раз.'); return false; }
+  }
+  function dpNum(v){ const n=parseFloat((v||'').toString().replace(/\s/g,'').replace(',','.')); return isNaN(n)||n<0?null:n; }
+  async function dpSetPlan(dep,val){ const v=dpNum(val); if(v===null) return; await dpPost({action:'setplan',department:dep,plan_day:v}); }
+  async function dpSetFact(dep,val){ const v=dpNum(val); if(v===null) return; await dpPost({action:'setfact',department:dep,fact:v}); }
+  function renderDeptPlans(){
+    const wrap=document.getElementById('hr-plans'); if(!wrap) return;
+    if(!DEPT_PLANS.length){ wrap.innerHTML=''; return; }
+    const ed=isOwner();
+    const inp='padding:5px 8px;width:115px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:13px';
+    const rows=DEPT_PLANS.map(p=>{
+      const pct=p.pct||0, w=Math.min(100,pct);
+      const col=pct>=100?'var(--green)':pct>=60?'var(--accent)':'#e0a23b';
+      return '<div style="margin-bottom:13px">'+
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:5px">'+
+          '<b style="font-size:14px">🏬 '+esc(p.department)+'</b>'+
+          '<div style="display:flex;gap:7px;align-items:center;font-size:12px;color:var(--muted)">'+
+            'План <input type="number" value="'+Math.round(p.plan_day||0)+'" '+(ed?'':'disabled')+' onchange="dpSetPlan(\''+jsn(p.department)+'\',this.value)" style="'+inp+'">'+
+            'Факт <input type="number" value="'+Math.round(p.fact||0)+'" '+(ed?'':'disabled')+' onchange="dpSetFact(\''+jsn(p.department)+'\',this.value)" style="'+inp+'">'+
+            '<b style="color:'+col+';min-width:44px;text-align:right;font-size:14px">'+pct+'%</b>'+
+          '</div>'+
+        '</div>'+
+        '<div style="height:9px;background:var(--panel2);border-radius:6px;overflow:hidden"><div style="height:100%;width:'+w+'%;background:'+col+';transition:width .3s"></div></div>'+
+      '</div>';
+    }).join('');
+    wrap.innerHTML='<div class="card" style="margin-bottom:16px">'+
+      '<h3>🎯 Планы по отделам — продажи в день</h3>'+
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:12px">'+(ed?'Задай план на день и впиши факт — покажу % выполнения.':'Планы отделов (редактирует владелец).')+' Факт пока вводится вручную; позже подтянем из 1С автоматически.</div>'+
+      rows+'</div>';
   }
   function jsn(s){ return (s||'').replace(/'/g,''); }
   const DEPT_ORDER=['Детский','1 этаж','Касса','Склад','Мужской','Женский','Онлайн','Маркетплейс','Обувь','Мобилограф'];
@@ -1910,7 +1937,8 @@
     const groups={}; paid.forEach(v=>{ const d=v.department||'Без отдела'; (groups[d]=groups[d]||[]).push(v); });
     const order=DEPT_ORDER.filter(d=>groups[d]).concat(Object.keys(groups).filter(d=>DEPT_ORDER.indexOf(d)<0));
     const totalPay=paid.reduce((a,v)=>a+(+v.to_receive||0),0);
-    let html='<div class="kpis" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">'+
+    let html='<div id="hr-plans"></div>'+
+      '<div class="kpis" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">'+
         kpiCard('👥 Сотрудников',paid.length)+
         kpiCard('🏬 Отделов',order.length)+
         kpiCard('💰 Итого к выплате','<span class="money" data-som="'+totalPay+'">'+fmt(totalPay)+'</span>')+
@@ -1931,7 +1959,7 @@
         '<div id="'+bid+'">'+arr.map((v,i)=>hrRow(v,bid+'-'+i)).join('')+'</div>'+
       '</div>';
     });
-    b.innerHTML=html; renderMoney();
+    b.innerHTML=html; renderDeptPlans(); renderMoney();
   }
   function hrRow(v,rid){
     const lg=jsn(v.login||v.name); const calId=rid+'-cal';

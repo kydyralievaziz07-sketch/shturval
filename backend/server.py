@@ -958,6 +958,65 @@ def payroll_all():
         seen.add(key); out.append(payroll_view(v))
     return out
 
+# --- Планы по отделам (продажи/день) ---
+DEPTPLAN = {}                # резерв в памяти/файле
+DEFAULT_DEPT_PLAN = 250000   # план по умолчанию на отдел в день
+
+def _dept_list():
+    out = []
+    for v in all_users():
+        if "all" in v.get("sections", []):
+            continue
+        d = (v.get("department") or "").strip()
+        if d and d not in out:
+            out.append(d)
+    return out
+
+def _dept_count(dep):
+    return sum(1 for v in all_users()
+               if (v.get("department") or "").strip() == dep and "all" not in v.get("sections", []))
+
+def dept_plan_rec(dep):
+    if supa_on():
+        try:
+            rows = _supa("GET", "dept_plan",
+                         "?company_id=eq.%s&department=eq.%s&select=*" % (_q(COMPANY_ID), _q(dep)))
+            if rows:
+                return rows[0]
+            rec = {"company_id": COMPANY_ID, "department": dep,
+                   "plan_day": DEFAULT_DEPT_PLAN, "facts": {}}
+            _supa("POST", "dept_plan", "", rec)
+            return rec
+        except Exception:
+            pass
+    r = DEPTPLAN.get(dep)
+    if not r:
+        r = {"department": dep, "plan_day": DEFAULT_DEPT_PLAN, "facts": {}}
+        DEPTPLAN[dep] = r
+    return r
+
+def dept_plan_upsert(rec):
+    if supa_on():
+        try:
+            r = dict(rec); r.setdefault("company_id", COMPANY_ID); r.pop("updated_at", None)
+            _supa("POST", "dept_plan", "?on_conflict=company_id,department", r)
+            return
+        except Exception:
+            pass
+    DEPTPLAN[rec.get("department")] = rec
+
+def dept_plan_all():
+    today = _today_str(); out = []
+    for dep in _dept_list():
+        r = dept_plan_rec(dep)
+        plan = float(r.get("plan_day") or 0)
+        facts = r.get("facts") or {}
+        fact = float(facts.get(today) or 0)
+        pct = round(fact / plan * 100) if plan > 0 else 0
+        out.append({"department": dep, "plan_day": plan, "fact": fact,
+                    "pct": pct, "staff": _dept_count(dep)})
+    return out
+
 
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
@@ -1098,6 +1157,29 @@ class Handler(BaseHTTPRequestHandler):
             r["last_present"] = today if days.get(today) == "p" else r.get("last_present", "")
             payroll_upsert(r)
             return self._send(200, {"ok": True, "view": payroll_view(tu)})
+        if self.path.startswith("/api/deptplan"):
+            u = self._user(); secs = u.get("sections", []) if u else []
+            if not (u and "all" in secs):          # менять план — только владелец
+                return self._send(403, {"error": "Менять план может только владелец"})
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            dep = (body.get("department") or "").strip(); action = body.get("action")
+            if not dep:
+                return self._send(400, {"error": "нет отдела"})
+            r = dept_plan_rec(dep)
+            if action == "setplan":
+                r["plan_day"] = round(float(body.get("plan_day") or 0))
+            elif action == "setfact":
+                facts = r.get("facts") or {}
+                facts[_today_str()] = round(float(body.get("fact") or 0))
+                r["facts"] = facts
+            else:
+                return self._send(400, {"error": "неизвестное действие"})
+            dept_plan_upsert(r)
+            return self._send(200, {"ok": True, "departments": dept_plan_all()})
         self._send(404, {"error": "не найдено"})
 
     def do_GET(self):
@@ -1127,6 +1209,11 @@ class Handler(BaseHTTPRequestHandler):
             if "all" in secs or "hr" in secs:      # владелец и HR-менеджер видят всех
                 return self._send(200, {"all": payroll_all()})
             return self._send(200, {"me": payroll_view(u)})
+        if self.path.startswith("/api/deptplan"):
+            u = self._user(); secs = u.get("sections", []) if u else []
+            if not (u and ("all" in secs or "hr" in secs)):
+                return self._send(403, {"error": "Только владелец/HR"})
+            return self._send(200, {"departments": dept_plan_all()})
         if self.path.startswith("/api/staff"):
             u = self._user()
             if not (u and "all" in u.get("sections", [])):
