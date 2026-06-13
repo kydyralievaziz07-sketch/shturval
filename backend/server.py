@@ -46,7 +46,9 @@ def load_secret():
     cfg["YAROS_CREATE_URL"] = env("YAROS_CREATE_URL")
     # пароль владельца (видит всё). Если пусто — защита выключена.
     cfg["SITE_PASSWORD"] = env("SITE_PASSWORD")
-    # доп. пользователи с ролями (JSON-список): [{"pw":"...","name":"...","sections":["chats"]}]
+    # логин владельца (необязателен; вход логин+пароль). Если пусто — владелец входит по паролю.
+    cfg["OWNER_LOGIN"] = env("OWNER_LOGIN")
+    # доп. пользователи с ролями (JSON-список): [{"login":"...","pw":"...","name":"...","sections":["chats"]}]
     cfg["USERS_JSON"] = env("USERS_JSON")
     # ИИ-помощник магазина (Anthropic Claude)
     cfg["ANTHROPIC_API_KEY"] = env("ANTHROPIC_API_KEY")
@@ -63,29 +65,45 @@ BASE = "https://{}.amocrm.ru/api/v4".format(CFG.get("AMO_SUBDOMAIN", ""))
 # каждый пользователь: пароль -> {name, sections}. sections=["all"] = видит всё.
 # разделы: dash, crm, chats, prod, sales, clients, market, analytics, fin, ai, set
 def load_users():
+    """Возвращает два индекса:
+      users     — по паролю (обратная совместимость: вход только по паролю);
+      by_login  — по логину в нижнем регистре (вход логин+пароль).
+    Один и тот же объект пользователя кладём в оба индекса."""
     users = {}
+    by_login = {}
+    def _add(pw, info, login=""):
+        info = dict(info)
+        info["pw"] = pw
+        if login:
+            info["login"] = login
+            by_login[login.lower()] = info
+        if pw:
+            users[pw] = info
     owner = CFG.get("SITE_PASSWORD", "").strip()
     if owner:
-        users[owner] = {"name": "Владелец", "sections": ["all"]}
+        _add(owner, {"name": "Владелец", "sections": ["all"], "role": "all"},
+             CFG.get("OWNER_LOGIN", "").strip())
     raw = CFG.get("USERS_JSON", "").strip()
     if raw:
         try:
             for u in json.loads(raw):
                 pw = (u.get("pw") or "").strip()
-                if pw:
-                    users[pw] = {"name": u.get("name", "Сотрудник"),
-                                 "sections": u.get("sections", []),
-                                 "role": u.get("role", ""),
-                                 "department": u.get("department", ""),
-                                 "plan_day": u.get("plan_day", 0),
-                                 "salary_month": u.get("salary_month", 0),
-                                 "daily_rate": u.get("daily_rate", 0),
-                                 "bonus_month": u.get("bonus_month", 0)}
+                if not pw:
+                    continue
+                _add(pw, {"name": u.get("name", "Сотрудник"),
+                          "sections": u.get("sections", []),
+                          "role": u.get("role", ""),
+                          "department": u.get("department", ""),
+                          "plan_day": u.get("plan_day", 0),
+                          "salary_month": u.get("salary_month", 0),
+                          "daily_rate": u.get("daily_rate", 0),
+                          "bonus_month": u.get("bonus_month", 0)},
+                     (u.get("login") or "").strip())
         except Exception:
             pass
-    return users
+    return users, by_login
 
-USERS = load_users()
+USERS, USERS_BY_LOGIN = load_users()
 
 # какой раздел нужен для каждого data-эндпоинта (для проверки прав)
 SECTION_OF = [
@@ -940,10 +958,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def _user(self):
         # если пользователи не заданы вовсе — защита выключена (гость видит всё)
-        if not USERS:
+        if not USERS and not USERS_BY_LOGIN:
             return {"name": "Гость", "sections": ["all"]}
-        given = (self.headers.get("X-Auth") or "").strip()
-        return USERS.get(given)
+        pw = (self.headers.get("X-Auth") or "").strip()
+        login = (self.headers.get("X-Login") or "").strip().lower()
+        if login:                                  # вход логин+пароль
+            u = USERS_BY_LOGIN.get(login)
+            return u if (u and pw and u.get("pw") == pw) else None
+        return USERS.get(pw)                        # обратная совместимость: только пароль
 
     def _authed(self):
         return self._user() is not None
