@@ -785,9 +785,31 @@ def ai_answer(question, crm, history):
         return {"error": "Не удалось обратиться к ИИ: %s" % e}
 
 
+# ====== БАЗА ДАННЫХ (Supabase / Postgres, REST API) ======
+from urllib.parse import quote as _q
+
+COMPANY_ID = "bizmart"   # пока одна компания; мульти-тенант — позже (поле company_id уже заложено)
+
+def supa_on():
+    return bool(CFG.get("SUPABASE_URL") and CFG.get("SUPABASE_KEY"))
+
+def _supa(method, table, params="", body=None):
+    """Запрос к Supabase REST (PostgREST). Секретный ключ обходит RLS (полный доступ)."""
+    base = CFG.get("SUPABASE_URL", "").rstrip("/")
+    key = CFG.get("SUPABASE_KEY", "")
+    url = base + "/rest/v1/" + table + params
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
+    headers = {"apikey": key, "Authorization": "Bearer " + key,
+               "Content-Type": "application/json", "User-Agent": "Shturval/1.0"}
+    if method in ("POST", "PATCH", "PUT"):
+        headers["Prefer"] = "return=representation,resolution=merge-duplicates"
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
+    with urllib.request.urlopen(req, timeout=20) as r:
+        txt = r.read().decode("utf-8")
+        return json.loads(txt) if txt.strip() else []
+
 # ====== ЗАРПЛАТА / КАДРЫ ======
-# ВНИМАНИЕ: на бесплатном Render диск временный — данные сбрасываются при перезапуске.
-# Для постоянного хранения нужна база данных (следующий шаг).
+# Хранение: Supabase (постоянно). Файл — резервный вариант, если база не настроена.
 PAYROLL_FILE = os.path.join(HERE, "payroll.json")
 
 def _payroll_load():
@@ -804,6 +826,17 @@ def _payroll_save():
     except Exception:
         pass
 
+def payroll_upsert(rec):
+    """Сохранить запись зарплаты: в Supabase (постоянно) или в файл (резерв)."""
+    if supa_on():
+        try:
+            r = dict(rec); r.setdefault("company_id", COMPANY_ID); r.pop("updated_at", None)
+            _supa("POST", "payroll", "?on_conflict=company_id,name,month", r)
+            return
+        except Exception:
+            pass
+    _payroll_save()
+
 def _cur_month():
     lt = time.localtime(); return "%04d-%02d" % (lt.tm_year, lt.tm_mon)
 
@@ -811,8 +844,22 @@ def _today_str():
     lt = time.localtime(); return "%04d-%02d-%02d" % (lt.tm_year, lt.tm_mon, lt.tm_mday)
 
 def payroll_rec(name):
-    """Запись зарплаты сотрудника за текущий месяц (сбрасывается с новым месяцем)."""
+    """Запись зарплаты сотрудника за текущий месяц (помесячно). Источник — Supabase."""
     m = _cur_month()
+    if supa_on():
+        try:
+            rows = _supa("GET", "payroll",
+                         "?company_id=eq.%s&name=eq.%s&month=eq.%s&select=*"
+                         % (_q(COMPANY_ID), _q(name), _q(m)))
+            if rows:
+                return rows[0]
+            rec = {"company_id": COMPANY_ID, "name": name, "month": m,
+                   "present_days": 0, "advance": 0, "bonus": 0, "last_present": ""}
+            _supa("POST", "payroll", "", rec)
+            return rec
+        except Exception:
+            pass
+    # резерв: файл/память
     r = PAYROLL.get(name)
     if not r or r.get("month") != m:
         r = {"month": m, "present_days": 0, "advance": 0, "bonus": 0, "last_present": ""}
@@ -973,7 +1020,7 @@ class Handler(BaseHTTPRequestHandler):
                 r["bonus"] = round(float(r.get("bonus") or 0) + float(body.get("amount") or 0))
             else:
                 return self._send(400, {"error": "неизвестное действие"})
-            _payroll_save()
+            payroll_upsert(r)
             return self._send(200, {"ok": True, "view": payroll_view(tu)})
         self._send(404, {"error": "не найдено"})
 
