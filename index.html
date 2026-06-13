@@ -281,11 +281,12 @@
       <a data-tab="analytics"><span class="ico">📈</span> Аналитика</a>
       <a data-tab="fin"><span class="ico">💰</span> Финансы (1С)</a>
       <a data-tab="ai"><span class="ico">🤖</span> ИИ-помощник</a>
+      <a data-tab="hr"><span class="ico">🗓</span> Кадры</a>
       <a data-tab="staff"><span class="ico">🧑‍💼</span> Персонал</a>
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.1.0<br>База данных Supabase 🗄<br>зарплата хранится постоянно
+      Штурвал v3.2.0<br>Кадры 🗓: HR-менеджер, явка,<br>«не пришёл» + календарь
     </div>
   </aside>
 
@@ -426,6 +427,13 @@
     <!-- МОЙ ДЕНЬ — личный кабинет сотрудника -->
     <section id="tab-myday" class="hide">
       <div id="myday-body"></div>
+    </section>
+
+    <!-- КАДРЫ — HR-менеджер: явка, авансы, премии, календарь -->
+    <section id="tab-hr" class="hide">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">🗓 Отмечай, кто пришёл на работу. Зарплата сотрудника растёт за каждый отмеченный день.</div>
+      <div id="hr-status" class="note" style="margin-bottom:14px">⏳ Загружаю сотрудников…</div>
+      <div id="hr-body"></div>
     </section>
 
     <!-- ПЕРСОНАЛ — только для владельца -->
@@ -736,6 +744,7 @@
     fin      :["Финансы (1С)","Деньги, закуп и остатки из 1С"],
     ai       :["ИИ-помощник","Подсказки, прогнозы и чат по данным"],
     staff    :["Персонал","Сотрудники, роли и зоны ответственности"],
+    hr       :["Кадры","Явка, авансы и премии сотрудников"],
     set      :["Настройки","Доступы и интеграции"]
   };
   document.querySelectorAll('.nav a').forEach(link=>{
@@ -750,6 +759,7 @@
       if(tab==='crm') loadCRM();
       if(tab==='myday') renderMyDay();
       if(tab==='staff') loadStaff();
+      if(tab==='hr') loadHR();
       if(tab==='clients') renderClients();
       if(tab==='ai') aiInit();
       if(tab==='deals'){ renderBoard(); startDealsAuto(); }
@@ -815,6 +825,7 @@
       let show;
       if(t==='set'||t==='myday') show=true;        // «Настройки» и «Мой день» — всем
       else if(t==='staff') show=isOwner();         // «Персонал» — только владельцу
+      else if(t==='hr') show=isOwner()||USER.sections.indexOf('hr')>=0;  // «Кадры» — владелец и HR
       else show=canSee(t);
       a.style.display=show?'':'none';
       if(show && t!=='set' && !first) first=a;     // по умолчанию — первый рабочий раздел
@@ -1799,17 +1810,82 @@
       '<div class="note" style="margin-top:14px">➕ Чтобы добавить сотрудника (имя, пароль, <b>отдел</b>, <b>план/день</b>, <b>зарплата</b>, разделы) — напиши мне, я заведу его на сервере. Пароли тут не показываются 🔒.</div>';
     renderMoney();
   }
+  function hrRefresh(){
+    const hr=document.getElementById('tab-hr'); if(hr&&!hr.classList.contains('hide')){ loadHR(); return; }
+    loadStaff();
+  }
   async function hrMark(name,action){
     try{ await apiFetch('/api/payroll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action,name:name})},ONEC_BASE); }
     catch(e){ alert('Не удалось — сервер мог просыпаться, попробуй ещё раз.'); }
-    loadStaff();
+    hrRefresh();
   }
   async function hrAmount(name,action){
     const v=prompt((action==='advance'?'Аванс для ':'Премия для ')+name+' (сом):','');
     const amt=parseFloat((v||'').replace(/\s/g,'').replace(',','.')); if(!amt||amt<=0) return;
     try{ await apiFetch('/api/payroll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action,name:name,amount:amt})},ONEC_BASE); }
     catch(e){ alert('Не удалось — попробуй ещё раз.'); }
-    loadStaff();
+    hrRefresh();
+  }
+  // ===== Кабинет «Кадры» (HR-менеджер) =====
+  async function loadHR(){
+    const st=document.getElementById('hr-status');
+    try{
+      const r=await apiFetch('/api/payroll',{},ONEC_BASE); const d=await r.json();
+      const list=d.all||(d.me?[d.me]:[]);
+      renderHR(list); if(st) st.style.display='none';
+    }catch(e){ if(st){ st.style.display=''; st.innerHTML='Не удалось загрузить (сервер мог просыпаться). Обнови через минуту.'; } }
+  }
+  function jsn(s){ return (s||'').replace(/'/g,''); }
+  function renderHR(list){
+    const b=document.getElementById('hr-body'); if(!b) return;
+    const paid=(list||[]).filter(v=>v.salary_month||v.daily_rate);
+    if(!paid.length){ b.innerHTML='<div class="card"><div style="color:var(--muted);font-size:13px">Пока нет сотрудников с настроенной зарплатой. Скажи владельцу настроить — и они появятся тут.</div></div>'; return; }
+    b.innerHTML=paid.map(hrCard).join('');
+    renderMoney();
+  }
+  function hrCard(v){
+    const nm=jsn(v.name);
+    const presentBtn=v.marked_today
+      ? '<button class="btn" style="background:var(--green);color:#06121f" disabled>✓ был сегодня</button>'
+      : '<button class="btn" onclick="hrMark(\''+nm+'\',\'present\')">✅ Был сегодня</button>';
+    const absentBtn=v.marked_absent_today
+      ? '<button class="btn" style="background:var(--red);color:#fff" disabled>✗ не пришёл</button>'
+      : '<button class="btn ghost" onclick="hrMark(\''+nm+'\',\'absent\')">❌ Не пришёл</button>';
+    return '<div class="card" style="margin-bottom:16px">'+
+      '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:center">'+
+        '<div><h3 style="margin:0">'+esc(v.name)+'</h3><div style="font-size:12px;color:var(--muted)">'+esc(v.role||'Сотрудник')+(v.department?' · '+esc(v.department):'')+'</div></div>'+
+        '<div style="text-align:right;font-size:13px;color:var(--muted)">Отработано: <b style="color:var(--text)">'+v.present_days+'</b> дн · К выплате: <b style="color:var(--text)"><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span></b></div>'+
+      '</div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'+
+        presentBtn+absentBtn+
+        '<button class="btn ghost" onclick="hrMark(\''+nm+'\',\'unpresent\')">↩ снять отметку</button>'+
+        '<button class="btn ghost" onclick="hrAmount(\''+nm+'\',\'advance\')">💸 + аванс</button>'+
+        '<button class="btn ghost" onclick="hrAmount(\''+nm+'\',\'bonus\')">🎁 + премия</button>'+
+      '</div>'+
+      '<div style="font-size:12px;color:var(--muted);margin-top:7px">Аванс: <span class="money" data-som="'+v.advance+'">'+fmt(v.advance)+'</span> · Премия: <span class="money" data-som="'+v.bonus+'">'+fmt(v.bonus)+'</span></div>'+
+      hrCalendar(v.days||{})+
+    '</div>';
+  }
+  function hrCalendar(days){
+    const now=new Date(); const y=now.getFullYear(), mo=now.getMonth();
+    const dim=new Date(y,mo+1,0).getDate();
+    const pad=(new Date(y,mo,1).getDay()+6)%7;   // понедельник первым
+    const wd=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].map(w=>'<div style="font-size:10px;color:var(--muted);text-align:center">'+w+'</div>').join('');
+    let cells=''; for(let i=0;i<pad;i++) cells+='<div></div>';
+    const td=now.getDate();
+    for(let d=1;d<=dim;d++){
+      const ds=y+'-'+String(mo+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+      const stt=days[ds];
+      const bg= stt==='p'?'var(--green)': stt==='a'?'var(--red)':'var(--panel2)';
+      const cl= stt?'#06121f':'var(--muted)';
+      const ring= d===td?';box-shadow:0 0 0 2px var(--accent)':'';
+      cells+='<div title="'+ds+'" style="height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;background:'+bg+';color:'+cl+ring+'">'+d+'</div>';
+    }
+    const mName=now.toLocaleDateString('ru-RU',{month:'long',year:'numeric'});
+    return '<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">'+
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">📅 Календарь — '+mName+'</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">'+wd+cells+'</div>'+
+      '<div style="display:flex;gap:14px;margin-top:8px;font-size:11px;color:var(--muted)"><span>🟩 пришёл</span><span>🟥 не пришёл</span><span>⬜ не отмечен</span></div></div>';
   }
   function dropChatToStage(status){
     if(!dragChat) return; const nm=dragChat.name; dragChat=null;

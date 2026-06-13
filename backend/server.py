@@ -834,7 +834,13 @@ def payroll_upsert(rec):
             _supa("POST", "payroll", "?on_conflict=company_id,name,month", r)
             return
         except Exception:
-            pass
+            try:   # вдруг колонка days ещё не добавлена — сохраним без неё
+                r2 = dict(rec); r2.setdefault("company_id", COMPANY_ID)
+                r2.pop("updated_at", None); r2.pop("days", None)
+                _supa("POST", "payroll", "?on_conflict=company_id,name,month", r2)
+                return
+            except Exception:
+                pass
     _payroll_save()
 
 def _cur_month():
@@ -872,19 +878,26 @@ def user_by_name(name):
             return v
     return None
 
+def _present_in_month(days, m):
+    return sum(1 for d, st in (days or {}).items() if isinstance(d, str) and d[:7] == m and st == "p")
+
 def payroll_view(user):
     name = user.get("name", "")
     r = payroll_rec(name)
+    days = r.get("days") or {}
+    m = _cur_month(); today = _today_str()
+    pd = _present_in_month(days, m) if days else int(r.get("present_days") or 0)
     sal = float(user.get("salary_month") or 0)
     rate = float(user.get("daily_rate") or 0)
     if rate <= 0 and sal > 0:
         rate = round(sal / 26.0)            # ~26 рабочих дней в месяце
-    accrued = round(r["present_days"] * rate)
+    accrued = round(pd * rate)
+    bonus = float(r.get("bonus") or 0); adv = float(r.get("advance") or 0)
     return {"name": name, "role": user.get("role", ""), "department": user.get("department", ""),
             "salary_month": sal, "daily_rate": rate, "bonus_month": float(user.get("bonus_month") or 0),
-            "present_days": r["present_days"], "accrued": accrued, "bonus": r["bonus"],
-            "advance": r["advance"], "to_receive": round(accrued + r["bonus"] - r["advance"]),
-            "marked_today": r.get("last_present") == _today_str()}
+            "present_days": pd, "accrued": accrued, "bonus": bonus,
+            "advance": adv, "to_receive": round(accrued + bonus - adv), "days": days,
+            "marked_today": days.get(today) == "p", "marked_absent_today": days.get(today) == "a"}
 
 def payroll_all():
     seen = set(); out = []
@@ -995,8 +1008,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, ai_answer(q, body.get("crm"), body.get("history")))
         if self.path.startswith("/api/payroll"):
             u = self._user()
-            if not (u and "all" in u.get("sections", [])):
-                return self._send(403, {"error": "Только владелец/HR может менять зарплаты"})
+            secs = u.get("sections", []) if u else []
+            if not (u and ("all" in secs or "hr" in secs)):   # владелец или HR-менеджер
+                return self._send(403, {"error": "Только владелец/HR может отмечать явку и зарплаты"})
             try:
                 length = int(self.headers.get("Content-Length", 0))
                 body = json.loads(self.rfile.read(length) or b"{}")
@@ -1007,19 +1021,23 @@ class Handler(BaseHTTPRequestHandler):
             if not tu:
                 return self._send(400, {"error": "сотрудник не найден"})
             r = payroll_rec(name)
+            days = r.get("days") or {}
+            today = _today_str()
             if action == "present":
-                if r.get("last_present") == _today_str():
-                    return self._send(200, {"ok": True, "already": True, "view": payroll_view(tu)})
-                r["present_days"] += 1; r["last_present"] = _today_str()
-            elif action == "unpresent":      # отменить отметку «пришёл сегодня»
-                if r.get("last_present") == _today_str():
-                    r["present_days"] = max(0, r["present_days"] - 1); r["last_present"] = ""
+                days[today] = "p"
+            elif action == "absent":           # «не пришёл»
+                days[today] = "a"
+            elif action == "unpresent":        # снять отметку за сегодня
+                days.pop(today, None)
             elif action == "advance":
                 r["advance"] = round(float(r.get("advance") or 0) + float(body.get("amount") or 0))
             elif action == "bonus":
                 r["bonus"] = round(float(r.get("bonus") or 0) + float(body.get("amount") or 0))
             else:
                 return self._send(400, {"error": "неизвестное действие"})
+            r["days"] = days
+            r["present_days"] = _present_in_month(days, _cur_month())
+            r["last_present"] = today if days.get(today) == "p" else r.get("last_present", "")
             payroll_upsert(r)
             return self._send(200, {"ok": True, "view": payroll_view(tu)})
         self._send(404, {"error": "не найдено"})
@@ -1047,7 +1065,8 @@ class Handler(BaseHTTPRequestHandler):
             u = self._user()
             if not u:
                 return self._send(401, {"error": "вход"})
-            if "all" in u.get("sections", []):
+            secs = u.get("sections", [])
+            if "all" in secs or "hr" in secs:      # владелец и HR-менеджер видят всех
                 return self._send(200, {"all": payroll_all()})
             return self._send(200, {"me": payroll_view(u)})
         if self.path.startswith("/api/staff"):
