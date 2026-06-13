@@ -8,6 +8,14 @@
 import os, json, time, threading, urllib.request, urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+# Часовой пояс — Бишкек (UTC+6). Чтобы «сегодня», время сообщений, явка, касса
+# и отчёты считались по бишкекскому времени, а не по времени сервера (UTC).
+os.environ["TZ"] = "Asia/Bishkek"
+try:
+    time.tzset()
+except Exception:
+    pass
+
 # порт: локально 8787, на хостинге (Render и т.п.) берётся из переменной PORT
 PORT = int(os.environ.get("PORT", "8787"))
 HERE = os.path.dirname(os.path.abspath(__file__))
