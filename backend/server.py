@@ -350,7 +350,10 @@ def build_chat_messages(cid):
         # пропускаем пустые и служебные технические сообщения
         if not x or x.endswith("Label") or x.endswith("StatusLabel"):
             continue
-        msgs.append({"t": ("in" if m.get("side") == "client" else "out"), "x": x})
+        ts = m.get("createdAt") or 0
+        tm = time.strftime("%H:%M", time.localtime(ts)) if ts else ""
+        msgs.append({"t": ("in" if m.get("side") == "client" else "out"),
+                     "x": x, "ts": ts, "tm": tm, "id": m.get("id", "")})
     return {"msgs": msgs}
 
 # --- 1С (Yaros DataGate): товары, остатки, цены ---

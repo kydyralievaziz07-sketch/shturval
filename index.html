@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.3.2<br>время сервера — Бишкек (UTC+6)<br>«сегодня», явка, касса по местному
+      Штурвал v3.4.0<br>живой чат: обновление 5с, статус связи, время сообщений, ручное «↻ обновить»
     </div>
   </aside>
 
@@ -418,6 +418,7 @@
         <div class="ck-chats" id="cockpit-chats"></div>
         <div class="ck-convo">
           <div class="ck-head" id="ck-head">← Выберите клиента в списке слева</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 4px 4px"><span id="ck-upd" style="font-size:11px;color:var(--muted)"></span><button class="btn ghost" style="padding:2px 10px;font-size:12px" onclick="if(ckCurId)loadConvoMsgs(ckCurId,false)" title="Обновить переписку вручную">↻ обновить</button></div>
           <div class="msgs" id="ck-msgs"></div>
           <div class="replybox"><input id="ck-reply" placeholder="Ответить клиенту…" onkeydown="if(event.key==='Enter')ckSend()"><button class="btn ghost" onclick="openBotFix()" title="Отметить, что бот ответил неправильно">⚠️ Бот ошибся</button><button class="btn" onclick="ckSend()">Отправить</button></div>
         </div>
@@ -1274,10 +1275,10 @@
     const nearBottom = box.scrollHeight-box.scrollTop-box.clientHeight < 80;
     if(id){
       let msgs=[];
-      try{ const r=await apiFetch('/api/chat?id='+encodeURIComponent(id),{},ONEC_BASE); if(r.ok){ const d=await r.json(); msgs=d.msgs||[]; } }catch(e){}
-      box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+m.t+'">'+linkify(m.x)+'</div>').join(''):'<div style="color:var(--muted);font-size:12px">Нет сообщений</div>';
+      try{ const r=await apiFetch('/api/chat?id='+encodeURIComponent(id)+'&_='+Date.now(),{},ONEC_BASE); if(r.ok){ const d=await r.json(); msgs=d.msgs||[]; } }catch(e){}
+      box.innerHTML=msgs.length?msgs.map(bubbleHTML).join(''):'<div style="color:var(--muted);font-size:12px">Нет сообщений</div>';
     }else{
-      box.innerHTML=(fallbackMsgs||[]).map(m=>'<div class="bubble '+m.t+'">'+linkify(m.x)+'</div>').join('');
+      box.innerHTML=(fallbackMsgs||[]).map(bubbleHTML).join('');
     }
     // при открытии чата или если был внизу — крутим вниз; иначе оставляем позицию чтения
     box.scrollTop = (switching||nearBottom) ? box.scrollHeight : prevTop;
@@ -1519,20 +1520,29 @@
   }
   function setAmount(v){ if(!ckCurName) return; const d=ensureDeal(ckCurName); d.amount=parseFloat(v)||0; crmPersist(); renderFunnel(); renderCrmStats(); renderCrmDash(); renderLeft(); }
   let convoAutoTimer=null;
+  function nowHM(){ const d=new Date(); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)+':'+('0'+d.getSeconds()).slice(-2); }
+  function bubbleHTML(m){ return '<div class="bubble '+m.t+'">'+linkify(m.x)+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>'; }
   async function loadConvoMsgs(id, silent){
-    const box=document.getElementById('ck-msgs'); if(!box) return;
+    const box=document.getElementById('ck-msgs'); if(!box||!id) return;
+    const upd=document.getElementById('ck-upd');
     if(!silent) box.innerHTML='<div style="color:var(--muted);padding:10px">Загрузка…</div>';
     try{
-      const r=await apiFetch('/api/chat?id='+encodeURIComponent(id),{},ONEC_BASE); const d=await r.json();
+      // &_=… — гарантированно свежий ответ, в обход любого кэша по дороге
+      const r=await apiFetch('/api/chat?id='+encodeURIComponent(id)+'&_='+Date.now(),{},ONEC_BASE); const d=await r.json();
       if(id!==ckCurId) return;                         // успели переключить чат
       const msgs=d.msgs||[];
       const last=msgs.length?msgs[msgs.length-1]:null;
-      const sig=msgs.length+'|'+(last?last.t+':'+last.x:'');   // меняется при новом сообщении
-      if(box.dataset.sig===sig && silent) return;      // ничего нового — не дёргаем прокрутку
+      // сигнатура по id+времени последнего сообщения — меняется при ЛЮБОМ новом сообщении
+      const sig=msgs.length+'|'+(last?((last.id||last.ts||'')+':'+last.t+':'+last.x):'');
+      if(box.dataset.sig===sig && silent){ if(upd) upd.textContent='🟢 обновлено '+nowHM(); return; }
       box.dataset.sig=sig;
-      box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+m.t+'">'+linkify(m.x)+'</div>').join(''):'<div style="color:var(--muted);padding:10px">Нет сообщений</div>';
+      box.innerHTML=msgs.length?msgs.map(bubbleHTML).join(''):'<div style="color:var(--muted);padding:10px">Нет сообщений</div>';
       box.scrollTop=box.scrollHeight;
-    }catch(e){ if(!silent) box.innerHTML='<div style="color:var(--red);padding:10px">Не удалось загрузить (сервер мог просыпаться)</div>'; }
+      if(upd) upd.textContent='🟢 обновлено '+nowHM();
+    }catch(e){
+      if(upd) upd.textContent='🟡 сервер просыпается… повтор через 5с';
+      if(!silent) box.innerHTML='<div style="color:var(--muted);padding:10px">⏳ Сервер просыпается (до минуты). Новые сообщения появятся сами — подожди немного.</div>';
+    }
   }
   function startConvoAuto(){           // живое обновление открытого диалога
     if(convoAutoTimer) return;
@@ -1540,7 +1550,7 @@
       const dt=document.getElementById('tab-deals');
       if(!dt||dt.classList.contains('hide')||!ckCurId) return;
       loadConvoMsgs(ckCurId, true);
-    }, 8000);
+    }, 5000);
   }
   async function openConvo(c){
     ckCurId=c.id; ckCurName=c.name; renderLeft(); ckHead();
