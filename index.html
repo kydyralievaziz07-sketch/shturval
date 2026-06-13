@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.2.2<br>фикс: сервер читает ключи Supabase<br>(зарплата пишется в базу)
+      Штурвал v3.3.0<br>CRM-чат: живое обновление +<br>статус отправки ✓/⚠️
     </div>
   </aside>
 
@@ -1518,18 +1518,54 @@
       (ckCurName?'<span style="display:flex;align-items:center;gap:5px;font-size:13px">💰 <input type="number" value="'+(deal?Math.round(dealAmount(deal)):0)+'" placeholder="сумма счёта" style="width:120px;padding:5px 8px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text)" onchange="setAmount(this.value)"> сом</span>':'');
   }
   function setAmount(v){ if(!ckCurName) return; const d=ensureDeal(ckCurName); d.amount=parseFloat(v)||0; crmPersist(); renderFunnel(); renderCrmStats(); renderCrmDash(); renderLeft(); }
+  let convoAutoTimer=null;
+  async function loadConvoMsgs(id, silent){
+    const box=document.getElementById('ck-msgs'); if(!box) return;
+    if(!silent) box.innerHTML='<div style="color:var(--muted);padding:10px">Загрузка…</div>';
+    try{
+      const r=await apiFetch('/api/chat?id='+encodeURIComponent(id),{},ONEC_BASE); const d=await r.json();
+      if(id!==ckCurId) return;                         // успели переключить чат
+      const msgs=d.msgs||[];
+      const sig=msgs.length+'';
+      if(box.dataset.sig===sig && silent) return;      // ничего нового — не дёргаем прокрутку
+      box.dataset.sig=sig;
+      box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+m.t+'">'+linkify(m.x)+'</div>').join(''):'<div style="color:var(--muted);padding:10px">Нет сообщений</div>';
+      box.scrollTop=box.scrollHeight;
+    }catch(e){ if(!silent) box.innerHTML='<div style="color:var(--red);padding:10px">Не удалось загрузить (сервер мог просыпаться)</div>'; }
+  }
+  function startConvoAuto(){           // живое обновление открытого диалога
+    if(convoAutoTimer) return;
+    convoAutoTimer=setInterval(()=>{
+      const dt=document.getElementById('tab-deals');
+      if(!dt||dt.classList.contains('hide')||!ckCurId) return;
+      loadConvoMsgs(ckCurId, true);
+    }, 8000);
+  }
   async function openConvo(c){
     ckCurId=c.id; ckCurName=c.name; renderLeft(); ckHead();
-    const box=document.getElementById('ck-msgs'); box.innerHTML='<div style="color:var(--muted);padding:10px">Загрузка…</div>';
-    try{ const r=await apiFetch('/api/chat?id='+encodeURIComponent(c.id),{},ONEC_BASE); const d=await r.json();
-      box.innerHTML=(d.msgs||[]).map(m=>'<div class="bubble '+m.t+'">'+linkify(m.x)+'</div>').join('')||'<div style="color:var(--muted);padding:10px">Нет сообщений</div>'; box.scrollTop=box.scrollHeight;
-    }catch(e){ box.innerHTML='<div style="color:var(--red);padding:10px">Не удалось загрузить</div>'; }
+    const box=document.getElementById('ck-msgs'); if(box) box.dataset.sig='';
+    await loadConvoMsgs(c.id, false);
+    startConvoAuto();
   }
-  function ckSend(){
-    const inp=document.getElementById('ck-reply'); const t=inp.value.trim(); if(!t||!ckCurId) return; inp.value='';
-    const box=document.getElementById('ck-msgs'); box.insertAdjacentHTML('beforeend','<div class="bubble out">'+esc(t)+'</div>'); box.scrollTop=box.scrollHeight;
-    const d=findDealByName(ckCurName); if(d){ logActivity(d.client_id,d.id,'сообщение','Ответ: '+t); crmPersist(); }
-    apiFetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chatId:ckCurId,text:t})},ONEC_BASE).catch(()=>{});
+  async function ckSend(){
+    const inp=document.getElementById('ck-reply'); const t=inp.value.trim(); if(!t) return;
+    if(!ckCurId){ alert('Сначала выбери чат в списке слева.'); return; }
+    inp.value='';
+    const box=document.getElementById('ck-msgs');
+    const bid='b'+Date.now();
+    box.insertAdjacentHTML('beforeend','<div class="bubble out" id="'+bid+'">'+esc(t)+' <span style="opacity:.6;font-size:11px">⏳</span></div>'); box.scrollTop=box.scrollHeight;
+    const dl=findDealByName(ckCurName); if(dl){ logActivity(dl.client_id,dl.id,'сообщение','Ответ: '+t); crmPersist(); }
+    let ok=false, errMsg='';
+    for(let i=1;i<=3 && !ok;i++){
+      try{
+        const r=await apiFetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chatId:ckCurId,text:t})},ONEC_BASE);
+        const res=await r.json(); ok=!!(res&&res.ok); if(!ok&&res&&res.error){ errMsg=res.error; break; }
+      }catch(e){ await new Promise(res=>setTimeout(res,2000)); }   // сервер просыпается — повтор
+    }
+    const b=document.getElementById(bid);
+    if(b){ b.innerHTML=esc(t)+' <span style="opacity:.7;font-size:11px">'+(ok?'✓ отправлено':'⚠️ не доставлено')+'</span>'; if(!ok) b.style.background='var(--red)'; }
+    if(ok) setTimeout(()=>loadConvoMsgs(ckCurId, true), 1500);
+    else if(errMsg) console.log('send error:', errMsg);
   }
   function openDealForClient(){ if(!ckCurName) return; const d=ensureDeal(ckCurName); crmPersist(); openDeal(d.id); }
   // --- Обучение бота: сбор исправлений ---
