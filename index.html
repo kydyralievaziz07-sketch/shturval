@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.3.0<br>CRM-чат: живое обновление +<br>статус отправки ✓/⚠️
+      Штурвал v3.3.1<br>фикс: новые сообщения клиента<br>появляются сами (и в длинных чатах)
     </div>
   </aside>
 
@@ -1526,7 +1526,8 @@
       const r=await apiFetch('/api/chat?id='+encodeURIComponent(id),{},ONEC_BASE); const d=await r.json();
       if(id!==ckCurId) return;                         // успели переключить чат
       const msgs=d.msgs||[];
-      const sig=msgs.length+'';
+      const last=msgs.length?msgs[msgs.length-1]:null;
+      const sig=msgs.length+'|'+(last?last.t+':'+last.x:'');   // меняется при новом сообщении
       if(box.dataset.sig===sig && silent) return;      // ничего нового — не дёргаем прокрутку
       box.dataset.sig=sig;
       box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+m.t+'">'+linkify(m.x)+'</div>').join(''):'<div style="color:var(--muted);padding:10px">Нет сообщений</div>';
