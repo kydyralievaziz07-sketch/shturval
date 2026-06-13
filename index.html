@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.7.0<br>Кадры: планы по отделам (план/факт/% выполнения); вкладка «Персонал» убрана
+      Штурвал v3.8.0<br>скорость: зарплата/планы одним запросом (было 13с → ~1с), кнопки мгновенные
     </div>
   </aside>
 
@@ -1857,37 +1857,46 @@
     renderMoney();
   }
   function hrRefresh(){ loadHR(); }
-  // POST с авто-повтором, пока сервер «просыпается» (до 4 попыток)
+  function hrFind(login){ return HR_LIST.findIndex(v=>(v.login||v.name)===login); }
+  // POST с авто-повтором, пока сервер «просыпается». Возвращает ответ сервера или null.
   async function hrPost(body){
     for(let i=1;i<=4;i++){
       try{ const r=await apiFetch('/api/payroll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},ONEC_BASE);
-        const d=await r.json(); if(d&&d.error) throw new Error(d.error); return true; }
-      catch(e){ if(e&&e.message==='forbidden'){ alert('Нет прав на это действие.'); return false; }
-        await new Promise(res=>setTimeout(res,2500)); }   // подождать и повторить
+        const d=await r.json(); if(d&&d.error) throw new Error(d.error); return d; }
+      catch(e){ if(e&&e.message==='forbidden'){ alert('Нет прав на это действие.'); return null; }
+        await new Promise(res=>setTimeout(res,2000)); }   // подождать и повторить
     }
-    return false;
+    return null;
   }
   async function hrMark(login,action){
-    const ok=await hrPost({action:action,login:login});
-    if(!ok) alert('Сервер просыпается — подожди минуту и нажми ещё раз.');
-    hrRefresh();
+    const i=hrFind(login);
+    if(i>=0){                                   // оптимистично — мгновенная реакция кнопки
+      const v=HR_LIST[i];
+      if(action==='present'){ v.marked_today=true; v.marked_absent_today=false; }
+      else if(action==='absent'){ v.marked_absent_today=true; v.marked_today=false; }
+      else if(action==='unpresent'){ v.marked_today=false; v.marked_absent_today=false; }
+      renderHR();
+    }
+    const d=await hrPost({action:action,login:login});
+    if(!d){ alert('Сервер просыпается — подожди минуту и нажми ещё раз.'); return loadHR(); }
+    if(d.view && i>=0){ HR_LIST[i]=d.view; renderHR(); }    // точные цифры с сервера
   }
   async function hrAmount(login,action){
     const v=prompt((action==='advance'?'Аванс (сом):':'Премия (сом):'),'');
     const amt=parseFloat((v||'').replace(/\s/g,'').replace(',','.')); if(!amt||amt<=0) return;
-    const ok=await hrPost({action:action,login:login,amount:amt});
-    if(!ok) alert('Не сохранилось — подожди минуту и попробуй ещё раз.');
-    hrRefresh();
+    const d=await hrPost({action:action,login:login,amount:amt});
+    if(!d){ alert('Не сохранилось — подожди минуту и попробуй ещё раз.'); return loadHR(); }
+    const i=hrFind(login); if(d.view && i>=0){ HR_LIST[i]=d.view; renderHR(); }
   }
   // ===== Кабинет «Кадры» (HR-менеджер) =====
-  let DEPT_PLANS=[];
+  let DEPT_PLANS=[], HR_LIST=[], hrClosed=new Set();
   async function loadHR(){
     const st=document.getElementById('hr-status');
     try{
       const r=await apiFetch('/api/payroll',{},ONEC_BASE); const d=await r.json();
-      const list=d.all||(d.me?[d.me]:[]);
+      HR_LIST=d.all||(d.me?[d.me]:[]);
       try{ const rp=await apiFetch('/api/deptplan',{},ONEC_BASE); const dp=await rp.json(); DEPT_PLANS=dp.departments||[]; }catch(_){ DEPT_PLANS=[]; }
-      renderHR(list); if(st) st.style.display='none';
+      renderHR(); if(st) st.style.display='none';
     }catch(e){ if(st){ st.style.display=''; st.innerHTML='Не удалось загрузить (сервер мог просыпаться). Обнови через минуту.'; } }
   }
   // --- Планы по отделам ---
@@ -1927,12 +1936,13 @@
   }
   function jsn(s){ return (s||'').replace(/'/g,''); }
   const DEPT_ORDER=['Детский','1 этаж','Касса','Склад','Мужской','Женский','Онлайн','Маркетплейс','Обувь','Мобилограф'];
-  function hrToggle(id){ const el=document.getElementById(id); if(!el) return; const open=el.style.display==='none'; el.style.display=open?'':'none'; const c=document.getElementById(id+'-c'); if(c) c.textContent=open?'▼':'▶'; }
-  function hrAllDepts(open){ document.querySelectorAll('[id^="dept-"]').forEach(el=>{ if(/^dept-\d+$/.test(el.id)){ el.style.display=open?'':'none'; const c=document.getElementById(el.id+'-c'); if(c) c.textContent=open?'▼':'▶'; } }); }
-  function renderHR(list){
+  function hrToggle(id){ const el=document.getElementById(id); if(!el) return; el.style.display=el.style.display==='none'?'':'none'; }
+  function hrDept(dep){ if(hrClosed.has(dep)) hrClosed.delete(dep); else hrClosed.add(dep); renderHR(); }
+  function hrAllDepts(open){ hrClosed=new Set(); if(!open){ HR_LIST.forEach(v=>hrClosed.add(v.department||'Без отдела')); } renderHR(); }
+  function renderHR(){
     const b=document.getElementById('hr-body'); if(!b) return;
-    const paid=(list||[]).filter(v=>v.salary_month||v.daily_rate);
-    if(!paid.length){ b.innerHTML='<div class="card"><div style="color:var(--muted);font-size:13px">Пока нет сотрудников с настроенной зарплатой. Скажи владельцу настроить — и они появятся тут.</div></div>'; return; }
+    const paid=(HR_LIST||[]).filter(v=>v.salary_month||v.daily_rate);
+    if(!paid.length){ b.innerHTML='<div id="hr-plans"></div><div class="card"><div style="color:var(--muted);font-size:13px">Пока нет сотрудников с настроенной зарплатой.</div></div>'; renderDeptPlans(); return; }
     // группируем по отделам
     const groups={}; paid.forEach(v=>{ const d=v.department||'Без отдела'; (groups[d]=groups[d]||[]).push(v); });
     const order=DEPT_ORDER.filter(d=>groups[d]).concat(Object.keys(groups).filter(d=>DEPT_ORDER.indexOf(d)<0));
@@ -1948,15 +1958,15 @@
         '<button class="btn ghost" style="font-size:12px;padding:5px 10px" onclick="hrAllDepts(false)">▶ свернуть все</button>'+
       '</div>';
     order.forEach((d,di)=>{
-      const arr=groups[d]; const bid='dept-'+di;
+      const arr=groups[d]; const closed=hrClosed.has(d);
       const dpay=arr.reduce((a,v)=>a+(+v.to_receive||0),0);
       const here=arr.filter(v=>v.marked_today).length;
       html+='<div class="card" style="margin-bottom:12px;padding:0;overflow:hidden">'+
-        '<div onclick="hrToggle(\''+bid+'\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:13px 16px;background:var(--panel2)">'+
+        '<div onclick="hrDept(\''+jsn(d)+'\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:13px 16px;background:var(--panel2)">'+
           '<div><b style="font-size:15px">🏬 '+esc(d)+'</b> <span style="color:var(--muted);font-size:13px">· '+arr.length+' чел. · сегодня ✓'+here+'</span></div>'+
-          '<div style="font-size:13px;color:var(--muted);white-space:nowrap">к выплате <b style="color:var(--text)"><span class="money" data-som="'+dpay+'">'+fmt(dpay)+'</span></b> <span id="'+bid+'-c" style="margin-left:6px">▼</span></div>'+
+          '<div style="font-size:13px;color:var(--muted);white-space:nowrap">к выплате <b style="color:var(--text)"><span class="money" data-som="'+dpay+'">'+fmt(dpay)+'</span></b> <span style="margin-left:6px">'+(closed?'▶':'▼')+'</span></div>'+
         '</div>'+
-        '<div id="'+bid+'">'+arr.map((v,i)=>hrRow(v,bid+'-'+i)).join('')+'</div>'+
+        '<div'+(closed?' style="display:none"':'')+'>'+arr.map((v,i)=>hrRow(v,'cal-'+di+'-'+i)).join('')+'</div>'+
       '</div>';
     });
     b.innerHTML=html; renderDeptPlans(); renderMoney();

@@ -927,10 +927,10 @@ def user_by_name(name):
 def _present_in_month(days, m):
     return sum(1 for d, st in (days or {}).items() if isinstance(d, str) and d[:7] == m and st == "p")
 
-def payroll_view(user):
+def payroll_view(user, rec=None):
     name = user.get("name", "")
     key = _pkey(user)                       # зарплата ведётся по логину (уникален)
-    r = payroll_rec(key)
+    r = rec if rec is not None else payroll_rec(key)
     days = r.get("days") or {}
     m = _cur_month(); today = _today_str()
     pd = _present_in_month(days, m) if days else int(r.get("present_days") or 0)
@@ -948,6 +948,18 @@ def payroll_view(user):
             "marked_today": days.get(today) == "p", "marked_absent_today": days.get(today) == "a"}
 
 def payroll_all():
+    # ВСЕ записи зарплаты за месяц — ОДНИМ запросом (а не по запросу на каждого: было N+1, ~13с)
+    recs = None
+    if supa_on():
+        recs = {}
+        try:
+            m = _cur_month()
+            rows = _supa("GET", "payroll",
+                         "?company_id=eq.%s&month=eq.%s&select=*" % (_q(COMPANY_ID), _q(m)))
+            for row in (rows or []):
+                recs[row.get("name")] = row
+        except Exception:
+            recs = None                     # не вышло — откат на поштучный режим
     seen = set(); out = []
     for v in all_users():
         if "all" in v.get("sections", []):  # владельца не показываем
@@ -955,7 +967,11 @@ def payroll_all():
         key = _pkey(v)
         if not key or key in seen:
             continue
-        seen.add(key); out.append(payroll_view(v))
+        seen.add(key)
+        if recs is not None:
+            out.append(payroll_view(v, recs.get(key) or {}))   # без обращения к базе
+        else:
+            out.append(payroll_view(v))
     return out
 
 # --- Планы по отделам (продажи/день) ---
@@ -1007,8 +1023,20 @@ def dept_plan_upsert(rec):
 
 def dept_plan_all():
     today = _today_str(); out = []
+    recs = None
+    if supa_on():
+        recs = {}
+        try:
+            rows = _supa("GET", "dept_plan", "?company_id=eq.%s&select=*" % _q(COMPANY_ID))
+            for row in (rows or []):
+                recs[row.get("department")] = row
+        except Exception:
+            recs = None
     for dep in _dept_list():
-        r = dept_plan_rec(dep)
+        if recs is not None:
+            r = recs.get(dep) or {"plan_day": DEFAULT_DEPT_PLAN, "facts": {}}
+        else:
+            r = dept_plan_rec(dep)
         plan = float(r.get("plan_day") or 0)
         facts = r.get("facts") or {}
         fact = float(facts.get(today) or 0)
@@ -1156,7 +1184,7 @@ class Handler(BaseHTTPRequestHandler):
             r["present_days"] = _present_in_month(days, _cur_month())
             r["last_present"] = today if days.get(today) == "p" else r.get("last_present", "")
             payroll_upsert(r)
-            return self._send(200, {"ok": True, "view": payroll_view(tu)})
+            return self._send(200, {"ok": True, "view": payroll_view(tu, r)})
         if self.path.startswith("/api/deptplan"):
             u = self._user(); secs = u.get("sections", []) if u else []
             if not (u and "all" in secs):          # менять план — только владелец
