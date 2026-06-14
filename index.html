@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.12.1<br>колокольчик «Требует внимания» скрыт у HR и сотрудников (только торговля)
+      Штурвал v3.13.0<br>отдел «Администраторы», окна Аванс/Премия (редактируемые) и Календарь, отметка явки по дням
     </div>
   </aside>
 
@@ -715,6 +715,28 @@
     <div class="modal-foot">
       <button class="btn" onclick="applyBotFixes()">🚀 Применить к боту</button>
       <button class="btn ghost" onclick="document.getElementById('botlistbg').classList.remove('open')">Закрыть</button>
+    </div>
+  </div></div>
+
+  <!-- ОКНО: Аванс / Премия (редактирование суммы) -->
+  <div class="modal-bg" id="hrambg"><div class="modal" style="width:400px">
+    <h3 id="hra-title">Аванс</h3>
+    <div id="hra-sub" style="font-size:13px;color:var(--muted)"></div>
+    <label>Сумма, сом</label>
+    <input type="number" id="hra-input" placeholder="0" onkeydown="if(event.key==='Enter')hraSave()">
+    <div class="modal-foot">
+      <button class="btn" onclick="hraSave()">Сохранить</button>
+      <button class="btn ghost" onclick="closeHra()">Отмена</button>
+    </div>
+  </div></div>
+
+  <!-- ОКНО: Календарь явки -->
+  <div class="modal-bg" id="hrcalbg"><div class="modal" style="width:440px">
+    <h3 id="hrcal-title">📅 Календарь</h3>
+    <div id="hrcal-sub" style="font-size:12px;color:var(--muted);margin-bottom:14px"></div>
+    <div id="hrcal-body"></div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeHrCal()">Закрыть</button>
     </div>
   </div></div>
 
@@ -1656,11 +1678,13 @@
   function isMineDeal(d){ const n=USER.name||''; return !n||!d.owner||d.owner===n; }
   function renderMyDay(){
     const box=document.getElementById('myday-body'); if(!box) return;
-    // HR-менеджер не продаёт и не состоит в отделе — показываем только зарплату
+    // HR-менеджер и администраторы не продают — показываем только зарплату/дни
     const isHR=(USER.role==='hr')||((USER.sections||[]).indexOf('hr')>=0 && !isOwner());
-    if(isHR){
+    const isAdmin=(USER.department==='Администраторы');
+    if(isHR||isAdmin){
+      const sub=USER.role==='hr'?'HR-менеджер':(USER.department||'Администратор');
       box.innerHTML='<div class="card" style="margin-bottom:16px"><div style="font-size:18px;font-weight:700">👋 Привет, '+esc(USER.name||'коллега')+'!</div>'+
-        '<div style="color:var(--muted);font-size:13px;margin-top:3px">HR-менеджер</div></div>'+
+        '<div style="color:var(--muted);font-size:13px;margin-top:3px">'+esc(sub)+'</div></div>'+
         '<div id="myday-salary"></div>';
       renderMoney(); loadMyPayroll(); return;
     }
@@ -1733,8 +1757,15 @@
     const box=document.getElementById('myday-salary'); if(!box) return;
     let v=null;
     try{ const r=await apiFetch('/api/payroll',{},ONEC_BASE); const d=await r.json(); v=d.me||((d.all||[])[0]); }catch(e){}
-    if(!v || !v.salary_month){ box.innerHTML=''; return; }   // зарплата не настроена — блок не показываем
-    box.innerHTML='<div class="card" style="margin-top:16px"><h3>💼 Зарплата за '+new Date().toLocaleDateString("ru-RU",{month:"long"})+'</h3>'+
+    if(!v){ box.innerHTML=''; return; }
+    const mName=new Date().toLocaleDateString("ru-RU",{month:"long"});
+    if(!v.salary_month){     // оклад не задан (напр. администратор) — показываем только дни
+      box.innerHTML='<div class="card" style="margin-top:16px"><h3>🗓 Моя посещаемость — '+mName+'</h3>'+
+        '<div style="font-size:14px">Отработано дней: <b>'+(v.present_days||0)+'</b></div>'+
+        '<div style="font-size:11px;color:var(--muted);margin-top:8px">Дни отмечает HR-менеджер. Оклад пока не задан.</div></div>';
+      return;
+    }
+    box.innerHTML='<div class="card" style="margin-top:16px"><h3>💼 Зарплата за '+mName+'</h3>'+
       '<div style="font-size:12px;color:var(--muted);margin-bottom:12px">Отработано дней: <b style="color:var(--text)">'+v.present_days+'</b> · ставка '+fmt(v.daily_rate)+' сом/день</div>'+
       payBar('💰 Зарплата (накоплено)',v.accrued,v.salary_month,'#39d98a')+
       payBar('🎁 Премия',v.bonus,v.bonus_month,'#a78bfa')+
@@ -1917,12 +1948,55 @@
     if(!d){ alert('Сервер просыпается — подожди минуту и нажми ещё раз.'); return loadHR(); }
     if(d.view && i>=0){ HR_LIST[i]=d.view; renderHR(); }    // точные цифры с сервера
   }
-  async function hrAmount(login,action){
-    const v=prompt((action==='advance'?'Аванс (сом):':'Премия (сом):'),'');
-    const amt=parseFloat((v||'').replace(/\s/g,'').replace(',','.')); if(!amt||amt<=0) return;
-    const d=await hrPost({action:action,login:login,amount:amt});
+  // --- окно «Аванс / Премия» (с редактированием: показывает текущее, можно исправить) ---
+  let hraLogin=null, hraKind='advance';
+  function openHra(login,kind){
+    const v=HR_LIST[hrFind(login)]; if(!v) return;
+    hraLogin=login; hraKind=kind;
+    const cur=kind==='advance'?(v.advance||0):(v.bonus||0);
+    document.getElementById('hra-title').textContent=(kind==='advance'?'💸 Аванс':'🎁 Премия')+' — '+v.name;
+    document.getElementById('hra-sub').textContent='Текущее значение: '+fmt(cur)+' сом. Впиши правильную сумму и сохрани.';
+    const inp=document.getElementById('hra-input'); inp.value=cur||'';
+    document.getElementById('hrambg').classList.add('open');
+    setTimeout(()=>{ inp.focus(); inp.select(); },60);
+  }
+  function closeHra(){ document.getElementById('hrambg').classList.remove('open'); hraLogin=null; }
+  async function hraSave(){
+    if(!hraLogin) return;
+    const raw=document.getElementById('hra-input').value;
+    const amt=parseFloat((raw||'').replace(/\s/g,'').replace(',','.'));
+    if(isNaN(amt)||amt<0){ alert('Впиши сумму (число, можно 0).'); return; }
+    const action=hraKind==='advance'?'set_advance':'set_bonus';
+    const d=await hrPost({action:action,login:hraLogin,amount:amt});
     if(!d){ alert('Не сохранилось — подожди минуту и попробуй ещё раз.'); return loadHR(); }
-    const i=hrFind(login); if(d.view && i>=0){ HR_LIST[i]=d.view; renderHR(); }
+    const i=hrFind(hraLogin); if(d.view && i>=0){ HR_LIST[i]=d.view; renderHR(); }
+    closeHra();
+  }
+  // --- окно «Календарь явки» (отдельное, по центру; клик по дню — пришёл/не пришёл/снять) ---
+  let hrCalLogin=null;
+  function openHrCal(login){
+    const v=HR_LIST[hrFind(login)]; if(!v) return;
+    hrCalLogin=login;
+    document.getElementById('hrcal-title').textContent='📅 Календарь — '+v.name;
+    const mName=new Date().toLocaleDateString('ru-RU',{month:'long',year:'numeric'});
+    document.getElementById('hrcal-sub').textContent=mName+' · нажми на день: 1-й клик — пришёл 🟩, 2-й — не пришёл 🟥, 3-й — снять';
+    hrCalBody(v);
+    document.getElementById('hrcalbg').classList.add('open');
+  }
+  function hrCalBody(v){ const b=document.getElementById('hrcal-body'); if(b) b.innerHTML=hrCalendar(v.days||{}, true); }
+  function closeHrCal(){ document.getElementById('hrcalbg').classList.remove('open'); hrCalLogin=null; }
+  async function hrCalMark(ds){
+    if(!hrCalLogin) return;
+    const i=hrFind(hrCalLogin); const v=HR_LIST[i]; if(!v) return;
+    v.days=v.days||{};
+    const cur=v.days[ds];
+    const action= cur==='p'?'absent' : cur==='a'?'unpresent' : 'present';
+    // оптимистично — мгновенно перекрасить день
+    if(action==='present') v.days[ds]='p'; else if(action==='absent') v.days[ds]='a'; else delete v.days[ds];
+    hrCalBody(v);
+    const d=await hrPost({action:action,login:hrCalLogin,date:ds});
+    if(!d){ alert('Не сохранилось — попробуй ещё раз.'); return loadHR(); }
+    if(d.view){ HR_LIST[i]=d.view; hrCalBody(d.view); renderHR(); }
   }
   // ===== Кабинет «Кадры» (HR-менеджер) =====
   let DEPT_PLANS=[], HR_LIST=[], hrClosed=new Set();
@@ -1972,14 +2046,14 @@
       rows+'</div>';
   }
   function jsn(s){ return (s||'').replace(/'/g,''); }
-  const DEPT_ORDER=['Детский','1 этаж','Касса','Склад','Мужской','Женский','Онлайн','Маркетплейс','Обувь','Мобилограф'];
+  const DEPT_ORDER=['Администраторы','Детский','1 этаж','Касса','Склад','Мужской','Женский','Онлайн','Маркетплейс','Обувь','Мобилограф'];
   function hrToggle(id){ const el=document.getElementById(id); if(!el) return; el.style.display=el.style.display==='none'?'':'none'; }
   function hrDept(dep){ if(hrClosed.has(dep)) hrClosed.delete(dep); else hrClosed.add(dep); renderHR(); }
   function hrAllDepts(open){ hrClosed=new Set(); if(!open){ HR_LIST.forEach(v=>hrClosed.add(v.department||'Без отдела')); } renderHR(); }
   function renderHR(){
     const b=document.getElementById('hr-body'); if(!b) return;
-    const paid=(HR_LIST||[]).filter(v=>v.salary_month||v.daily_rate);
-    if(!paid.length){ b.innerHTML='<div id="hr-plans"></div><div class="card"><div style="color:var(--muted);font-size:13px">Пока нет сотрудников с настроенной зарплатой.</div></div>'; renderDeptPlans(); return; }
+    const paid=(HR_LIST||[]);                       // показываем всех (в т.ч. с окладом 0 — отмечать дни)
+    if(!paid.length){ b.innerHTML='<div id="hr-plans"></div><div class="card"><div style="color:var(--muted);font-size:13px">Сотрудников пока нет.</div></div>'; renderDeptPlans(); return; }
     // группируем по отделам
     const groups={}; paid.forEach(v=>{ const d=v.department||'Без отдела'; (groups[d]=groups[d]||[]).push(v); });
     const order=DEPT_ORDER.filter(d=>groups[d]).concat(Object.keys(groups).filter(d=>DEPT_ORDER.indexOf(d)<0));
@@ -2009,32 +2083,35 @@
     b.innerHTML=html; renderDeptPlans(); renderMoney();
   }
   function hrRow(v,rid){
-    const lg=jsn(v.login||v.name); const calId=rid+'-cal';
+    const lg=jsn(v.login||v.name);
     const presentBtn=v.marked_today
       ? '<button class="btn" style="padding:5px 10px;font-size:12px;background:var(--green);color:#06121f" onclick="hrMark(\''+lg+'\',\'unpresent\')">✓ был</button>'
       : '<button class="btn" style="padding:5px 10px;font-size:12px" onclick="hrMark(\''+lg+'\',\'present\')">Пришёл</button>';
     const absentBtn=v.marked_absent_today
       ? '<button class="btn" style="padding:5px 10px;font-size:12px;background:var(--red);color:#fff" onclick="hrMark(\''+lg+'\',\'unpresent\')">✗ не пришёл</button>'
       : '<button class="btn ghost" style="padding:5px 10px;font-size:12px" onclick="hrMark(\''+lg+'\',\'absent\')">Не пришёл</button>';
+    const payInfo=v.salary_month
+      ? '<div style="font-size:12px;color:var(--muted)">К выплате <b style="color:var(--text)"><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span></b>'+
+          ((v.advance||v.bonus)?(' <span style="opacity:.7">(ав '+fmt(v.advance)+' · пр '+fmt(v.bonus)+')</span>'):'')+'</div>'
+      : '<div style="font-size:12px;color:var(--muted)">оклад не задан</div>';
     return '<div style="border-top:1px solid var(--line);padding:10px 14px">'+
       '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">'+
         '<div style="min-width:150px"><b>'+esc(v.name)+'</b> <span style="color:var(--muted);font-size:12px">· '+v.present_days+' дн</span></div>'+
-        '<div style="font-size:12px;color:var(--muted)">К выплате <b style="color:var(--text)"><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span></b>'+
-          ((v.advance||v.bonus)?(' <span style="opacity:.7">(ав '+fmt(v.advance)+' · пр '+fmt(v.bonus)+')</span>'):'')+'</div>'+
+        payInfo+
         '<div style="display:flex;gap:6px;flex-wrap:wrap">'+presentBtn+absentBtn+
-          '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="hrAmount(\''+lg+'\',\'advance\')" title="Аванс">💸</button>'+
-          '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="hrAmount(\''+lg+'\',\'bonus\')" title="Премия">🎁</button>'+
-          '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="hrToggle(\''+calId+'\')" title="Календарь явки">📅</button>'+
+          '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHra(\''+lg+'\',\'advance\')" title="Аванс">💸 Аванс</button>'+
+          '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHra(\''+lg+'\',\'bonus\')" title="Премия">🎁 Премия</button>'+
+          '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHrCal(\''+lg+'\')" title="Календарь явки">📅 Календарь</button>'+
         '</div>'+
       '</div>'+
-      '<div id="'+calId+'" style="display:none">'+hrCalendar(v.days||{})+'</div>'+
     '</div>';
   }
-  function hrCalendar(days){
+  // календарь месяца. clickable=true → дни кликаются (отметка явки)
+  function hrCalendar(days, clickable){
     const now=new Date(); const y=now.getFullYear(), mo=now.getMonth();
     const dim=new Date(y,mo+1,0).getDate();
     const pad=(new Date(y,mo,1).getDay()+6)%7;   // понедельник первым
-    const wd=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].map(w=>'<div style="font-size:10px;color:var(--muted);text-align:center">'+w+'</div>').join('');
+    const wd=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].map(w=>'<div style="font-size:11px;color:var(--muted);text-align:center;padding:4px 0">'+w+'</div>').join('');
     let cells=''; for(let i=0;i<pad;i++) cells+='<div></div>';
     const td=now.getDate();
     for(let d=1;d<=dim;d++){
@@ -2043,13 +2120,11 @@
       const bg= stt==='p'?'var(--green)': stt==='a'?'var(--red)':'var(--panel2)';
       const cl= stt?'#06121f':'var(--muted)';
       const ring= d===td?';box-shadow:0 0 0 2px var(--accent)':'';
-      cells+='<div title="'+ds+'" style="height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;background:'+bg+';color:'+cl+ring+'">'+d+'</div>';
+      const click= clickable?(' style="cursor:pointer" onclick="hrCalMark(\''+ds+'\')"'):'';
+      cells+='<div title="'+ds+'"'+click+'><div style="height:38px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:13px;background:'+bg+';color:'+cl+ring+'">'+d+'</div></div>';
     }
-    const mName=now.toLocaleDateString('ru-RU',{month:'long',year:'numeric'});
-    return '<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">'+
-      '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">📅 Календарь — '+mName+'</div>'+
-      '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">'+wd+cells+'</div>'+
-      '<div style="display:flex;gap:14px;margin-top:8px;font-size:11px;color:var(--muted)"><span>🟩 пришёл</span><span>🟥 не пришёл</span><span>⬜ не отмечен</span></div></div>';
+    return '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px">'+wd+cells+'</div>'+
+      '<div style="display:flex;gap:16px;margin-top:12px;font-size:12px;color:var(--muted)"><span>🟩 пришёл</span><span>🟥 не пришёл</span><span>⬜ не отмечен</span></div>';
   }
   function dropChatToStage(status){
     if(!dragChat) return; const nm=dragChat.name; dragChat=null;

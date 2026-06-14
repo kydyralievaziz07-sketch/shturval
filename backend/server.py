@@ -1129,6 +1129,8 @@ def dept_plan_all():
         except Exception:
             recs = None
     for dep in _dept_list():
+        if dep == "Администраторы":      # админы не продают — плана нет
+            continue
         if recs is not None:
             r = recs.get(dep) or {"plan_day": DEFAULT_DEPT_PLAN, "facts": {}}
         else:
@@ -1264,16 +1266,25 @@ class Handler(BaseHTTPRequestHandler):
             r = payroll_rec(_pkey(tu))
             days = r.get("days") or {}
             today = _today_str()
+            # дата отметки: можно отметить любой день месяца (для календаря); по умолчанию сегодня
+            day = (body.get("date") or "").strip()
+            if not (len(day) == 10 and day[4] == "-" and day[7] == "-"):
+                day = today
+            amt = float(body.get("amount") or 0)
             if action == "present":
-                days[today] = "p"
+                days[day] = "p"
             elif action == "absent":           # «не пришёл»
-                days[today] = "a"
-            elif action == "unpresent":        # снять отметку за сегодня
-                days.pop(today, None)
-            elif action == "advance":
-                r["advance"] = round(float(r.get("advance") or 0) + float(body.get("amount") or 0))
-            elif action == "bonus":
-                r["bonus"] = round(float(r.get("bonus") or 0) + float(body.get("amount") or 0))
+                days[day] = "a"
+            elif action == "unpresent":        # снять отметку за день
+                days.pop(day, None)
+            elif action == "advance":          # ДОБАВИТЬ к авансу
+                r["advance"] = round(float(r.get("advance") or 0) + amt)
+            elif action == "bonus":            # ДОБАВИТЬ к премии
+                r["bonus"] = round(float(r.get("bonus") or 0) + amt)
+            elif action == "set_advance":      # ЗАДАТЬ аванс (редактирование/исправление)
+                r["advance"] = round(amt)
+            elif action == "set_bonus":        # ЗАДАТЬ премию (редактирование/исправление)
+                r["bonus"] = round(amt)
             else:
                 return self._send(400, {"error": "неизвестное действие"})
             r["days"] = days
