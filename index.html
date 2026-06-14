@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.8.0<br>скорость: зарплата/планы одним запросом (было 13с → ~1с), кнопки мгновенные
+      Штурвал v3.9.0<br>воронка: свежие чаты наверху, синяя точка = клиент написал без ответа
     </div>
   </aside>
 
@@ -1486,10 +1486,12 @@
     const box=document.getElementById('cockpit-chats'); if(!box) return;
     let items=[];
     if(ckView==='Новая заявка'){
-      items=COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка'); }).map(c=>({name:c.name,sub:(c.time||'')+' · '+(c.status||'новый'),chatId:c.id}));
+      items=COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка'); }).map(c=>({name:c.name,sub:(c.time||'')+' · '+(c.status||'новый'),chatId:c.id,ts:c.ts||0,unread:!!c.unread}));
     } else {
-      items=CRM.deals.filter(d=>d.status===ckView).map(d=>{ const cl=getClient(d.client_id); const chat=COCKPIT_CHATS.find(x=>x.name&&cl.name&&x.name.toLowerCase()===cl.name.toLowerCase()); return {name:cl.name||'Без имени',sub:fmt(dealAmount(d)),chatId:chat?chat.id:null}; });
+      items=CRM.deals.filter(d=>d.status===ckView).map(d=>{ const cl=getClient(d.client_id); const chat=COCKPIT_CHATS.find(x=>x.name&&cl.name&&x.name.toLowerCase()===cl.name.toLowerCase()); return {name:cl.name||'Без имени',sub:fmt(dealAmount(d)),chatId:chat?chat.id:null,ts:chat?(chat.ts||0):0,unread:chat?!!chat.unread:false}; });
     }
+    // свежие — наверх; ждущие ответа (синяя точка) — ещё выше
+    items.sort((a,b)=>(b.unread-a.unread)||(b.ts-a.ts));
     if(!items.length){
       if(ckView==='Новая заявка' && LAST_CHAT_ERR){
         box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">⏳ Чаты Instagram временно недоступны — ChatPlace ненадолго ограничил запросы. Это пройдёт само, заявки скоро появятся. Можно ничего не делать.</div>';
@@ -1498,7 +1500,7 @@
       }
       return;
     }
-    box.innerHTML=items.map((it,i)=>'<div class="chatitem'+(it.chatId&&it.chatId===ckCurId?' active':'')+'" draggable="true" data-i="'+i+'"><div class="ci-name">'+esc(it.name)+'</div><div class="ci-last">'+esc(it.sub)+'</div></div>').join('');
+    box.innerHTML=items.map((it,i)=>'<div class="chatitem'+(it.chatId&&it.chatId===ckCurId?' active':'')+'" draggable="true" data-i="'+i+'"><div class="ci-name">'+(it.unread?'<span title="Клиент написал — без ответа" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2f80ed;margin-right:6px;vertical-align:middle"></span>':'')+esc(it.name)+'</div><div class="ci-last">'+esc(it.sub)+'</div></div>').join('');
     box.querySelectorAll('.chatitem').forEach(el=>{ const it=items[+el.dataset.i];
       el.addEventListener('click',()=>openItem(it));
       el.addEventListener('dragstart',e=>{ dragChat={name:it.name,id:it.chatId}; e.dataTransfer.effectAllowed='move'; });
@@ -1574,7 +1576,7 @@
     }
     const b=document.getElementById(bid);
     if(b){ b.innerHTML=esc(t)+' <span style="opacity:.7;font-size:11px">'+(ok?'✓ отправлено':'⚠️ не доставлено')+'</span>'; if(!ok) b.style.background='var(--red)'; }
-    if(ok) setTimeout(()=>loadConvoMsgs(ckCurId, true), 1500);
+    if(ok){ const c=COCKPIT_CHATS.find(x=>x.id===ckCurId); if(c) c.unread=false; renderLeft(); setTimeout(()=>loadConvoMsgs(ckCurId, true), 1500); }
     else if(errMsg) console.log('send error:', errMsg);
   }
   function openDealForClient(){ if(!ckCurName) return; const d=ensureDeal(ckCurName); crmPersist(); openDeal(d.id); }

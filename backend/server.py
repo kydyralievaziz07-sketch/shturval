@@ -304,7 +304,18 @@ def classify_chat(arr):
     has_human = any(m.get("side") == "operator" for m in arr)
     return "Связались" if has_human else "Новая заявка"
 
+def last_from_client(arr):
+    """True, если последнее СОДЕРЖАТЕЛЬНОЕ сообщение — от клиента (мы не ответили).
+    arr приходит от chats_messages (новые сверху)."""
+    for m in arr:
+        x = (m.get("message") or "").strip()
+        if not x or x.endswith("Label") or x.endswith("StatusLabel"):
+            continue
+        return m.get("side") == "client"
+    return False
+
 _chat_stages = {}          # chat_id -> стадия воронки
+_chat_unread = {}          # chat_id -> True, если ждёт ответа (последнее сообщение от клиента)
 _chat_stages_t = 0
 
 _analyze_idx = 0  # курсор по списку чатов — анализируем малыми порциями по кругу
@@ -334,6 +345,7 @@ def _chat_analyzer():
                             r = chatplace_call("chats_messages", {"chatId": cid, "limit": 20})
                             arr = r if isinstance(r, list) else r.get("items", [])
                             _chat_stages[cid] = classify_chat(arr)
+                            _chat_unread[cid] = last_from_client(arr)
                         except urllib.error.HTTPError as e:
                             if e.code == 429:
                                 slept = 180  # лимит — отдыхаем подольше
@@ -367,7 +379,8 @@ def build_chats():
         tm = time.strftime("%H:%M", time.localtime(ts)) if ts else ""
         chats.append({"id": it.get("id"), "name": it.get("clientName", "клиент"),
                       "time": tm, "status": it.get("statusName", ""), "ts": ts or 0,
-                      "stage": _chat_stages.get(it.get("id"), "")})
+                      "stage": _chat_stages.get(it.get("id"), ""),
+                      "unread": bool(_chat_unread.get(it.get("id"), False))})
     _chats_last = {"source": "Instagram", "updated": time.strftime("%H:%M:%S"),
                    "today": today, "active": active, "total": len(items),
                    "analyzed": len(_chat_stages), "chats": chats}
