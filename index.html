@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.12.0<br>«Мой день» у HR — только зарплата (без продаж и плана)
+      Штурвал v3.12.1<br>колокольчик «Требует внимания» скрыт у HR и сотрудников (только торговля)
     </div>
   </aside>
 
@@ -304,7 +304,7 @@
           <button class="active" data-period="week">Неделя</button>
           <button data-period="month">Месяц</button>
         </div>
-        <button class="bell" onclick="toggleDrawer()" aria-label="Уведомления: 5 новых">🔔<span class="bcount">5</span></button>
+        <button class="bell" id="bell-btn" onclick="toggleDrawer()" aria-label="Уведомления: 5 новых">🔔<span class="bcount">5</span></button>
         <div class="user">Владелец <div class="avatar">Б</div></div>
       </div>
     </div>
@@ -832,6 +832,9 @@
       if(show && t!=='set' && !first) first=a;     // по умолчанию — первый рабочий раздел
     });
     if(!first) first=document.querySelector('.nav a[data-tab="set"]');  // если разделов нет — хотя бы Настройки
+    // колокольчик «Требует внимания» (товары/продажи) — только тем, кто видит торговлю
+    const bell=document.getElementById('bell-btn');
+    if(bell){ bell.style.display=(isOwner()||canSee('prod')||canSee('crm')||canSee('dash'))?'':'none'; }
     const u=document.querySelector('.user'); if(u&&u.childNodes[0]) u.childNodes[0].nodeValue=(USER.name||'Пользователь')+' ';
     const av=document.querySelector('.avatar'); if(av) av.textContent=(USER.name||'?').slice(0,1).toUpperCase();
     updateSettings();
