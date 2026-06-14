@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.9.0<br>воронка: свежие чаты наверху, синяя точка = клиент написал без ответа
+      Штурвал v3.10.0<br>Товары: 14 крупных категорий (Одежда, Обувь, …) с автоматической раскладкой
     </div>
   </aside>
 
@@ -477,7 +477,11 @@
         <div id="prod-donut"><span style="color:var(--muted);font-size:13px">—</span></div>
       </div>
       <div class="card">
-        <h3>🗂 Категории на складе <span style="font-size:12px;color:var(--muted);font-weight:400">— нажми, чтобы посмотреть, что есть</span></h3>
+        <h3>🛍 Категории товаров <span style="font-size:12px;color:var(--muted);font-weight:400">— нажми категорию, чтобы посмотреть товары</span></h3>
+        <div id="prod-supercats"><span style="color:var(--muted);font-size:13px">—</span></div>
+      </div>
+      <div class="card">
+        <h3>🗂 Группы из 1С <span style="font-size:12px;color:var(--muted);font-weight:400">— как товары названы в 1С (детально)</span></h3>
         <div id="prod-catbrowser"><span style="color:var(--muted);font-size:13px">—</span></div>
       </div>
       <div class="card">
@@ -998,7 +1002,7 @@
     });
   });
   // --- ТОВАРЫ: живые данные из 1С (через сервер-посредник) ---
-  let prodPage=1, prodQ='', prodCat='', prodTimer=null;
+  let prodPage=1, prodQ='', prodCat='', prodSCat='', prodTimer=null;
   let prodInvTimer=null;
   async function loadInventory(attempt){
     attempt=attempt||1;
@@ -1008,7 +1012,7 @@
     try{
       const r=await apiFetch('/api/inventory',{},ONEC_BASE); if(!r.ok) throw 0;
       const d=await r.json(); if(d.error) throw 0;
-      renderInventory(d);
+      window._invData=d; renderInventory(d);
     }catch(e){
       if(e&&(e.message==='unauthorized'||e.message==='forbidden')) return;
       const isLocal=(API_BASE!=='');
@@ -1052,6 +1056,7 @@
       lc.value=cur; }
     renderLow();
     renderDonut(d);
+    renderSuperCats(d);
     renderCatBrowser(d);
     setDonutMode(DONUT_MODE);
   }
@@ -1094,6 +1099,23 @@
       '<div style="flex:1;min-width:220px">'+legend+'</div></div>';
     renderMoney();
   }
+  // 14 крупных категорий: плитки → клик открывает товары категории
+  function renderSuperCats(d){
+    const box=document.getElementById('prod-supercats'); if(!box) return;
+    const cats=(d.super_cats||[]).filter(c=>c.count>0);
+    if(!cats.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет данных</span>'; return; }
+    box.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:8px">'+
+      cats.map(c=>'<button class="btn'+(prodSCat===c.title?'':' ghost')+'" style="text-align:left;padding:9px 13px;font-weight:400" onclick="browseSCat(\''+esc(c.title).replace(/'/g,"\\'")+'\')">'+
+        '<span style="font-weight:600">'+esc(c.title)+'</span> <span style="color:var(--muted);font-size:12px">· '+c.count+' тов. · '+c.units.toLocaleString('ru-RU')+' шт</span></button>').join('')+'</div>';
+  }
+  function browseSCat(name){
+    prodSCat=name; prodCat=''; prodPage=1; prodQ=''; const ps=document.getElementById('prodSearch'); if(ps) ps.value='';
+    const f=document.getElementById('prod-catfilter');
+    if(f){ f.style.display='inline-flex'; f.innerHTML='🛍 <b>'+esc(name)+'</b> <button class="btn ghost" style="padding:2px 8px;font-size:12px" onclick="clearCatFilter()">✕ сбросить</button>'; }
+    renderSuperCats(window._invData||{});      // подсветить выбранную
+    loadProducts(true);
+    const tbl=document.getElementById('prodRows'); if(tbl) tbl.closest('.card').scrollIntoView({behavior:'smooth',block:'start'});
+  }
   // браузер категорий: плитки → клик открывает товары категории
   function renderCatBrowser(d){
     const box=document.getElementById('prod-catbrowser'); if(!box) return;
@@ -1104,13 +1126,14 @@
         '<span style="font-weight:600">'+esc(c.title)+'</span> <span style="color:var(--muted);font-size:12px">· '+c.count+' тов. · '+c.units.toLocaleString('ru-RU')+' шт</span></button>').join('')+'</div>';
   }
   function browseCat(name){
-    prodCat=name; prodPage=1; prodQ=''; const ps=document.getElementById('prodSearch'); if(ps) ps.value='';
+    prodCat=name; prodSCat=''; prodPage=1; prodQ=''; const ps=document.getElementById('prodSearch'); if(ps) ps.value='';
+    renderSuperCats(window._invData||{});
     const f=document.getElementById('prod-catfilter');
     if(f){ f.style.display='inline-flex'; f.innerHTML='🗂 <b>'+esc(name)+'</b> <button class="btn ghost" style="padding:2px 8px;font-size:12px" onclick="clearCatFilter()">✕ сбросить</button>'; }
     loadProducts(true);
     const tbl=document.getElementById('prodRows'); if(tbl) tbl.closest('.card').scrollIntoView({behavior:'smooth',block:'start'});
   }
-  function clearCatFilter(){ prodCat=''; prodPage=1; const f=document.getElementById('prod-catfilter'); if(f) f.style.display='none'; loadProducts(true); }
+  function clearCatFilter(){ prodCat=''; prodSCat=''; prodPage=1; const f=document.getElementById('prod-catfilter'); if(f) f.style.display='none'; renderSuperCats(window._invData||{}); loadProducts(true); }
   function prodRow(x){
     const out = x.qty<=0;
     const status = out?'<span class="badge b-out">Нет</span>':(x.qty<=3?'<span class="badge b-low">Заканч.</span>':'<span class="badge b-ok">В наличии</span>');
@@ -1127,7 +1150,7 @@
     if(!ONEC_BASE){ tb.innerHTML='<tr><td colspan="7" style="color:var(--muted)">В облаке 1С подключается отдельным шагом</td></tr>'; return; }
     if(!silent && attempt===1) tb.innerHTML='<tr><td colspan="7" style="color:var(--muted)">Загрузка…</td></tr>';
     try{
-      const r=await apiFetch('/api/products?page='+prodPage+'&q='+encodeURIComponent(prodQ)+(prodCat?'&cat='+encodeURIComponent(prodCat)+'&in_stock=1':''),{},ONEC_BASE);
+      const r=await apiFetch('/api/products?page='+prodPage+'&q='+encodeURIComponent(prodQ)+(prodCat?'&cat='+encodeURIComponent(prodCat)+'&in_stock=1':'')+(prodSCat?'&scat='+encodeURIComponent(prodSCat)+'&in_stock=1':''),{},ONEC_BASE);
       const d=await r.json();
       tb.innerHTML=(d.items&&d.items.length)?d.items.map(prodRow).join(''):'<tr><td colspan="7" style="color:var(--muted)">Ничего не найдено</td></tr>';
       const per=d.per||50, pages=Math.max(1,Math.ceil((d.total||0)/per));
