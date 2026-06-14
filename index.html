@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.13.0<br>отдел «Администраторы», окна Аванс/Премия (редактируемые) и Календарь, отметка явки по дням
+      Штурвал v3.14.0<br>14 категорий применены везде: склад, диаграмма (кол-во/стоимость), аналитика
     </div>
   </aside>
 
@@ -444,7 +444,7 @@
       <div id="prod-kpis" class="kpis"></div>
       <div class="grid2">
         <div class="card">
-          <h3>📦 Склад по категориям (топ-8 по стоимости)</h3>
+          <h3>📦 Склад по категориям (по стоимости)</h3>
           <div id="prod-cats"><span style="color:var(--muted);font-size:13px">—</span></div>
         </div>
         <div class="card">
@@ -574,14 +574,8 @@
           <div class="note" style="margin-top:14px">💡 Группа C (684 товара) занимает склад, но даёт лишь 8% прибыли — кандидаты на распродажу.</div>
         </div>
         <div class="card">
-          <h3>📦 Остатки по категориям</h3>
-          <div class="bars" style="height:165px">
-            <div class="bar-wrap"><div class="bar" style="height:80%"></div><span>Кухня</span></div>
-            <div class="bar-wrap"><div class="bar" style="height:95%"></div><span>Текстиль</span></div>
-            <div class="bar-wrap"><div class="bar" style="height:55%"></div><span>Хранение</span></div>
-            <div class="bar-wrap"><div class="bar" style="height:40%"></div><span>Хозтовары</span></div>
-            <div class="bar-wrap"><div class="bar" style="height:65%"></div><span>Декор</span></div>
-          </div>
+          <h3>📦 Остатки по категориям <span style="font-size:12px;color:var(--muted);font-weight:400">— по количеству на складе</span></h3>
+          <div id="an-cats"><span style="color:var(--muted);font-size:13px">Загрузка…</span></div>
         </div>
       </div>
       <div class="card">
@@ -786,6 +780,7 @@
       if(tab==='deals'){ renderBoard(); startDealsAuto(); }
       if(tab==='chats') loadChats();
       if(tab==='prod'){ loadInventory(); loadProducts(); startProdAuto(); }
+      if(tab==='analytics') renderAnalytics();
       window.scrollTo(0,0);
     });
   });
@@ -1066,7 +1061,7 @@
       km('Склад в рознице',d.retail_value)+
       km('Себестоимость склада',d.cost_value)+
       km('Потенц. наценка',d.margin_value);
-    const cats=d.categories||[]; const maxv=Math.max.apply(null,cats.map(c=>c.value).concat([1]));
+    const cats=(d.super_cats||[]).slice().filter(c=>c.value>0).sort((a,b)=>b.value-a.value); const maxv=Math.max.apply(null,cats.map(c=>c.value).concat([1]));
     document.getElementById('prod-cats').innerHTML=cats.length?cats.map(c=>
       '<div style="margin-bottom:11px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px">'+
       '<span>'+esc(c.title)+' <span style="color:var(--muted)">· '+c.count+' тов.</span></span>'+
@@ -1084,6 +1079,22 @@
     renderSuperCats(d);
     renderCatBrowser(d);
     setDonutMode(DONUT_MODE);
+  }
+  // Аналитика: остатки по 14 категориям (по количеству)
+  function renderAnalytics(){
+    const box=document.getElementById('an-cats'); if(!box) return;
+    const draw=(d)=>{
+      const cats=(d.super_cats||[]).slice().filter(c=>c.units>0).sort((a,b)=>b.units-a.units);
+      if(!cats.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет данных</span>'; return; }
+      const mx=Math.max.apply(null,cats.map(c=>c.units).concat([1]));
+      box.innerHTML=cats.map(c=>'<div style="margin-bottom:11px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px">'+
+        '<span>'+esc(c.title)+' <span style="color:var(--muted)">· '+c.count+' тов.</span></span>'+
+        '<span style="color:var(--muted)">'+c.units.toLocaleString('ru-RU')+' шт</span></div>'+
+        '<div class="progress"><div style="width:'+Math.round(c.units/mx*100)+'%"></div></div></div>').join('');
+    };
+    if(window._invData){ draw(window._invData); }
+    else { box.innerHTML='<span style="color:var(--muted);font-size:13px">Загрузка из 1С…</span>';
+      apiFetch('/api/inventory',{},ONEC_BASE).then(r=>r.json()).then(d=>{ window._invData=d; draw(d); }).catch(()=>{ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет связи с 1С</span>'; }); }
   }
   // «На исходе» — фильтры по количеству и категории + сортировка
   let LOW_SORT='asc';
@@ -1109,7 +1120,7 @@
     const box=document.getElementById('prod-donut'); if(!box) return;
     const byVal=(DONUT_MODE==='value');
     const key=byVal?'value':'units';
-    const items=((byVal?d.cats_value:d.cats_units)||[]).filter(c=>(c[key]||0)>0);
+    const items=(d.super_cats||[]).slice().filter(c=>(c[key]||0)>0).sort((a,b)=>(b[key]||0)-(a[key]||0));
     if(!items.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет данных</span>'; return; }
     const total=items.reduce((s,x)=>s+(x[key]||0),0)||1;
     const colors=['#4f8cff','#39d98a','#ffb84d','#a78bfa','#ff6b6b','#22d3ee','#f472b6','#94a3b8'];
