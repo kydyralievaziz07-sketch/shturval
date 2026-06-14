@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.11.1<br>планы отделов — только у владельца (у HR убраны)
+      Штурвал v3.12.0<br>«Мой день» у HR — только зарплата (без продаж и плана)
     </div>
   </aside>
 
@@ -1653,6 +1653,14 @@
   function isMineDeal(d){ const n=USER.name||''; return !n||!d.owner||d.owner===n; }
   function renderMyDay(){
     const box=document.getElementById('myday-body'); if(!box) return;
+    // HR-менеджер не продаёт и не состоит в отделе — показываем только зарплату
+    const isHR=(USER.role==='hr')||((USER.sections||[]).indexOf('hr')>=0 && !isOwner());
+    if(isHR){
+      box.innerHTML='<div class="card" style="margin-bottom:16px"><div style="font-size:18px;font-weight:700">👋 Привет, '+esc(USER.name||'коллега')+'!</div>'+
+        '<div style="color:var(--muted);font-size:13px;margin-top:3px">HR-менеджер</div></div>'+
+        '<div id="myday-salary"></div>';
+      renderMoney(); loadMyPayroll(); return;
+    }
     const PAID=['Оплачено','Отгружено','Закрыто'];
     const dep=USER.department||''; const plan=+USER.plan_day||0; const owner=isOwner();
     const ds=new Date(); ds.setHours(0,0,0,0); const dsT=ds.getTime();
