@@ -1283,8 +1283,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"ok": True, "view": payroll_view(tu, r)})
         if self.path.startswith("/api/deptplan"):
             u = self._user(); secs = u.get("sections", []) if u else []
-            if not (u and "all" in secs):          # менять план — только владелец
-                return self._send(403, {"error": "Менять план может только владелец"})
+            if not (u and ("all" in secs or "hr" in secs)):   # план меняют владелец и HR
+                return self._send(403, {"error": "Менять план может владелец или HR"})
             try:
                 length = int(self.headers.get("Content-Length", 0))
                 body = json.loads(self.rfile.read(length) or b"{}")

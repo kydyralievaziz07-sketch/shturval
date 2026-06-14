@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.10.0<br>Товары: 14 крупных категорий (Одежда, Обувь, …) с автоматической раскладкой
+      Штурвал v3.11.0<br>HR-менеджер тоже регулирует планы отделов по дням
     </div>
   </aside>
 
@@ -1929,7 +1929,7 @@
     try{ const r=await apiFetch('/api/deptplan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},ONEC_BASE);
       const d=await r.json(); if(d&&d.error) throw new Error(d.error);
       if(d&&d.departments){ DEPT_PLANS=d.departments; renderDeptPlans(); } return true;
-    }catch(e){ alert(e.message==='forbidden'?'Менять план может только владелец.':'Не удалось сохранить (сервер мог просыпаться). Попробуй ещё раз.'); return false; }
+    }catch(e){ alert(e.message==='forbidden'?'Менять план может владелец или HR.':'Не удалось сохранить (сервер мог просыпаться). Попробуй ещё раз.'); return false; }
   }
   function dpNum(v){ const n=parseFloat((v||'').toString().replace(/\s/g,'').replace(',','.')); return isNaN(n)||n<0?null:n; }
   async function dpSetPlan(dep,val){ const v=dpNum(val); if(v===null) return; await dpPost({action:'setplan',department:dep,plan_day:v}); }
@@ -1937,7 +1937,7 @@
   function renderDeptPlans(){
     const wrap=document.getElementById('hr-plans'); if(!wrap) return;
     if(!DEPT_PLANS.length){ wrap.innerHTML=''; return; }
-    const ed=isOwner();
+    const ed=isOwner() || (USER.sections||[]).indexOf('hr')>=0;   // владелец и HR
     const inp='padding:5px 8px;width:115px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:13px';
     const rows=DEPT_PLANS.map(p=>{
       const pct=p.pct||0, w=Math.min(100,pct);
@@ -1956,7 +1956,7 @@
     }).join('');
     wrap.innerHTML='<div class="card" style="margin-bottom:16px">'+
       '<h3>🎯 Планы по отделам — продажи в день</h3>'+
-      '<div style="font-size:12px;color:var(--muted);margin-bottom:12px">'+(ed?'Задай план на день и впиши факт — покажу % выполнения.':'Планы отделов (редактирует владелец).')+' Факт пока вводится вручную; позже подтянем из 1С автоматически.</div>'+
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:12px">'+(ed?'Задай план на день и впиши факт — покажу % выполнения.':'Планы отделов (редактируют владелец и HR).')+' Факт пока вводится вручную; позже подтянем из 1С автоматически.</div>'+
       rows+'</div>';
   }
   function jsn(s){ return (s||'').replace(/'/g,''); }
