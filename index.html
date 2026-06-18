@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.14.0<br>14 категорий применены везде: склад, диаграмма (кол-во/стоимость), аналитика
+      Штурвал v3.15.0<br>Раздел «Продажи» на живых чеках из 1С + история по дням
     </div>
   </aside>
 
@@ -320,16 +320,8 @@
 
       <div class="grid2">
         <div class="card">
-          <h3>Продажи по дням</h3>
-          <div class="bars">
-            <div class="bar-wrap"><div class="bar" style="height:50%"></div><span>Пн</span></div>
-            <div class="bar-wrap"><div class="bar" style="height:62%"></div><span>Вт</span></div>
-            <div class="bar-wrap"><div class="bar" style="height:45%"></div><span>Ср</span></div>
-            <div class="bar-wrap"><div class="bar" style="height:70%"></div><span>Чт</span></div>
-            <div class="bar-wrap"><div class="bar" style="height:88%"></div><span>Пт</span></div>
-            <div class="bar-wrap"><div class="bar" style="height:95%"></div><span>Сб</span></div>
-            <div class="bar-wrap"><div class="bar" style="height:60%"></div><span>Вс</span></div>
-          </div>
+          <h3>📈 Продажи по дням <span id="dash-sales-today" style="font-size:12px;color:var(--muted);font-weight:400"></span></h3>
+          <div id="dash-bars" class="bars"><span style="color:var(--muted);font-size:13px">Загружаю продажи из 1С…</span></div>
         </div>
         <div class="card">
           <h3>🎯 Цель месяца</h3>
@@ -503,24 +495,32 @@
 
     <!-- SALES -->
     <section id="tab-sales" class="hide">
-      <div class="kpis">
-        <div class="card kpi"><div class="label">Продаж сегодня</div><div class="value">47</div></div>
-        <div class="card kpi"><div class="label">Выручка сегодня</div><div class="value">612 000 сом</div></div>
-        <div class="card kpi"><div class="label">Средний чек</div><div class="value">13 020 сом</div></div>
-        <div class="card kpi"><div class="label">Возвраты сегодня</div><div class="value">1</div></div>
+      <div id="sales-status" class="note" style="margin-bottom:16px">⏳ Загружаю продажи из 1С…</div>
+      <div id="sales-kpis" class="kpis"></div>
+      <div class="grid2">
+        <div class="card">
+          <h3>📈 Продажи по дням</h3>
+          <div id="sales-history" class="bars"><span style="color:var(--muted);font-size:13px">Копим историю — графики появятся за несколько дней.</span></div>
+        </div>
+        <div class="card">
+          <h3>💳 Способы оплаты сегодня</h3>
+          <div id="sales-pay"><span style="color:var(--muted);font-size:13px">—</span></div>
+        </div>
+      </div>
+      <div class="grid2b">
+        <div class="card">
+          <h3>🧑‍💼 Кассы сегодня</h3>
+          <div id="sales-sellers"><span style="color:var(--muted);font-size:13px">—</span></div>
+        </div>
+        <div class="card">
+          <h3>🔥 Топ товаров сегодня</h3>
+          <div id="sales-top"><span style="color:var(--muted);font-size:13px">—</span></div>
+        </div>
       </div>
       <div class="card">
-        <h3>Последние продажи</h3>
-        <table>
-          <thead><tr><th>Время</th><th>Товар</th><th>Кол-во</th><th>Сумма</th><th>Клиент</th><th>Источник</th></tr></thead>
-          <tbody>
-            <tr><td>14:32</td><td>Набор кастрюль 6 шт</td><td>1</td><td>24 900 сом</td><td>Айгерим С.</td><td><span class="badge b-mk">Рынок</span></td></tr>
-            <tr><td>14:05</td><td>Органайзер для шкафа</td><td>2</td><td>8 400 сом</td><td>Данияр К.</td><td>Магазин</td></tr>
-            <tr><td>13:48</td><td>Комплект постельного белья</td><td>1</td><td>15 500 сом</td><td>Мадина Т.</td><td><span class="badge b-mk">Рынок</span></td></tr>
-            <tr><td>13:20</td><td>Набор полотенец 4 шт</td><td>3</td><td>21 900 сом</td><td>Ержан А.</td><td>Магазин</td></tr>
-          </tbody>
-        </table>
-        <div class="note" style="margin-top:16px">📌 Данные о продажах будут приходить автоматически из <b>1С</b> и с <b>рынка</b>.</div>
+        <h3>🧾 Последние чеки сегодня</h3>
+        <div id="sales-receipts" style="max-height:480px;overflow:auto"><span style="color:var(--muted);font-size:13px">—</span></div>
+        <div class="note" style="margin-top:14px">📌 Чеки приходят прямо из <b>1С</b> (касса). Возвраты показаны со знаком «−».</div>
       </div>
     </section>
 
@@ -780,6 +780,8 @@
       if(tab==='deals'){ renderBoard(); startDealsAuto(); }
       if(tab==='chats') loadChats();
       if(tab==='prod'){ loadInventory(); loadProducts(); startProdAuto(); }
+      if(tab==='sales'){ loadSales(); startSalesAuto(); }
+      if(tab==='dash') loadDashSales();
       if(tab==='analytics') renderAnalytics();
       window.scrollTo(0,0);
     });
@@ -890,7 +892,7 @@
     try{
       const h={'X-Auth':val}; if(lg) h['X-Login']=lg;
       const r=await fetch(ONEC_BASE+'/api/auth',{headers:h});
-      if(r.ok){ const d=await r.json(); setPw(val); setLg(lg); applyUser(d); showLogin(false); if(canSee('crm')||canSee('dash')) loadCRM(); }
+      if(r.ok){ const d=await r.json(); setPw(val); setLg(lg); applyUser(d); showLogin(false); if(canSee('crm')||canSee('dash')) loadCRM(); if(canSee('dash')) loadDashSales(); }
       else { err.textContent='Неверный логин или пароль. Попробуй ещё раз.'; }
     }catch(e){ err.textContent='Нет связи с сервером. Обнови страницу.'; }
     btn.disabled=false; btn.textContent='Войти';
@@ -898,7 +900,7 @@
   // при загрузке: решаем, показывать вход или сразу сайт
   (async function bootAuth(){
     const res=await checkAuth();
-    if(res&&res.ok){ applyUser(res); showLogin(false); if(canSee('crm')||canSee('dash')) loadCRM(); }
+    if(res&&res.ok){ applyUser(res); showLogin(false); if(canSee('crm')||canSee('dash')) loadCRM(); if(canSee('dash')) loadDashSales(); }
     else showLogin(true);
   })();
   function logout(){ clearPw(); showLogin(true); }
@@ -1223,6 +1225,77 @@
       clearTimeout(prodTimer);
       prodTimer=setTimeout(()=>{ prodQ=ps.value.trim(); prodPage=1; loadProducts(true); },350);
     });
+  }
+  // ===== ПРОДАЖИ (живые чеки из 1С, /receipts/v2) =====
+  let salesAutoTimer=null, salesTimer=null;
+  async function loadSales(attempt){
+    attempt=attempt||1;
+    const st=document.getElementById('sales-status');
+    if(!ONEC_BASE){ st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d'; st.innerHTML='🟠 1С в облаке подключается отдельным шагом.'; return; }
+    try{
+      const r=await apiFetch('/api/sales',{},ONEC_BASE); if(!r.ok) throw 0;
+      const d=await r.json(); if(d.error) throw 0;
+      window._salesData=d; renderSales(d); loadSalesHistory();
+    }catch(e){
+      if(e&&(e.message==='unauthorized'||e.message==='forbidden')) return;
+      const isLocal=(API_BASE!=='');
+      if(isLocal){ st.style.borderStyle='dashed'; st.style.borderColor='#ff6b6b'; st.innerHTML='🔴 <b>Нет связи с 1С.</b> Запусти на компьютере <b>backend/Запустить-сервер.command</b> и обнови страницу.'; }
+      else if(attempt<7){ st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d'; st.innerHTML='⏳ <b>Сервер 1С просыпается…</b> после паузы это занимает до минуты. Жду, не закрывай (попытка '+attempt+'/6)…'; clearTimeout(salesTimer); salesTimer=setTimeout(()=>loadSales(attempt+1),12000); }
+      else { st.style.borderStyle='dashed'; st.style.borderColor='#ff6b6b'; st.innerHTML='🔴 <b>Сервер 1С пока не ответил.</b> Обнови страницу через минуту.'; }
+    }
+  }
+  function renderSales(d){
+    const st=document.getElementById('sales-status');
+    st.style.borderStyle='solid'; st.style.borderColor='#39d98a';
+    st.innerHTML='🟢 <b>Продажи из 1С (касса)</b> · за сегодня · обновлено '+esc(d.updated||'')+' · <span style="color:var(--muted)">обновляется само каждую минуту</span>';
+    const km=(label,som)=>'<div class="card kpi"><div class="label">'+label+'</div><div class="value"><span class="money" data-som="'+(som||0)+'">'+fmt(som||0)+'</span></div></div>';
+    document.getElementById('sales-kpis').innerHTML=
+      kpiCard('Чеков сегодня',(d.sales_count||0).toLocaleString('ru-RU'))+
+      km('Выручка сегодня',d.net_sales)+
+      km('Прибыль сегодня',d.profit)+
+      km('Средний чек',d.avg_check)+
+      kpiCard('Возвраты',(d.returns_count||0)+' · '+(d.returns_sum||0).toLocaleString('ru-RU')+' сом');
+    const pays=(d.by_pay||[]).filter(p=>p.sum>0); const pmax=Math.max.apply(null,pays.map(p=>p.sum).concat([1]));
+    document.getElementById('sales-pay').innerHTML=pays.length?pays.map(p=>
+      '<div style="margin-bottom:11px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px"><span>'+esc(p.name)+'</span><span class="money" data-som="'+p.sum+'">'+fmt(p.sum)+'</span></div><div class="progress"><div style="width:'+Math.round(p.sum/pmax*100)+'%"></div></div></div>').join(''):'<span style="color:var(--muted);font-size:13px">Нет данных</span>';
+    document.getElementById('sales-sellers').innerHTML=(d.by_seller||[]).length?'<table><tbody>'+(d.by_seller||[]).map(s=>'<tr><td>'+esc(s.name)+'</td><td style="text-align:right;color:var(--muted)">'+s.count+' чек.</td><td style="text-align:right"><span class="money" data-som="'+s.sum+'">'+fmt(s.sum)+'</span></td></tr>').join('')+'</tbody></table>':'<span style="color:var(--muted);font-size:13px">Нет данных</span>';
+    document.getElementById('sales-top').innerHTML=(d.top_products||[]).length?'<table><thead><tr><th>Товар</th><th style="text-align:right">Шт</th><th style="text-align:right">Сумма</th><th style="text-align:right">Прибыль</th></tr></thead><tbody>'+(d.top_products||[]).slice(0,15).map(p=>'<tr><td>'+esc(p.name)+'</td><td style="text-align:right">'+p.qty+'</td><td style="text-align:right"><span class="money" data-som="'+p.sum+'">'+fmt(p.sum)+'</span></td><td style="text-align:right;color:var(--muted)"><span class="money" data-som="'+p.profit+'">'+fmt(p.profit)+'</span></td></tr>').join('')+'</tbody></table>':'<span style="color:var(--muted);font-size:13px">Нет данных</span>';
+    const rc=(d.receipts||[]);
+    document.getElementById('sales-receipts').innerHTML=rc.length?'<table><thead><tr><th>Время</th><th>№</th><th>Товары</th><th>Касса</th><th>Оплата</th><th style="text-align:right">Сумма</th></tr></thead><tbody>'+rc.map(x=>{const ret=(x.type==='Возврат');return '<tr><td style="white-space:nowrap">'+esc(x.time)+'</td><td style="color:var(--muted)">'+esc(''+(x.num||''))+'</td><td style="font-size:12px">'+esc(x.items||'')+(ret?' <span class="badge b-out">возврат</span>':'')+'</td><td style="white-space:nowrap">'+esc(x.seller)+'</td><td style="white-space:nowrap;font-size:12px">'+esc(x.pay)+'</td><td style="text-align:right;white-space:nowrap'+(ret?';color:#ff6b6b':'')+'"><span class="money" data-som="'+x.total+'">'+fmt(x.total)+'</span></td></tr>';}).join('')+'</tbody></table>':'<span style="color:var(--muted);font-size:13px">Сегодня ещё нет чеков</span>';
+    renderMoney();
+  }
+  function drawSalesBars(box,days){
+    if(!box||!days||!days.length) return false;
+    const mx=Math.max.apply(null,days.map(x=>x.sales).concat([1]));
+    box.innerHTML=days.map(x=>{const dt=new Date(x.date+'T00:00:00');const lbl=isNaN(dt)?esc(x.date.slice(5)):(dt.getDate()+'.'+(dt.getMonth()+1));const h=Math.max(3,Math.round(x.sales/mx*100));return '<div class="bar-wrap" title="'+esc(x.date)+': '+x.sales.toLocaleString('ru-RU')+' сом · прибыль '+x.profit.toLocaleString('ru-RU')+' · чеков '+x.receipts+'"><div class="bar" style="height:'+h+'%"></div><span>'+lbl+'</span></div>';}).join('');
+    return true;
+  }
+  let _salesHist=null;
+  async function loadSalesHistory(){
+    try{
+      const r=await apiFetch('/api/sales-history?days=14',{},ONEC_BASE); const d=await r.json();
+      _salesHist=(d.days||[]);
+      drawSalesBars(document.getElementById('sales-history'),_salesHist);
+      drawSalesBars(document.getElementById('dash-bars'),_salesHist);
+    }catch(e){}
+  }
+  // дашборд: карточка «Продажи по дням» + «сегодня» (живые данные 1С)
+  async function loadDashSales(){
+    const bars=document.getElementById('dash-bars'); if(!bars||!ONEC_BASE) return;
+    loadSalesHistory();
+    try{
+      const r=await apiFetch('/api/sales',{},ONEC_BASE); const d=await r.json();
+      if(d&&!d.error){ const t=document.getElementById('dash-sales-today');
+        if(t) t.textContent='· сегодня '+(d.net_sales||0).toLocaleString('ru-RU')+' сом ('+(d.sales_count||0)+' чек.)'; }
+    }catch(e){}
+  }
+  function startSalesAuto(){
+    if(salesAutoTimer) return;
+    salesAutoTimer=setInterval(()=>{
+      const tab=document.getElementById('tab-sales');
+      if(!tab || tab.classList.contains('hide')){ clearInterval(salesAutoTimer); salesAutoTimer=null; return; }
+      loadSales();
+    },60000);
   }
   // --- ВАЛЮТА: переключение сом / доллар с автоматическим курсом ---
   function mkMoney(som){const s=document.createElement('span');s.className='money';s.dataset.som=som;s.textContent=fmt(som);return s;}

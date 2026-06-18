@@ -124,6 +124,7 @@ SECTION_OF = [
     ("/api/overview", "crm"),
     ("/api/inventory", "prod"), ("/api/products", "prod"),
     ("/api/categories", "prod"), ("/api/add-product", "prod"),
+    ("/api/sales-history", "sales"), ("/api/sales", "sales"),
     ("/api/chats", "chats"), ("/api/chat", "chats"), ("/api/send", "chats"),
     ("/api/bot-feedback", "chats"),
     ("/api/assistant", "ai"),
@@ -496,6 +497,13 @@ def _warmer():
                 _refresh_overview()
         except Exception:
             pass
+        # продажи: обновляем кэш и сохраняем дневной итог в Supabase (история по дням)
+        try:
+            if CFG.get("YAROS_URL"):
+                s = cached("sales", 30, build_sales)
+                _save_sales_daily(s)
+        except Exception:
+            pass
         time.sleep(110)
 
 # ====== Крупные категории товаров (по запросу владельца) ======
@@ -696,6 +704,111 @@ def search_products(q, page, per=50, cat=None, in_stock=False, scat=None):
             "qty": int(_num(x.get("QUANTITY"))),
         })
     return {"total": total, "page": page, "per": per, "items": out}
+
+
+# ====== ПРОДАЖИ (чеки из 1С, /receipts/v2) ======
+# Эндпоинт отдаёт чеки ТОЛЬКО за сегодня (параметры дат игнорирует). Историю по дням
+# копим сами: периодически сохраняем дневной итог в Supabase (таблица sales_daily).
+def _recv_ts(v):
+    """Время чека → Unix-секунды. Сейчас 1С отдаёт число (сек), но в доках указан ISO 8601 —
+    поддержим оба формата, чтобы не сломаться при возможной смене."""
+    if isinstance(v, (int, float)):
+        return int(v)
+    if isinstance(v, str) and v:
+        s = v.strip().replace("Z", "+00:00")
+        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S%z"):
+            try:
+                return int(time.mktime(time.strptime(s[:19], fmt[:19].replace("%z", ""))))
+            except Exception:
+                pass
+    return 0
+
+def build_sales(from_ts=None, to_ts=None):
+    """Сводка продаж из чеков 1С. По умолчанию — за сегодня. Если переданы from_ts/to_ts
+    (Unix-секунды) — за период (когда 1С включит поддержку параметров; см. док /receipts/v2).
+    Возвраты идут с минусом (qty/сумма/прибыль), поэтому чистая выручка = простая сумма receiptTotal."""
+    path = "/receipts/v2"
+    if from_ts:
+        path += "?from=%d" % int(from_ts) + (("&to=%d" % int(to_ts)) if to_ts else "")
+    data = yaros_get(path)
+    receipts = data.get("receipts", []) if isinstance(data, dict) else []
+    sales_count = 0; gross = 0.0; net = 0.0; profit = 0.0
+    returns_count = 0; returns_sum = 0.0
+    by_pay = {}; by_seller = {}; by_product = {}
+    rows = []
+    for x in receipts:
+        total = _num(x.get("receiptTotal"))
+        is_return = x.get("operationType") == "Возврат" or total < 0
+        net += total
+        for it in x.get("items", []):
+            profit += _num(it.get("profit"))
+            nm = (it.get("name") or "").strip() or "—"
+            p = by_product.setdefault(nm, {"qty": 0.0, "sum": 0.0, "profit": 0.0})
+            p["qty"] += _num(it.get("qty"))
+            p["sum"] += _num(it.get("saleAmount"))
+            p["profit"] += _num(it.get("profit"))
+        if is_return:
+            returns_count += 1; returns_sum += -total
+        else:
+            sales_count += 1; gross += total
+        pays = x.get("AllPaymentMethods") or [{"name": x.get("paymentMethod"), "summ": total}]
+        for pm in pays:
+            nm = (pm.get("name") or "—").strip() or "—"
+            by_pay[nm] = by_pay.get(nm, 0.0) + _num(pm.get("summ"))
+        s = (x.get("seller") or "—").strip() or "—"
+        agg = by_seller.setdefault(s, {"count": 0, "sum": 0.0})
+        agg["count"] += 1; agg["sum"] += total
+        ts = _recv_ts(x.get("dateTime"))
+        items_text = "; ".join("{} ×{}".format((it.get("name") or "").strip(),
+                               int(_num(it.get("qty")))) for it in x.get("items", [])[:6])
+        rows.append({"num": x.get("receiptNumber"),
+                     "time": time.strftime("%H:%M", time.localtime(ts)) if ts else "",
+                     "ts": ts, "total": round(total, 2), "pay": x.get("paymentMethod") or "—",
+                     "seller": s, "type": "Возврат" if is_return else "Продажа",
+                     "items": items_text})
+    rows.sort(key=lambda r: r.get("ts") or 0, reverse=True)
+    pay_list = [{"name": k, "sum": round(v)} for k, v in sorted(by_pay.items(), key=lambda i: -i[1])]
+    seller_list = [{"name": k, "count": v["count"], "sum": round(v["sum"])}
+                   for k, v in sorted(by_seller.items(), key=lambda i: -i[1]["sum"])]
+    top = [{"name": k, "qty": int(v["qty"]), "sum": round(v["sum"]), "profit": round(v["profit"])}
+           for k, v in sorted(by_product.items(), key=lambda i: -i[1]["sum"])][:20]
+    return {
+        "date": _today_str(),
+        "sales_count": sales_count, "net_sales": round(net), "gross_sales": round(gross),
+        "profit": round(profit), "avg_check": round(gross / sales_count) if sales_count else 0,
+        "returns_count": returns_count, "returns_sum": round(returns_sum),
+        "by_pay": pay_list, "by_seller": seller_list, "top_products": top,
+        "receipts": rows[:80], "total_receipts": len(receipts),
+        "updated": time.strftime("%H:%M:%S"),
+    }
+
+def _save_sales_daily(s):
+    """Сохранить дневной итог продаж в Supabase (накапливаем историю по дням)."""
+    if not supa_on() or not s:
+        return
+    try:
+        rec = {"company_id": COMPANY_ID, "date": s.get("date"),
+               "receipts": s.get("sales_count", 0), "sales": s.get("net_sales", 0),
+               "profit": s.get("profit", 0), "returns_count": s.get("returns_count", 0),
+               "returns_sum": s.get("returns_sum", 0)}
+        _supa("POST", "sales_daily", "?on_conflict=company_id,date", rec)
+    except Exception:
+        pass
+
+def sales_history(days=14):
+    """История продаж по дням из Supabase (последние N дней, по возрастанию даты)."""
+    if not supa_on():
+        return {"days": []}
+    try:
+        rows = _supa("GET", "sales_daily",
+                     "?company_id=eq.%s&select=*&order=date.desc&limit=%d" % (_q(COMPANY_ID), int(days)))
+        rows = sorted(rows or [], key=lambda r: r.get("date") or "")
+        out = [{"date": r.get("date"), "sales": round(_num(r.get("sales"))),
+                "profit": round(_num(r.get("profit"))), "receipts": int(_num(r.get("receipts"))),
+                "returns_sum": round(_num(r.get("returns_sum")))} for r in rows]
+        return {"days": out}
+    except Exception as e:
+        return {"days": [], "error": str(e)}
 
 
 # ====== ИИ-ПОМОЩНИК МАГАЗИНА (Anthropic Claude) ======
@@ -1371,6 +1484,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, cached("inventory", 120, build_inventory))
             except Exception as e:
                 return self._send(200, {"error": "Нет связи с 1С: " + str(e)})
+        if self.path.startswith("/api/sales-history"):
+            from urllib.parse import urlparse, parse_qs
+            try:
+                days = int(parse_qs(urlparse(self.path).query).get("days", ["14"])[0])
+            except ValueError:
+                days = 14
+            return self._send(200, sales_history(max(1, min(days, 90))))
+        if self.path.startswith("/api/sales"):
+            try:
+                return self._send(200, cached("sales", 30, build_sales))
+            except Exception as e:
+                return self._send(200, {"error": "Нет связи с 1С: " + str(e), "receipts": []})
         if self.path.startswith("/api/products"):
             from urllib.parse import urlparse, parse_qs
             qs = parse_qs(urlparse(self.path).query)
