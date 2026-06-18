@@ -783,17 +783,40 @@ def build_sales(from_ts=None, to_ts=None):
     }
 
 def _save_sales_daily(s):
-    """Сохранить дневной итог продаж в Supabase (накапливаем историю по дням)."""
+    """Сохранить день в Supabase: итог (для графика) + полную детализацию `detail`
+    (кассы, оплаты, топ товаров, чеки) — чтобы можно было открыть любой прошлый день целиком."""
     if not supa_on() or not s:
         return
     try:
         rec = {"company_id": COMPANY_ID, "date": s.get("date"),
                "receipts": s.get("sales_count", 0), "sales": s.get("net_sales", 0),
                "profit": s.get("profit", 0), "returns_count": s.get("returns_count", 0),
-               "returns_sum": s.get("returns_sum", 0)}
+               "returns_sum": s.get("returns_sum", 0), "detail": s}
         _supa("POST", "sales_daily", "?on_conflict=company_id,date", rec)
     except Exception:
-        pass
+        try:   # вдруг колонка detail ещё не добавлена — сохраним хотя бы итог
+            rec.pop("detail", None)
+            _supa("POST", "sales_daily", "?on_conflict=company_id,date", rec)
+        except Exception:
+            pass
+
+def sales_day(date):
+    """Сводка продаж за конкретный день. Сегодня — живьём из 1С; прошлые дни — из нашей
+    базы (Supabase), куда мы сохраняем полную детализацию каждый день."""
+    if not date or date == _today_str():
+        return cached("sales", 30, build_sales)
+    if not supa_on():
+        return {"error": "База данных не настроена", "receipts": [], "date": date}
+    try:
+        rows = _supa("GET", "sales_daily",
+                     "?company_id=eq.%s&date=eq.%s&select=detail" % (_q(COMPANY_ID), _q(date)))
+        if rows and rows[0].get("detail"):
+            d = dict(rows[0]["detail"]); d["from_db"] = True; d["date"] = date
+            return d
+        return {"empty": True, "date": date, "receipts": [],
+                "error": "За этот день у нас ещё нет сохранённых данных."}
+    except Exception as e:
+        return {"error": str(e), "receipts": [], "date": date}
 
 def sales_history(days=14):
     """История продаж по дням из Supabase (последние N дней, по возрастанию даты)."""
@@ -1492,8 +1515,10 @@ class Handler(BaseHTTPRequestHandler):
                 days = 14
             return self._send(200, sales_history(max(1, min(days, 90))))
         if self.path.startswith("/api/sales"):
+            from urllib.parse import urlparse, parse_qs
+            date = (parse_qs(urlparse(self.path).query).get("date", [""])[0] or "").strip()
             try:
-                return self._send(200, cached("sales", 30, build_sales))
+                return self._send(200, sales_day(date))
             except Exception as e:
                 return self._send(200, {"error": "Нет связи с 1С: " + str(e), "receipts": []})
         if self.path.startswith("/api/products"):
