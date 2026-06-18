@@ -800,11 +800,31 @@ def _save_sales_daily(s):
         except Exception:
             pass
 
+_sales_last = {"data": None}   # последний удачный снимок продаж за сегодня (на случай сбоя 1С)
+
 def sales_day(date):
     """Сводка продаж за конкретный день. Сегодня — живьём из 1С; прошлые дни — из нашей
-    базы (Supabase), куда мы сохраняем полную детализацию каждый день."""
+    базы (Supabase), куда мы сохраняем полную детализацию каждый день.
+    Если 1С временно недоступна (бывает «Истекло время ожидания сеанса», HTTP 406) —
+    отдаём последний сохранённый снимок за сегодня, помечая stale=True, а не ошибку."""
     if not date or date == _today_str():
-        return cached("sales", 30, build_sales)
+        try:
+            s = cached("sales", 30, build_sales)
+            _sales_last["data"] = s
+            return s
+        except Exception:
+            if _sales_last.get("data"):
+                d = dict(_sales_last["data"]); d["stale"] = True; return d
+            if supa_on():
+                try:
+                    rows = _supa("GET", "sales_daily",
+                                 "?company_id=eq.%s&date=eq.%s&select=detail"
+                                 % (_q(COMPANY_ID), _q(_today_str())))
+                    if rows and rows[0].get("detail"):
+                        d = dict(rows[0]["detail"]); d["stale"] = True; return d
+                except Exception:
+                    pass
+            raise
     if not supa_on():
         return {"error": "База данных не настроена", "receipts": [], "date": date}
     try:

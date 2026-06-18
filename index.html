@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.16.0<br>Продажи: выбор любого дня (полная детализация из базы) + блок продаж 1С на дашборде
+      Штурвал v3.16.1<br>Продажи: выбор любого дня + блок 1С на дашборде; устойчивость к сбоям 1С (показ последнего снимка)
     </div>
   </aside>
 
@@ -1266,9 +1266,12 @@
     const st=document.getElementById('sales-status');
     const past=!!d.from_db;
     st.style.borderStyle='solid'; st.style.borderColor=past?'#4f8cff':'#39d98a';
+    if(d.stale) st.style.borderColor='#ffb84d';
     st.innerHTML=past
       ? '📅 <b>Отчёт за '+esc(d.date||salesDate)+'</b> · из нашей базы (сохранённый день)'
-      : '🟢 <b>Продажи из 1С (касса)</b> · за сегодня · обновлено '+esc(d.updated||'')+' · <span style="color:var(--muted)">обновляется само каждую минуту</span>';
+      : (d.stale
+         ? '🟠 <b>1С временно недоступна</b> · показываю последнее сохранённое (на '+esc(d.updated||'')+'). Обновится, когда 1С снова ответит.'
+         : '🟢 <b>Продажи из 1С (касса)</b> · за сегодня · обновлено '+esc(d.updated||'')+' · <span style="color:var(--muted)">обновляется само каждую минуту</span>');
     const sfx=past?'':' сегодня';
     const km=(label,som)=>'<div class="card kpi"><div class="label">'+label+'</div><div class="value"><span class="money" data-som="'+(som||0)+'">'+fmt(som||0)+'</span></div></div>';
     document.getElementById('sales-kpis').innerHTML=
