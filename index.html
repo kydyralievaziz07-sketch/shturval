@@ -275,7 +275,6 @@
       <a data-tab="myday"><span class="ico">🎯</span> Мой день</a>
       <a data-tab="crm"><span class="ico">📡</span> Живые данные</a>
       <a data-tab="deals"><span class="ico">🧲</span> Штурвал CRM</a>
-      <a data-tab="iginbox"><span class="ico">📷</span> Instagram</a>
       <a data-tab="prod"><span class="ico">📦</span> Товары</a>
       <a data-tab="sales"><span class="ico">🛒</span> Продажи</a>
       <a data-tab="clients"><span class="ico">👥</span> Клиенты</a>
@@ -287,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.42.2<br>Instagram: ники клиентов грузятся полностью (постранично) + автоподтягивание для новых
+      Штурвал v3.43.0<br>Штурвал CRM: переписка теперь напрямую через Instagram (вместо ChatPlace), всё в одном разделе
     </div>
   </aside>
 
@@ -897,7 +896,6 @@
       if(tab==='ai') aiInit();
       if(tab==='deals'){ renderBoard(); startDealsAuto(); }
       if(tab==='chats') loadChats();
-      if(tab==='iginbox'){ loadIgInbox(); startIgAuto(); }
       if(tab==='prod'){ loadInventory(); loadProducts(); startProdAuto(); }
       if(tab==='sales'){ loadSales(); startSalesAuto(); }
       if(tab==='dash') loadDashSales();
@@ -1967,8 +1965,25 @@
     if(PERIOD==='month') return ts>=now-30*86400;
     return true;
   }
+  function igShortTime(ms){ const t=new Date(ms>1e12?ms:ms*1000); const td=new Date();
+    if(t.toDateString()===td.toDateString()) return ('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2);
+    return t.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'}); }
   async function fetchChats(){
-    try{ const r=await apiFetch('/api/chats',{},ONEC_BASE); const d=await r.json(); COCKPIT_CHATS=(d.chats||[]).filter(c=>c.id); LAST_CHAT_ERR=(!COCKPIT_CHATS.length&&d.error)?d.error:''; }
+    // Источник переписки — Instagram напрямую (раньше был ChatPlace)
+    try{
+      const r=await apiFetch('/api/ig/conversations?_='+Date.now(),{},ONEC_BASE); const d=await r.json();
+      COCKPIT_CHATS=(d.conversations||[]).map(c=>({
+        id:c.account_id+'|'+c.customer_id,
+        account_id:c.account_id, customer_id:c.customer_id, account:c.account,
+        name:c.customer||c.customer_id,
+        ts:(c.last_ts>1e12?Math.floor(c.last_ts/1000):(c.last_ts||0)),
+        time:c.last_ts?igShortTime(c.last_ts):'',
+        last:c.last_text||'',
+        unread:(c.last_dir==='in'),
+        stage:(c.last_dir==='out'?'Связались':'')        // мы ответили → «Связались»; иначе новая
+      }));
+      LAST_CHAT_ERR=(!COCKPIT_CHATS.length&&d.error)?d.error:'';
+    }
     catch(e){ COCKPIT_CHATS=[]; LAST_CHAT_ERR='нет связи с сервером'; }
     autoClassify();
     renderLeft(); renderFunnel(); renderCrmStats(); renderCrmDash();
@@ -2144,8 +2159,9 @@
     const upd=document.getElementById('ck-upd');
     if(!silent) box.innerHTML='<div style="color:var(--muted);padding:10px">Загрузка…</div>';
     try{
-      // &_=… — гарантированно свежий ответ, в обход любого кэша по дороге
-      const r=await apiFetch('/api/chat?id='+encodeURIComponent(id)+'&_='+Date.now(),{},ONEC_BASE); const d=await r.json();
+      // id = "аккаунт|клиент" → берём переписку из Instagram напрямую
+      const parts=String(id).split('|'); const acc=parts[0]||'', cust=parts[1]||'';
+      const r=await apiFetch('/api/ig/thread?account='+encodeURIComponent(acc)+'&customer='+encodeURIComponent(cust)+'&_='+Date.now(),{},ONEC_BASE); const d=await r.json();
       if(id!==ckCurId) return;                         // успели переключить чат
       const msgs=d.msgs||[];
       const last=msgs.length?msgs[msgs.length-1]:null;
@@ -2181,7 +2197,7 @@
   function ckWindowCheck(msgs){
     const w=document.getElementById('ck-warn'); if(!w) return;
     let lastIn=0;
-    for(const m of (msgs||[])){ if(m.t==='in' && m.ts && m.ts>lastIn) lastIn=m.ts; }
+    for(const m of (msgs||[])){ if(m.t==='in' && m.ts){ const s=(m.ts>1e12?m.ts/1000:m.ts); if(s>lastIn) lastIn=s; } }
     if(!lastIn){            // клиент ни разу не писал — Instagram писать не даст
       ckWindowOpen=false;
       w.style.display='block'; w.style.background='rgba(255,107,107,.15)'; w.style.color='#ff8f8f';
@@ -2225,9 +2241,10 @@
     box.insertAdjacentHTML('beforeend','<div class="bubble out" id="'+bid+'">'+esc(t)+' <span style="opacity:.6;font-size:11px">⏳</span></div>'); box.scrollTop=box.scrollHeight;
     const dl=findDealByName(ckCurName); if(dl){ logActivity(dl.client_id,dl.id,'сообщение','Ответ: '+t); crmPersist(); }
     let ok=false, errMsg='';
+    const pp=String(ckCurId).split('|'); const accId=pp[0]||'', custId=pp[1]||'';
     for(let i=1;i<=3 && !ok;i++){
       try{
-        const r=await apiFetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chatId:ckCurId,text:t})},ONEC_BASE);
+        const r=await apiFetch('/api/ig/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:accId,customer_id:custId,text:t})},ONEC_BASE);
         const res=await r.json(); ok=!!(res&&res.ok); if(!ok&&res&&res.error){ errMsg=res.error; break; }
       }catch(e){ await new Promise(res=>setTimeout(res,2000)); }   // сервер просыпается — повтор
     }
@@ -2849,13 +2866,14 @@
     if(!c.name){ box.innerHTML='<span style="color:var(--muted)">Сначала впишите имя клиента (как в Instagram)</span>'; return; }
     box.innerHTML='<span style="color:var(--muted)">Ищу переписку…</span>';
     try{
-      const r=await apiFetch('/api/chats',{},ONEC_BASE); const dd=await r.json();
-      const chat=(dd.chats||[]).find(x=>x.name&&x.name.toLowerCase().indexOf(c.name.toLowerCase())>=0);
+      const r=await apiFetch('/api/ig/conversations',{},ONEC_BASE); const dd=await r.json();
+      const chat=(dd.conversations||[]).find(x=>x.customer&&x.customer.toLowerCase().indexOf(c.name.toLowerCase())>=0);
       if(!chat){ box.innerHTML='<span style="color:var(--muted)">Переписка не найдена (имя в Instagram может отличаться)</span>'; return; }
-      const r2=await apiFetch('/api/chat?id='+encodeURIComponent(chat.id),{},ONEC_BASE); const md=await r2.json();
+      const cid=chat.account_id+'|'+chat.customer_id;
+      const r2=await apiFetch('/api/ig/thread?account='+encodeURIComponent(chat.account_id)+'&customer='+encodeURIComponent(chat.customer_id),{},ONEC_BASE); const md=await r2.json();
       const msgs=(md.msgs||[]).map(m=>'<div class="bubble '+m.t+'" style="max-width:90%">'+linkify(m.x)+'</div>').join('');
       box.innerHTML='<div class="msgs" style="max-height:220px;background:var(--bg);border-radius:10px;padding:10px;margin-bottom:8px">'+(msgs||'<span style="color:var(--muted)">Нет сообщений</span>')+'</div>'+
-        '<div style="display:flex;gap:8px"><input id="dl-reply" placeholder="Ответить клиенту…" style="flex:1"><button class="btn" onclick="dealReply(\''+chat.id+'\')">→</button></div>';
+        '<div style="display:flex;gap:8px"><input id="dl-reply" placeholder="Ответить клиенту…" style="flex:1"><button class="btn" onclick="dealReply(\''+cid+'\')">→</button></div>';
       const mb=box.querySelector('.msgs'); if(mb) mb.scrollTop=mb.scrollHeight;
     }catch(e){ box.innerHTML='<span style="color:var(--red)">Не удалось загрузить (нужен доступ к чатам)</span>'; }
   }
@@ -2863,7 +2881,8 @@
     const inp=document.getElementById('dl-reply'); const txt=inp.value.trim(); if(!txt) return; inp.value='';
     const d=getDeal(curDealId);
     let ok=false, errMsg='';
-    try{ const r=await apiFetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chatId:chatId,text:txt})},ONEC_BASE);
+    const pp=String(chatId).split('|'); const accId=pp[0]||'', custId=pp[1]||'';
+    try{ const r=await apiFetch('/api/ig/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:accId,customer_id:custId,text:txt})},ONEC_BASE);
       const res=await r.json(); ok=!!(res&&res.ok); if(!ok&&res) errMsg=res.error||'';
     }catch(e){ errMsg='нет связи с сервером'; }
     if(ok){ logActivity(d.client_id,d.id,'сообщение','Ответ: '+txt); crmPersist(); setTimeout(loadDealChat,1300); }
