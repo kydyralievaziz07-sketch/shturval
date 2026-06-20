@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.17.0<br>Аналитика (все категории) и Финансы (1С) на живых данных; устойчивость к сбоям 1С; быстрее прогрев
+      Штурвал v3.18.0<br>Воронка: поиск клиента по нику/имени по всем стадиям
     </div>
   </aside>
 
@@ -414,6 +414,7 @@
       <div id="crm-dash" style="margin-bottom:14px"></div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:6px">🧲 Воронка — перетащи клиента из списка чатов на нужную стадию</div>
       <div class="funnelbar" id="funnelbar"></div>
+      <div style="margin:8px 0"><input id="ck-search" placeholder="🔎 Поиск клиента по нику или имени…" oninput="ckDoSearch(this.value)" style="width:100%;box-sizing:border-box;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 12px;color:var(--text);font-family:inherit;font-size:14px"></div>
       <div class="cockpit">
         <div class="ck-chats" id="cockpit-chats"></div>
         <div class="ck-convo">
@@ -1633,7 +1634,8 @@
     box.innerHTML=cards+chart;
     renderMoney();
   }
-  let dragChat=null, COCKPIT_CHATS=[], ckCurId=null, ckCurName='', ckView='Новая заявка', LAST_CHAT_ERR='';
+  let dragChat=null, COCKPIT_CHATS=[], ckCurId=null, ckCurName='', ckView='Новая заявка', LAST_CHAT_ERR='', ckSearch='';
+  function ckDoSearch(v){ ckSearch=(v||'').trim().toLowerCase(); renderLeft(); }
   function newLeadsCount(){ return COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка'); }).length; }
   function renderFunnel(){
     const fb=document.getElementById('funnelbar'); if(!fb) return;
@@ -1645,7 +1647,7 @@
       ch.addEventListener('drop',e=>{ e.preventDefault(); ch.classList.remove('drop'); dropChatToStage(ch.dataset.status); });
     });
   }
-  function setView(stage){ ckView=stage; renderFunnel(); renderLeft(); }
+  function setView(stage){ ckView=stage; ckSearch=''; const s=document.getElementById('ck-search'); if(s) s.value=''; renderFunnel(); renderLeft(); }
   let dealsAutoTimer=null;
   function startDealsAuto(){
     if(dealsAutoTimer) return;
@@ -1698,7 +1700,17 @@
   function renderLeft(){
     const box=document.getElementById('cockpit-chats'); if(!box) return;
     let items=[];
-    if(ckView==='Новая заявка'){
+    if(ckSearch){
+      // поиск по всем стадиям: клиенты из чатов + из CRM, у кого ник/имя содержит запрос
+      items=COCKPIT_CHATS.filter(c=>c.name&&c.name.toLowerCase().includes(ckSearch)).map(c=>{
+        const d=findDealByName(c.name);
+        return {name:c.name,sub:(d?d.status:(c.status||'новый'))+(c.time?(' · '+c.time):''),chatId:c.id,ts:c.ts||0,unread:!!c.unread};
+      });
+      CRM.deals.forEach(d=>{ const cl=getClient(d.client_id);
+        if(cl.name&&cl.name.toLowerCase().includes(ckSearch)&&!items.some(it=>it.name&&it.name.toLowerCase()===cl.name.toLowerCase()))
+          items.push({name:cl.name,sub:d.status,chatId:null,ts:0,unread:false});
+      });
+    } else if(ckView==='Новая заявка'){
       items=COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка'); }).map(c=>({name:c.name,sub:(c.time||'')+' · '+(c.status||'новый'),chatId:c.id,ts:c.ts||0,unread:!!c.unread}));
     } else {
       items=CRM.deals.filter(d=>d.status===ckView).map(d=>{ const cl=getClient(d.client_id); const chat=COCKPIT_CHATS.find(x=>x.name&&cl.name&&x.name.toLowerCase()===cl.name.toLowerCase()); return {name:cl.name||'Без имени',sub:fmt(dealAmount(d)),chatId:chat?chat.id:null,ts:chat?(chat.ts||0):0,unread:chat?!!chat.unread:false}; });
@@ -1706,7 +1718,9 @@
     // свежие — наверх; ждущие ответа (синяя точка) — ещё выше
     items.sort((a,b)=>(b.unread-a.unread)||(b.ts-a.ts));
     if(!items.length){
-      if(ckView==='Новая заявка' && LAST_CHAT_ERR){
+      if(ckSearch){
+        box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">По запросу «'+esc(ckSearch)+'» клиентов не найдено</div>';
+      } else if(ckView==='Новая заявка' && LAST_CHAT_ERR){
         box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">⏳ Чаты Instagram временно недоступны — ChatPlace ненадолго ограничил запросы. Это пройдёт само, заявки скоро появятся. Можно ничего не делать.</div>';
       } else {
         box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">В стадии «'+esc(ckView)+'» пока пусто</div>';
