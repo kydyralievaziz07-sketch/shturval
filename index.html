@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.19.0<br>Отправка в Instagram: ловим реальные ошибки ChatPlace (раньше «отправлено» показывалось даже при сбое)
+      Штурвал v3.20.0<br>Понятное объяснение, почему сообщение в Instagram не доставлено (правило 24 часов)
     </div>
   </aside>
 
@@ -1796,8 +1796,8 @@
   // Человеческое объяснение, почему сообщение не ушло
   function sendErrText(m){
     m=(m||'').toLowerCase();
-    if(m.includes('window')||m.includes('24')||m.includes('окн')||m.includes('outside')||m.includes('allowed')||m.includes('срок'))
-      return 'Instagram разрешает отвечать клиенту только в течение 24 часов после его последнего сообщения. Время вышло — можно ответить, когда клиент напишет снова.';
+    if(m.includes('window')||m.includes('24')||m.includes('окн')||m.includes('outside')||m.includes('allowed')||m.includes('срок')||m.includes('messaging')||m.includes('reengage')||m.includes('re-engag')||m.includes('policy'))
+      return 'Instagram разрешает отвечать клиенту только в течение 24 часов после его последнего сообщения. Этот клиент писал давно — Instagram заблокировал ответ. Можно будет ответить, когда он напишет снова (или напомнить о себе через сторис/публикацию).';
     if(m.includes('not found')||m.includes('не найден'))
       return 'Чат не найден — возможно, переписку удалили в Instagram.';
     if(m.includes('429')||m.includes('limit')||m.includes('rate')||m.includes('ограничил'))
