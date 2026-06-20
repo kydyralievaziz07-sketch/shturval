@@ -553,6 +553,29 @@ def ig_save_name(igsid, name):
     except Exception:
         pass
 
+def _ig_atts(r):
+    """Вложения сообщения (фото/видео/посты) из сырого webhook."""
+    raw = r.get("raw") or {}
+    out = []
+    for a in ((raw.get("message") or {}).get("attachments") or []):
+        t = a.get("type", "")
+        url = (a.get("payload") or {}).get("url") or ""
+        if url:
+            out.append({"type": t, "url": url})
+    return out
+
+_ATT_LABEL = {"image": "📷 фото", "video": "🎬 видео", "audio": "🎤 голосовое",
+              "share": "🔗 пост", "ig_reel": "🎬 reels", "story_mention": "📖 история",
+              "story_reply": "📖 ответ на историю", "file": "📎 файл"}
+
+def _ig_disp_text(r):
+    """Текст для списка диалогов: сам текст, иначе пометка о вложении."""
+    t = r.get("text") or ""
+    if t:
+        return t
+    atts = _ig_atts(r)
+    return _ATT_LABEL.get(atts[0]["type"], "📎 вложение") if atts else ""
+
 def _ig_pair(r):
     """(наш аккаунт, клиент) из строки ig_inbox независимо от направления."""
     if r.get("direction") == "out":
@@ -578,7 +601,7 @@ def _build_ig_conversations():
         if key not in convos:
             convos[key] = {"account_id": acc, "customer_id": cust,
                            "account": (amap.get(acc) or {}).get("username", acc),
-                           "last_text": r.get("text", ""), "last_ts": int(r.get("ts") or 0),
+                           "last_text": _ig_disp_text(r), "last_ts": int(r.get("ts") or 0),
                            "last_dir": r.get("direction", "in"), "count": 0}
         convos[key]["count"] += 1
     out = sorted(convos.values(), key=lambda c: c["last_ts"], reverse=True)
@@ -598,7 +621,7 @@ def ig_thread(account_id, customer_id):
         if acc == str(account_id) and cust == str(customer_id):
             ts = int(r.get("ts") or 0)
             msgs.append({"t": ("out" if r.get("direction") == "out" else "in"),
-                         "x": r.get("text", ""), "ts": ts,
+                         "x": r.get("text", ""), "ts": ts, "att": _ig_atts(r),
                          "tm": time.strftime("%d.%m %H:%M", time.localtime(ts / 1000)) if ts > 1e12
                                else (time.strftime("%d.%m %H:%M", time.localtime(ts)) if ts else "")})
     msgs.sort(key=lambda m: m["ts"])

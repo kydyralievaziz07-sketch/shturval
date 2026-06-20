@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.43.2<br>Карточка заказа: показывает, на какой аккаунт (bizmart_*) пишет клиент, вместо общего «Instagram»
+      Штурвал v3.44.0<br>Переписка: видны фото прямо в чате, видео и посты — ссылкой
     </div>
   </aside>
 
@@ -2155,7 +2155,17 @@
   function setAmount(v){ if(!ckCurName) return; const d=ensureDeal(ckCurName); d.amount=parseFloat(v)||0; crmPersist(); renderFunnel(); renderCrmStats(); renderCrmDash(); renderLeft(); }
   let convoAutoTimer=null;
   function nowHM(){ const d=new Date(); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)+':'+('0'+d.getSeconds()).slice(-2); }
-  function bubbleHTML(m){ return '<div class="bubble '+m.t+'">'+linkify(m.x)+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>'; }
+  function attHTML(att){
+    let h='';
+    (att||[]).forEach(a=>{
+      if(a.type==='image') h+='<a href="'+esc(a.url)+'" target="_blank" rel="noopener"><img src="'+esc(a.url)+'" loading="lazy" style="max-width:220px;max-height:260px;border-radius:10px;display:block;margin-top:5px"></a>';
+      else if(a.type==='video'||a.type==='ig_reel') h+='<a href="'+esc(a.url)+'" target="_blank" rel="noopener" style="color:#bcd2ff;display:block;margin-top:4px">🎬 видео — открыть</a>';
+      else if(a.type==='audio') h+='<a href="'+esc(a.url)+'" target="_blank" rel="noopener" style="color:#bcd2ff;display:block;margin-top:4px">🎤 голосовое — открыть</a>';
+      else h+='<a href="'+esc(a.url)+'" target="_blank" rel="noopener" style="color:#bcd2ff;display:block;margin-top:4px">🔗 вложение/пост — открыть</a>';
+    });
+    return h;
+  }
+  function bubbleHTML(m){ return '<div class="bubble '+m.t+'">'+linkify(m.x)+attHTML(m.att)+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>'; }
   async function loadConvoMsgs(id, silent){
     const box=document.getElementById('ck-msgs'); if(!box||!id) return;
     const upd=document.getElementById('ck-upd');
@@ -2875,7 +2885,7 @@
       if(!chat){ box.innerHTML='<span style="color:var(--muted)">Переписка не найдена (имя в Instagram может отличаться)</span>'; return; }
       const cid=chat.account_id+'|'+chat.customer_id;
       const r2=await apiFetch('/api/ig/thread?account='+encodeURIComponent(chat.account_id)+'&customer='+encodeURIComponent(chat.customer_id),{},ONEC_BASE); const md=await r2.json();
-      const msgs=(md.msgs||[]).map(m=>'<div class="bubble '+m.t+'" style="max-width:90%">'+linkify(m.x)+'</div>').join('');
+      const msgs=(md.msgs||[]).map(m=>'<div class="bubble '+m.t+'" style="max-width:90%">'+linkify(m.x)+attHTML(m.att)+'</div>').join('');
       box.innerHTML='<div class="msgs" style="max-height:220px;background:var(--bg);border-radius:10px;padding:10px;margin-bottom:8px">'+(msgs||'<span style="color:var(--muted)">Нет сообщений</span>')+'</div>'+
         '<div style="display:flex;gap:8px"><input id="dl-reply" placeholder="Ответить клиенту…" style="flex:1"><button class="btn" onclick="dealReply(\''+cid+'\')">→</button></div>';
       const mb=box.querySelector('.msgs'); if(mb) mb.scrollTop=mb.scrollHeight;
