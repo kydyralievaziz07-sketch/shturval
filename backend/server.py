@@ -500,18 +500,19 @@ def ig_send(recipient_id, text, from_account_id=None):
 
 # имена клиентов по их IGSID. Кэш в памяти + таблица ig_names (БЕЗ живых запросов в момент загрузки).
 _ig_names = {}
-_ig_names_loaded = False
+_ig_names_ts = 0
 def ig_load_names():
-    """Один раз подгрузить все известные имена из БД в память."""
-    global _ig_names_loaded
-    if _ig_names_loaded:
+    """Подгрузить имена из БД в память; обновлять не чаще раза в 5 минут."""
+    global _ig_names_ts
+    if time.time() - _ig_names_ts < 300 and _ig_names:
         return
     try:
-        for row in (_supa("GET", "ig_names", "?company_id=eq.%s&select=igsid,name" % _q(COMPANY_ID)) or []):
+        rows = _supa("GET", "ig_names", "?company_id=eq.%s&select=igsid,name" % _q(COMPANY_ID)) or []
+        for row in rows:
             _ig_names[str(row.get("igsid"))] = row.get("name") or ""
+        _ig_names_ts = time.time()
     except Exception:
         pass
-    _ig_names_loaded = True
 
 def ig_customer_name(igsid, account_id=None):
     """Имя клиента из кэша/БД. НЕ делает живых запросов — загрузка списка должна быть быстрой."""
