@@ -287,7 +287,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.31.0<br>Поставщики: историю операций больше нельзя удалять (крестик убран)
+      Штурвал v3.32.0<br>Поставщики: история защищена — нельзя удалить ни операцию, ни поставщика (и на сервере)
     </div>
   </aside>
 
@@ -1319,8 +1319,7 @@
         '<div style="text-align:right"><div style="font-size:12px;color:var(--muted)">Текущий долг</div><div style="font-size:22px;font-weight:700;color:'+(s.debt>0?'#ff6b6b':'#39d98a')+'"><span class="money" data-som="'+s.debt+'">'+fmt(s.debt)+'</span></div></div></div>'+
         '<div style="display:flex;gap:8px;margin:12px 0;flex-wrap:wrap">'+
         '<button class="btn" onclick="openSupTxn('+s.id+',\'debt\')">📦 Взял товар (+долг)</button>'+
-        '<button class="btn ghost" onclick="openSupTxn('+s.id+',\'payment\')">💸 Отдал деньги (−долг)</button>'+
-        '<button class="btn ghost" style="margin-left:auto" onclick="delSupplier('+s.id+')" title="Удалить поставщика">🗑</button></div>'+
+        '<button class="btn ghost" onclick="openSupTxn('+s.id+',\'payment\')">💸 Отдал деньги (−долг)</button></div>'+
         '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Взял всего: '+fmt(s.total_taken)+' · Отдал всего: '+fmt(s.total_paid)+'</div>'+
         (txns?'<table><tbody>'+txns+'</tbody></table>':'<span style="color:var(--muted);font-size:13px">Операций пока нет</span>')+
         '</div>';

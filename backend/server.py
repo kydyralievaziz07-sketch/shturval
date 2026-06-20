@@ -1755,25 +1755,10 @@ class Handler(BaseHTTPRequestHandler):
                            "amount": round(_num(body.get("amount"))), "qty": _num(body.get("qty")),
                            "note": (body.get("note") or "").strip(), "date": day,
                            "receipt_url": receipt_url, "created_by": who})
-                elif action == "del_txn":
-                    tid = str(body.get("id"))
-                    # удаляем и связанный расход (если это была оплата поставщику)
-                    _supa("DELETE", "expenses", "?company_id=eq.%s&source=eq.supplier&ref_id=eq.%s"
-                          % (_q(COMPANY_ID), _q(tid)))
-                    _supa("DELETE", "supplier_txns",
-                          "?company_id=eq.%s&id=eq.%s" % (_q(COMPANY_ID), _q(tid)))
-                elif action == "del_supplier":
-                    sid = str(body.get("id"))
-                    txns = _supa("GET", "supplier_txns",
-                                 "?company_id=eq.%s&supplier_id=eq.%s&select=id" % (_q(COMPANY_ID), _q(sid)))
-                    ids = [str(t.get("id")) for t in (txns or []) if t.get("id") is not None]
-                    if ids:
-                        _supa("DELETE", "expenses",
-                              "?company_id=eq.%s&source=eq.supplier&ref_id=in.(%s)"
-                              % (_q(COMPANY_ID), ",".join(ids)))
-                    _supa("DELETE", "supplier_txns",
-                          "?company_id=eq.%s&supplier_id=eq.%s" % (_q(COMPANY_ID), _q(sid)))
-                    _supa("DELETE", "suppliers", "?company_id=eq.%s&id=eq.%s" % (_q(COMPANY_ID), _q(sid)))
+                elif action in ("del_txn", "del_supplier"):
+                    # удаление истории поставщиков отключено по решению владельца —
+                    # записи защищены, удалять нельзя ни через интерфейс, ни напрямую
+                    return self._send(403, {"error": "Удаление истории отключено — записи защищены"})
                 else:
                     return self._send(400, {"error": "неизвестное действие"})
                 return self._send(200, {"ok": True, "data": suppliers_list()})
