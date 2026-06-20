@@ -17,11 +17,27 @@
   }
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    background:var(--bg);color:var(--text);display:flex;min-height:100vh}
+    background:var(--bg);color:var(--text);display:flex;flex-direction:column;min-height:100vh}
 
-  /* SIDEBAR */
-  .sidebar{width:240px;background:var(--panel);border-right:1px solid var(--line);
-    padding:22px 16px;display:flex;flex-direction:column;gap:6px;flex-shrink:0}
+  /* TOP NAV (модули сверху) */
+  .topnav{display:flex;align-items:center;gap:8px;background:var(--panel);border-bottom:1px solid var(--line);
+    padding:10px 18px;flex-shrink:0;position:sticky;top:0;z-index:50;flex-wrap:wrap}
+  .tn-logo{font-size:17px;font-weight:700;display:flex;align-items:center;gap:8px;margin-right:10px}
+  .tn-logo .dot{width:11px;height:11px;border-radius:50%;background:var(--accent)}
+  .tn-mods{display:flex;gap:6px;flex:1;flex-wrap:wrap}
+  .tn-mods a{color:var(--muted);text-decoration:none;padding:9px 16px;border-radius:10px;font-size:14px;
+    font-weight:600;cursor:pointer;display:flex;align-items:center;gap:8px;transition:.15s}
+  .tn-mods a:hover{background:var(--panel2);color:var(--text)}
+  .tn-mods a.active{background:var(--accent);color:#fff}
+  .tn-right{display:flex;align-items:center;gap:10px}
+  .tn-set{color:var(--muted);text-decoration:none;cursor:pointer;font-size:13px;padding:9px 13px;border-radius:10px;display:flex;align-items:center;gap:6px}
+  .tn-set:hover{background:var(--panel2);color:var(--text)}
+  .tn-set.active{background:var(--accent);color:#fff}
+  .appbody{display:flex;flex:1;min-height:0}
+
+  /* SIDEBAR (подпункты выбранного модуля) */
+  .sidebar{width:225px;background:var(--panel);border-right:1px solid var(--line);
+    padding:18px 14px;display:flex;flex-direction:column;gap:6px;flex-shrink:0}
   .logo{font-size:18px;font-weight:700;display:flex;align-items:center;gap:10px}
   .logo .dot{width:12px;height:12px;border-radius:50%;background:var(--accent)}
   .logo small{display:block;font-size:11px;color:var(--muted);font-weight:400;margin-top:2px}
@@ -265,28 +281,19 @@
     </form>
   </div>
 
-  <!-- SIDEBAR -->
+  <!-- ВЕРХНЕЕ МЕНЮ: модули -->
+  <header class="topnav">
+    <div class="tn-logo"><span class="dot"></span> Штурвал</div>
+    <nav class="tn-mods" id="topmods"></nav>
+    <a class="tn-set" id="tn-set"><span>⚙️</span> Настройки</a>
+  </header>
+
+  <div class="appbody">
+  <!-- СЛЕВА: подпункты выбранного модуля -->
   <aside class="sidebar">
-    <div class="logo"><span class="dot"></span> Штурвал
-      <small>пульт Бизмарт</small>
-    </div>
-    <nav class="nav">
-      <a class="active" data-tab="dash"><span class="ico">📊</span> Дашборд</a>
-      <a data-tab="myday"><span class="ico">🎯</span> Мой день</a>
-      <a data-tab="crm"><span class="ico">📡</span> Живые данные</a>
-      <a data-tab="deals"><span class="ico">🧲</span> Штурвал CRM</a>
-      <a data-tab="prod"><span class="ico">📦</span> Товары</a>
-      <a data-tab="sales"><span class="ico">🛒</span> Продажи</a>
-      <a data-tab="clients"><span class="ico">👥</span> Клиенты</a>
-      <a data-tab="analytics"><span class="ico">📈</span> Аналитика</a>
-      <a data-tab="fin"><span class="ico">💰</span> Финансы (1С)</a>
-      <a data-tab="supl"><span class="ico">🤝</span> Поставщики</a>
-      <a data-tab="ai"><span class="ico">🤖</span> ИИ-помощник</a>
-      <a data-tab="hr"><span class="ico">🗓</span> Кадры</a>
-      <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
-    </nav>
+    <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.44.1<br>Переписка: время сообщения видно сразу (в т.ч. у только что отправленных)
+      Штурвал v3.45.0<br>Новое меню: разделы сверху, подпункты слева (как в amoCRM)
     </div>
   </aside>
 
@@ -703,7 +710,14 @@
       </div>
     </section>
 
+    <!-- ЗАДАЧИ -->
+    <section id="tab-tasks" class="hide">
+      <div class="note" style="margin-bottom:14px">✅ Задачи и напоминания по клиентам. Добавить задачу можно в карточке заказа: <b>Сделки → клиент → Задачи</b>.</div>
+      <div id="tasks-body"></div>
+    </section>
+
   </main>
+  </div><!-- /appbody -->
 
   <!-- ОКНО: ДОБАВИТЬ ТОВАР -->
   <div class="modal-bg" id="addbg">
@@ -862,11 +876,12 @@
 
 <script>
   const titles = {
-    dash     :["Дашборд","Магазин Бизмарт — общая картина"],
+    dash     :["Рабочий стол","Магазин Бизмарт — общая картина"],
     myday    :["Мой день","Твой план, продажи и KPI на сегодня"],
     crm      :["Живые данные","Реальные сделки и воронки из amoCRM"],
-    deals    :["Штурвал CRM","Заявки, воронка, переписка и отчёты в одном окне"],
-    iginbox  :["Instagram","Переписки из Instagram напрямую — без ChatPlace"],
+    deals    :["Сделки","Воронка, переписка и заявки в одном окне"],
+    tasks    :["Задачи","Дела и напоминания по клиентам"],
+    iginbox  :["Instagram","Переписки из Instagram напрямую"],
     chats    :["Чаты","Переписки с клиентами"],
     prod     :["Товары","Каталог, остатки и маржа"],
     sales    :["Продажи","Продажи за день и за период"],
@@ -876,36 +891,80 @@
     fin      :["Финансы","Выручка, прибыль, расходы и чистая прибыль"],
     supl     :["Поставщики","Что брал, сколько должен, сколько отдал"],
     ai       :["ИИ-помощник","Подсказки, прогнозы и чат по данным"],
-    staff    :["Персонал","Сотрудники, роли и зоны ответственности"],
-    hr       :["Кадры","Явка, авансы и премии сотрудников"],
+    hr       :["Кадры","Явка, часы, авансы и премии"],
     set      :["Настройки","Доступы и интеграции"]
   };
-  document.querySelectorAll('.nav a').forEach(link=>{
-    link.addEventListener('click',()=>{
-      document.querySelectorAll('.nav a').forEach(l=>l.classList.remove('active'));
-      link.classList.add('active');
-      const tab=link.dataset.tab;
-      document.querySelectorAll('main section').forEach(s=>s.classList.add('hide'));
-      document.getElementById('tab-'+tab).classList.remove('hide');
-      document.getElementById('page-title').textContent=titles[tab][0];
-      document.getElementById('page-sub').textContent=titles[tab][1];
-      if(tab==='crm') loadCRM();
-      if(tab==='myday') renderMyDay();
-      if(tab==='hr') loadHR();
-      if(tab==='clients') renderClients();
-      if(tab==='ai') aiInit();
-      if(tab==='deals'){ renderBoard(); startDealsAuto(); }
-      if(tab==='chats') loadChats();
-      if(tab==='prod'){ loadInventory(); loadProducts(); startProdAuto(); }
-      if(tab==='sales'){ loadSales(); startSalesAuto(); }
-      if(tab==='dash') loadDashSales();
-      if(tab==='analytics') renderAnalytics();
-      if(tab==='fin') renderFinance();
-      if(tab==='supl') loadSuppliers();
-      if(tab==='market'){ const i=document.getElementById('mkt-q'); if(i) i.focus(); }
-      window.scrollTo(0,0);
-    });
-  });
+  // ===== Навигация: модули сверху, подпункты слева (как в amoCRM) =====
+  const TABMETA={
+    dash:{icon:'📊',label:'Рабочий стол'}, deals:{icon:'🧲',label:'Сделки'},
+    tasks:{icon:'✅',label:'Задачи'}, clients:{icon:'👥',label:'Клиенты'},
+    analytics:{icon:'📈',label:'Аналитика'}, crm:{icon:'📡',label:'Живые данные'},
+    prod:{icon:'📦',label:'Товары'}, sales:{icon:'🛒',label:'Продажи'},
+    supl:{icon:'🤝',label:'Поставщики'}, fin:{icon:'💰',label:'Финансы'},
+    myday:{icon:'🎯',label:'Мой день'}, hr:{icon:'🗓',label:'Кадры'},
+    ai:{icon:'🤖',label:'ИИ-помощник'}
+  };
+  const MODULES=[
+    {key:'crm',  icon:'🧲', label:'CRM',     tabs:['dash','deals','tasks','clients','analytics','crm']},
+    {key:'shop', icon:'📦', label:'Магазин', tabs:['prod','sales','supl','fin']},
+    {key:'team', icon:'👥', label:'Команда', tabs:['myday','hr']},
+    {key:'ai',   icon:'🤖', label:'ИИ',      tabs:['ai']}
+  ];
+  let curModule='crm', curTab='dash';
+  function tabVisible(tab){
+    if(tab==='set'||tab==='myday') return true;
+    if(tab==='hr') return isOwner()||USER.sections.indexOf('hr')>=0;
+    if(tab==='dash') return isOwner()||canSee('dash')||canSee('crm');
+    return canSee(tab);
+  }
+  function moduleVisible(m){ return m.tabs.some(tabVisible); }
+  function dispatchTab(tab){
+    if(tab==='crm') loadCRM();
+    else if(tab==='myday') renderMyDay();
+    else if(tab==='hr') loadHR();
+    else if(tab==='clients') renderClients();
+    else if(tab==='ai') aiInit();
+    else if(tab==='deals'){ renderBoard(); startDealsAuto(); }
+    else if(tab==='tasks') renderTasks();
+    else if(tab==='prod'){ loadInventory(); loadProducts(); startProdAuto(); }
+    else if(tab==='sales'){ loadSales(); startSalesAuto(); }
+    else if(tab==='dash') loadDashSales();
+    else if(tab==='analytics') renderAnalytics();
+    else if(tab==='fin') renderFinance();
+    else if(tab==='supl') loadSuppliers();
+  }
+  function openTab(tab){
+    curTab=tab;
+    const mod=MODULES.find(m=>m.tabs.indexOf(tab)>=0); if(mod) curModule=mod.key;
+    document.querySelectorAll('main section').forEach(s=>s.classList.add('hide'));
+    const sec=document.getElementById('tab-'+tab); if(sec) sec.classList.remove('hide');
+    if(titles[tab]){ const pt=document.getElementById('page-title'),ps=document.getElementById('page-sub'); if(pt)pt.textContent=titles[tab][0]; if(ps)ps.textContent=titles[tab][1]; }
+    renderTopNav(); renderSubmenu();
+    dispatchTab(tab);
+    window.scrollTo(0,0);
+  }
+  function renderTopNav(){
+    const tm=document.getElementById('topmods');
+    if(tm){
+      tm.innerHTML=MODULES.filter(moduleVisible).map(m=>'<a data-mod="'+m.key+'"'+((m.key===curModule&&curTab!=='set')?' class="active"':'')+'><span>'+m.icon+'</span> '+esc(m.label)+'</a>').join('');
+      tm.querySelectorAll('a').forEach(a=>a.addEventListener('click',()=>selectModule(a.dataset.mod)));
+    }
+    const setBtn=document.getElementById('tn-set'); if(setBtn) setBtn.classList.toggle('active',curTab==='set');
+  }
+  function renderSubmenu(){
+    const sb=document.getElementById('submenu'); if(!sb) return;
+    const m=MODULES.find(x=>x.key===curModule);
+    const tabs=m?m.tabs.filter(tabVisible):[];
+    sb.innerHTML=tabs.map(t=>'<a data-tab="'+t+'"'+(t===curTab?' class="active"':'')+'><span class="ico">'+(TABMETA[t]?TABMETA[t].icon:'')+'</span> '+esc(TABMETA[t]?TABMETA[t].label:t)+'</a>').join('');
+    sb.querySelectorAll('a').forEach(a=>a.addEventListener('click',()=>openTab(a.dataset.tab)));
+  }
+  function selectModule(key){
+    const m=MODULES.find(x=>x.key===key); if(!m) return;
+    curModule=key; renderTopNav(); renderSubmenu();
+    const tabs=m.tabs.filter(tabVisible);
+    if(tabs.length) openTab(tabs.indexOf(curTab)>=0?curTab:tabs[0]);
+  }
+  (function(){ const sb=document.getElementById('tn-set'); if(sb) sb.addEventListener('click',()=>openTab('set')); })();
   // переключатель периода (Сегодня / Неделя / Месяц) — фильтрует живые данные CRM
   let PERIOD='week';
   document.querySelectorAll('#periodsw button').forEach(b=>{
@@ -962,27 +1021,17 @@
     applyAccess();
   }
   function applyAccess(){
-    let first=null;
-    document.querySelectorAll('.nav a').forEach(a=>{
-      const t=a.dataset.tab;
-      let show;
-      if(t==='set'||t==='myday') show=true;        // «Настройки» и «Мой день» — всем
-      else if(t==='staff') show=isOwner();         // «Персонал» — только владельцу
-      else if(t==='hr') show=isOwner()||USER.sections.indexOf('hr')>=0;  // «Кадры» — владелец и HR
-      else if(t==='iginbox') show=isOwner()||USER.sections.indexOf('chats')>=0;  // «Instagram» — владелец и кто ведёт чаты
-      else show=canSee(t);
-      a.style.display=show?'':'none';
-      if(show && t!=='set' && !first) first=a;     // по умолчанию — первый рабочий раздел
-    });
-    if(!first) first=document.querySelector('.nav a[data-tab="set"]');  // если разделов нет — хотя бы Настройки
-    // колокольчик «Требует внимания» (товары/продажи) — только тем, кто видит торговлю
+    // первый доступный модуль и его первая вкладка
+    const firstMod=MODULES.find(moduleVisible);
+    if(firstMod){ curModule=firstMod.key; const t=firstMod.tabs.filter(tabVisible); curTab=t[0]||'set'; }
+    else { curModule='crm'; curTab='set'; }
+    renderTopNav(); renderSubmenu(); openTab(curTab);
+    // колокольчик «Требует внимания» — только тем, кто видит торговлю
     const bell=document.getElementById('bell-btn');
     if(bell){ bell.style.display=(isOwner()||canSee('prod')||canSee('crm')||canSee('dash'))?'':'none'; }
     const u=document.querySelector('.user'); if(u&&u.childNodes[0]) u.childNodes[0].nodeValue=(USER.name||'Пользователь')+' ';
     const av=document.querySelector('.avatar'); if(av) av.textContent=(USER.name||'?').slice(0,1).toUpperCase();
     updateSettings();
-    const active=document.querySelector('.nav a.active');
-    if((!active||active.style.display==='none')&&first) first.click();
   }
   function updateSettings(){
     const el=document.getElementById('set-info'); if(!el) return;
@@ -2484,6 +2533,22 @@
     }
   }
   // =================== КЛИЕНТЫ ===================
+  function renderTasks(){
+    const box=document.getElementById('tasks-body'); if(!box) return;
+    const tasks=(CRM.tasks||[]).filter(t=>!t.done);
+    if(!tasks.length){ box.innerHTML='<div class="card"><span style="color:var(--muted);font-size:13px">Задач нет. Добавить задачу можно в карточке заказа: Сделки → клиент → Задачи.</span></div>'; return; }
+    const now=Date.now(); const endToday=new Date(); endToday.setHours(23,59,59,999);
+    const grp={overdue:[],today:[],later:[],nodate:[]};
+    tasks.forEach(t=>{ if(!t.due_at) grp.nodate.push(t); else { const d=new Date(t.due_at).getTime(); if(d<now) grp.overdue.push(t); else if(d<=endToday.getTime()) grp.today.push(t); else grp.later.push(t); } });
+    const row=t=>{ const d=getDeal(t.deal_id); const cl=d?getClient(d.client_id):null;
+      return '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)">'+
+        '<input type="checkbox" onchange="taskDone(\''+t.id+'\')" style="width:18px;height:18px;cursor:pointer">'+
+        '<div style="flex:1"><div>'+esc(t.title)+'</div>'+(cl?'<div style="font-size:12px;color:var(--accent);cursor:pointer" onclick="openDeal(\''+d.id+'\')">👤 '+esc(cl.name||'клиент')+'</div>':'')+'</div>'+
+        '<div style="font-size:12px;color:var(--muted);white-space:nowrap">'+(t.due_at?fmtDT(t.due_at):'')+'</div></div>'; };
+    const sect=(title,arr,color)=> arr.length?'<div class="card" style="margin-bottom:14px"><h3 style="color:'+color+'">'+title+' ('+arr.length+')</h3>'+arr.sort((a,b)=>new Date(a.due_at||0)-new Date(b.due_at||0)).map(row).join('')+'</div>':'';
+    box.innerHTML=sect('🔴 Просроченные',grp.overdue,'#ff6b6b')+sect('🟡 Сегодня',grp.today,'#f1bc37')+sect('🟢 Предстоящие',grp.later,'var(--green)')+sect('⚪ Без срока',grp.nodate,'var(--muted)');
+  }
+  function taskDone(id){ const t=(CRM.tasks||[]).find(x=>x.id===id); if(t){ t.done=true; crmPersist(); renderTasks(); } }
   function renderClients(){
     const PAID=['Оплачено','Отгружено','Закрыто'];
     const clients=CRM.clients||[]; const deals=CRM.deals||[];
