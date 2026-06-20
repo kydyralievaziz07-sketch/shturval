@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.33.0<br>Кадры: часы вводятся прямо у сотрудника (сколько отработал сегодня) вместо отметки целого дня
+      Штурвал v3.34.0<br>Поставщики: поиск и сортировка крупнее и в цвете дашборда (синий акцент)
     </div>
   </aside>
 
@@ -630,12 +630,14 @@
       </div>
       <div id="supl-status" class="note" style="margin-bottom:14px">⏳ Загружаю…</div>
       <div class="kpis" id="supl-kpis"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:16px">
-        <input id="supl-search" placeholder="🔍 Поиск поставщика…" oninput="renderSuppliers()" style="flex:1;min-width:180px">
-        <select id="supl-sort" onchange="renderSuppliers()" style="width:auto">
-          <option value="debt">Сортировка: долг ↓ (от большего)</option>
-          <option value="debt_asc">Долг ↑ (от меньшего)</option>
-          <option value="name">По имени (А–Я)</option>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:18px">
+        <input id="supl-search" placeholder="🔍  Поиск поставщика…" oninput="renderSuppliers()"
+          style="flex:1;min-width:220px;font-size:17px;padding:15px 18px;border-radius:14px;background:var(--panel2);color:var(--text);border:2px solid var(--accent);font-family:inherit;outline:none">
+        <select id="supl-sort" onchange="renderSuppliers()"
+          style="font-size:16px;padding:15px 16px;border-radius:14px;background:var(--accent);color:#fff;border:2px solid var(--accent);font-family:inherit;font-weight:600;cursor:pointer;outline:none">
+          <option value="debt" style="background:var(--panel);color:var(--text)">⬇ Долг: от большего</option>
+          <option value="debt_asc" style="background:var(--panel);color:var(--text)">⬆ Долг: от меньшего</option>
+          <option value="name" style="background:var(--panel);color:var(--text)">🔤 По имени (А–Я)</option>
         </select>
       </div>
       <div id="supl-list" style="margin-top:16px"></div>
