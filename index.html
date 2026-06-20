@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.28.0<br>Поставщики: поиск, сортировка по долгу, видно кто из сотрудников вносил операцию
+      Штурвал v3.29.0<br>Кадры: HR-руководитель может менять план отделов на день (не только владелец)
     </div>
   </aside>
 
@@ -2503,7 +2503,8 @@
   async function dpSetFact(dep,val){ const v=dpNum(val); if(v===null) return; await dpPost({action:'setfact',department:dep,fact:v}); }
   function renderDeptPlans(){
     const wrap=document.getElementById('hr-plans'); if(!wrap) return;
-    if(!isOwner()){ wrap.innerHTML=''; return; }      // планы отделов — только у владельца
+    const canEditPlan=isOwner()||((USER.sections||[]).indexOf('hr')>=0);
+    if(!canEditPlan){ wrap.innerHTML=''; return; }    // планы отделов — владелец и HR/Кадры
     if(!DEPT_PLANS.length){ wrap.innerHTML=''; return; }
     const ed=true;
     const inp='padding:5px 8px;width:115px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:13px';
