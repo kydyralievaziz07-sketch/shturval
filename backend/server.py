@@ -1259,27 +1259,33 @@ def payroll_view(user, rec=None):
     days = r.get("days") or {}
     hrs = r.get("hours") or {}
     m = _cur_month(); today = _today_str()
-    pd = _present_in_month(days, m) if days else int(r.get("present_days") or 0)
     sal = float(user.get("salary_month") or 0)
     rate = float(user.get("daily_rate") or 0)
     if rate <= 0 and sal > 0:
         rate = round(sal / 30.0)            # оклад ÷ 30 (магазин работает каждый день)
-    hourly_rate = round(rate / SHIFT_HOURS) if rate > 0 else 0   # цена часа
-    hours_month = round(sum(float(v or 0) for d, v in hrs.items()
-                            if isinstance(d, str) and d[:7] == m), 1)
-    use_hourly = hours_month > 0            # «часы вместо дней»: если есть часы — считаем по часам
-    if use_hourly:
-        accrued = round(hours_month * rate / SHIFT_HOURS)
-    else:
-        accrued = round(pd * rate)
+    hr_precise = (rate / SHIFT_HOURS) if rate > 0 else 0.0
+    hourly_rate = round(hr_precise)         # цена часа (для показа)
+    # По каждому дню: если есть часы — день частичный, считаем по часам;
+    # иначе если отмечен «пришёл» — полный день по ставке. («пришёл» + часы → по часам.)
+    dates = set([d for d in days.keys() if isinstance(d, str) and d[:7] == m] +
+                [d for d in hrs.keys() if isinstance(d, str) and d[:7] == m])
+    present_days = 0; partial_days = 0; hours_month = 0.0; accrued = 0.0
+    for d in dates:
+        h = float(hrs.get(d) or 0)
+        if h > 0:
+            accrued += h * hr_precise; hours_month += h; partial_days += 1
+        elif days.get(d) == "p":
+            accrued += rate; present_days += 1
+    accrued = round(accrued); hours_month = round(hours_month, 1)
     bonus = float(r.get("bonus") or 0); adv = float(r.get("advance") or 0)
     return {"name": name, "login": user.get("login", ""),
             "role": user.get("role", ""), "department": user.get("department", ""),
             "salary_month": sal, "daily_rate": rate, "bonus_month": float(user.get("bonus_month") or 0),
-            "present_days": pd, "accrued": accrued, "bonus": bonus,
+            "present_days": present_days, "partial_days": partial_days,
+            "accrued": accrued, "bonus": bonus,
             "hourly_rate": hourly_rate, "shift_hours": SHIFT_HOURS,
             "hours_month": hours_month, "hours_today": float(hrs.get(today) or 0),
-            "pay_mode": "hourly" if use_hourly else "daily", "hours": hrs,
+            "hours": hrs,
             "advance": adv, "to_receive": round(accrued + bonus - adv), "days": days,
             "marked_today": days.get(today) == "p", "marked_absent_today": days.get(today) == "a"}
 

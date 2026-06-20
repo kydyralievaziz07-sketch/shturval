@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.34.0<br>Поставщики: поиск и сортировка крупнее и в цвете дашборда (синий акцент)
+      Штурвал v3.35.0<br>Кадры: «пришёл/не пришёл» (целый день) + дополнительно часы, если отработал не весь день
     </div>
   </aside>
 
@@ -2248,17 +2248,15 @@
         '<div style="font-size:11px;color:var(--muted);margin-top:8px">Дни отмечает HR-менеджер. Оклад пока не задан.</div></div>';
       return;
     }
-    const hourly=(v.pay_mode==='hourly');
-    const subline=hourly
-      ? 'Отработано часов: <b style="color:var(--text)">'+(v.hours_month||0)+' ч</b> · цена часа '+fmt(v.hourly_rate||0)+' сом'
-      : 'Отработано дней: <b style="color:var(--text)">'+v.present_days+'</b> · ставка '+fmt(v.daily_rate)+' сом/день';
+    const subline='Отработано дней: <b style="color:var(--text)">'+(v.present_days||0)+'</b> · ставка '+fmt(v.daily_rate)+' сом/день'+
+      ((v.partial_days>0)?(' · ещё '+v.hours_month+' ч частично (по '+fmt(v.hourly_rate||0)+' сом/ч)'):'');
     box.innerHTML='<div class="card" style="margin-top:16px"><h3>💼 Зарплата за '+mName+'</h3>'+
       '<div style="font-size:12px;color:var(--muted);margin-bottom:12px">'+subline+'</div>'+
-      payBar(hourly?'💰 Зарплата по часам (накоплено)':'💰 Зарплата (накоплено)',v.accrued,v.salary_month,'#39d98a')+
+      payBar('💰 Зарплата (накоплено)',v.accrued,v.salary_month,'#39d98a')+
       payBar('🎁 Премия',v.bonus,v.bonus_month,'#a78bfa')+
       payBar('💸 Аванс (взято)',v.advance,v.salary_month,'#ffb84d')+
       '<div style="border-top:1px solid var(--line);margin-top:6px;padding-top:12px;display:flex;justify-content:space-between;font-size:15px"><span>К выплате сейчас:</span><b><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span> сом</b></div>'+
-      '<div style="font-size:11px;color:var(--muted);margin-top:8px">'+(hourly?'Зарплата считается по отработанным часам, которые вносит HR.':'Зарплата растёт каждый день, когда HR отмечает «пришёл на работу».')+'</div></div>';
+      '<div style="font-size:11px;color:var(--muted);margin-top:8px">Полный день считается по ставке. Если отработал не весь день, HR вписывает часы — тогда день считается по часам.</div></div>';
     renderMoney();
   }
   // =================== ИИ-ПОМОЩНИК МАГАЗИНА ===================
@@ -2499,7 +2497,9 @@
   // --- Часы (почасовая оплата) — ввод прямо в «Кадрах» у каждого сотрудника ---
   function hNum(v){ const n=parseFloat((v||'').toString().replace(/\s/g,'').replace(',','.')); return isNaN(n)||n<0?null:Math.min(24,n); }
   async function hSetHours(login,date,valStr){
-    const v=hNum(valStr); if(v===null){ alert('Введите часы числом (например 10,5)'); return; }
+    const s=(valStr||'').toString().trim();
+    const v=(s==='')?0:hNum(s);            // пусто = убрать часы (день снова по ставке)
+    if(v===null){ alert('Введите часы числом (например 10,5)'); return; }
     try{
       const r=await apiFetch('/api/payroll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_hours',login:login,date:date,hours:v})},ONEC_BASE);
       const d=await r.json(); if(d&&d.error) throw new Error(d.error);
@@ -2584,17 +2584,22 @@
   function hrRow(v,rid){
     const lg=jsn(v.login||v.name);
     const td=salesTodayStr();
-    const todayH=(v.hours&&v.hours[td])||v.hours_today||'';
-    const inpH='padding:5px 8px;width:74px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:14px;text-align:center';
+    const todayH=(v.hours&&v.hours[td])||'';
+    const inpH='padding:5px 8px;width:62px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:14px;text-align:center';
     const hourlyRate=v.hourly_rate||0;
-    // ввод часов «сегодня» прямо у сотрудника — вместо отметки целого дня
-    const hoursCtrl='<div style="display:flex;align-items:center;gap:6px" title="Цена часа: '+fmt(hourlyRate)+' сом">'+
-        '<span style="font-size:12px;color:var(--muted)">часов сегодня</span>'+
-        '<input type="number" inputmode="decimal" step="0.5" min="0" value="'+todayH+'" placeholder="0" onchange="hSetHours(\''+lg+'\',\''+td+'\',this.value)" style="'+inpH+'"><span style="font-size:12px;color:var(--muted)">ч</span>'+
+    // ОСНОВНОЕ: пришёл / не пришёл (целый день)
+    const presentBtn=v.marked_today
+      ? '<button class="btn" style="padding:5px 10px;font-size:12px;background:var(--green);color:#06121f" onclick="hrMark(\''+lg+'\',\'unpresent\')">✓ был</button>'
+      : '<button class="btn" style="padding:5px 10px;font-size:12px" onclick="hrMark(\''+lg+'\',\'present\')">Пришёл</button>';
+    const absentBtn=v.marked_absent_today
+      ? '<button class="btn" style="padding:5px 10px;font-size:12px;background:var(--red);color:#fff" onclick="hrMark(\''+lg+'\',\'unpresent\')">✗ не пришёл</button>'
+      : '<button class="btn ghost" style="padding:5px 10px;font-size:12px" onclick="hrMark(\''+lg+'\',\'absent\')">Не пришёл</button>';
+    // ДОПОЛНИТЕЛЬНО: если отработал не весь день — вписать часы (тогда день считается по часам)
+    const hoursCtrl='<div style="display:flex;align-items:center;gap:5px" title="Если не весь день. Цена часа: '+fmt(hourlyRate)+' сом">'+
+        '<span style="font-size:12px;color:var(--muted)">или часов:</span>'+
+        '<input type="number" inputmode="decimal" step="0.5" min="0" value="'+todayH+'" placeholder="—" onchange="hSetHours(\''+lg+'\',\''+td+'\',this.value)" style="'+inpH+'"><span style="font-size:12px;color:var(--muted)">ч</span>'+
       '</div>';
-    const subMonth=(v.hours_month>0)
-      ? '· '+v.hours_month+' ч за месяц'
-      : '· '+v.present_days+' дн';
+    const subMonth='· '+(v.present_days||0)+' дн'+((v.partial_days>0)?(' · '+v.hours_month+' ч частично'):'');
     const payInfo=v.salary_month
       ? '<div style="font-size:12px;color:var(--muted)">К выплате <b style="color:var(--text)"><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span></b>'+
           ((v.advance||v.bonus)?(' <span style="opacity:.7">(ав '+fmt(v.advance)+' · пр '+fmt(v.bonus)+')</span>'):'')+'</div>'
@@ -2603,7 +2608,7 @@
       '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">'+
         '<div style="min-width:150px"><b>'+esc(v.name)+'</b> <span style="color:var(--muted);font-size:12px">'+subMonth+'</span></div>'+
         payInfo+
-        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+hoursCtrl+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+presentBtn+absentBtn+hoursCtrl+
           '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHra(\''+lg+'\',\'advance\')" title="Аванс">💸 Аванс</button>'+
           '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHra(\''+lg+'\',\'bonus\')" title="Премия">🎁 Премия</button>'+
           '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHrCal(\''+lg+'\')" title="Календарь явки">📅 Календарь</button>'+
