@@ -283,11 +283,10 @@
       <a data-tab="supl"><span class="ico">🤝</span> Поставщики</a>
       <a data-tab="ai"><span class="ico">🤖</span> ИИ-помощник</a>
       <a data-tab="hr"><span class="ico">🗓</span> Кадры</a>
-      <a data-tab="hours"><span class="ico">⏱</span> Часы</a>
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.32.0<br>Поставщики: история защищена — нельзя удалить ни операцию, ни поставщика (и на сервере)
+      Штурвал v3.33.0<br>Кадры: часы вводятся прямо у сотрудника (сколько отработал сегодня) вместо отметки целого дня
     </div>
   </aside>
 
@@ -642,20 +641,6 @@
       <div id="supl-list" style="margin-top:16px"></div>
     </section>
 
-    <!-- ЧАСЫ (почасовая оплата) -->
-    <section id="tab-hours" class="hide">
-      <div class="toolbar" style="margin-bottom:12px">
-        <div style="font-size:12px;color:var(--muted)">⏱ Почасовая оплата: впиши отработанные часы — посчитаю зарплату (цена часа = ставка/день ÷ 10,5)</div>
-      </div>
-      <div class="note" style="margin-bottom:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <span>📅 День:</span>
-        <input type="date" id="hours-date" onchange="renderHours()" style="width:auto">
-        <span style="color:var(--muted);font-size:12px">Можно вписывать задним числом за любой день месяца. Итог за месяц считается по всем дням.</span>
-      </div>
-      <input id="hours-search" placeholder="🔍 Поиск сотрудника…" oninput="renderHours()" style="width:100%;margin-bottom:14px">
-      <div id="hours-body"></div>
-    </section>
-
     <!-- AI -->
     <section id="tab-ai" class="hide">
       <div class="card" style="display:flex;flex-direction:column;height:72vh;padding:0;overflow:hidden">
@@ -898,7 +883,6 @@
       if(tab==='analytics') renderAnalytics();
       if(tab==='fin') renderFinance();
       if(tab==='supl') loadSuppliers();
-      if(tab==='hours') loadHours();
       if(tab==='market'){ const i=document.getElementById('mkt-q'); if(i) i.focus(); }
       window.scrollTo(0,0);
     });
@@ -962,7 +946,7 @@
       let show;
       if(t==='set'||t==='myday') show=true;        // «Настройки» и «Мой день» — всем
       else if(t==='staff') show=isOwner();         // «Персонал» — только владельцу
-      else if(t==='hr'||t==='hours') show=isOwner()||USER.sections.indexOf('hr')>=0;  // «Кадры»/«Часы» — владелец и HR
+      else if(t==='hr') show=isOwner()||USER.sections.indexOf('hr')>=0;  // «Кадры» — владелец и HR
       else show=canSee(t);
       a.style.display=show?'':'none';
       if(show && t!=='set' && !first) first=a;     // по умолчанию — первый рабочий раздел
@@ -2510,51 +2494,15 @@
       renderHR(); if(st) st.style.display='none';
     }catch(e){ if(st){ st.style.display=''; st.innerHTML='Не удалось загрузить (сервер мог просыпаться). Обнови через минуту.'; } }
   }
-  // --- Часы (почасовая оплата) ---
-  async function loadHours(){
-    const dt=document.getElementById('hours-date'); if(dt&&!dt.value) dt.value=salesTodayStr();
-    const body=document.getElementById('hours-body'); if(body) body.innerHTML='<div class="card"><span style="color:var(--muted)">Загрузка…</span></div>';
-    try{
-      const r=await apiFetch('/api/payroll',{},ONEC_BASE); const d=await r.json();
-      HR_LIST=d.all||(d.me?[d.me]:[]);
-      renderHours();
-    }catch(e){ if(body) body.innerHTML='<div class="card"><span style="color:var(--muted)">Не удалось загрузить (сервер мог просыпаться). Обнови через минуту.</span></div>'; }
-  }
+  // --- Часы (почасовая оплата) — ввод прямо в «Кадрах» у каждого сотрудника ---
   function hNum(v){ const n=parseFloat((v||'').toString().replace(/\s/g,'').replace(',','.')); return isNaN(n)||n<0?null:Math.min(24,n); }
   async function hSetHours(login,date,valStr){
     const v=hNum(valStr); if(v===null){ alert('Введите часы числом (например 10,5)'); return; }
     try{
       const r=await apiFetch('/api/payroll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_hours',login:login,date:date,hours:v})},ONEC_BASE);
       const d=await r.json(); if(d&&d.error) throw new Error(d.error);
-      if(d&&d.view){ const i=HR_LIST.findIndex(x=>(x.login||'')===login); if(i>=0) HR_LIST[i]=d.view; renderHours(); }
+      if(d&&d.view){ const i=HR_LIST.findIndex(x=>(x.login||'')===login); if(i>=0) HR_LIST[i]=d.view; renderHR(); }
     }catch(e){ alert('Не удалось сохранить (сервер мог просыпаться). Попробуй ещё раз.'); }
-  }
-  function renderHours(){
-    const box=document.getElementById('hours-body'); if(!box) return;
-    const date=(document.getElementById('hours-date')||{}).value||salesTodayStr();
-    const q=((document.getElementById('hours-search')||{}).value||'').trim().toLowerCase();
-    let list=(HR_LIST||[]).filter(e=>!q || (e.name||'').toLowerCase().includes(q) || (e.department||'').toLowerCase().includes(q));
-    list=list.slice().sort((a,b)=> (a.department||'').localeCompare(b.department||'','ru') || (a.name||'').localeCompare(b.name||'','ru'));
-    if(!list.length){ box.innerHTML='<div class="card"><span style="color:var(--muted);font-size:13px">Сотрудников нет'+(q?' по запросу «'+esc(q)+'»':'')+'.</span></div>'; return; }
-    const inp='padding:6px 9px;width:90px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:14px;text-align:center';
-    let totalMonth=0, totalPay=0;
-    const rows=list.map(e=>{
-      const login=e.login||''; const dayH=(e.hours&&e.hours[date])||''; const rate=e.hourly_rate||0;
-      totalMonth+=(e.hours_month||0); totalPay+=(e.pay_mode==='hourly'?(e.accrued||0):0);
-      return '<div class="card" style="margin-bottom:10px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">'+
-        '<div style="flex:1;min-width:150px"><div style="font-weight:700">'+esc(e.name)+'</div>'+
-          '<div style="font-size:12px;color:var(--muted)">'+esc(e.department||'—')+' · цена часа: <b><span class="money" data-som="'+rate+'">'+fmt(rate)+'</span></b></div></div>'+
-        '<div style="text-align:center"><div style="font-size:11px;color:var(--muted);margin-bottom:2px">часов за день</div>'+
-          '<input type="number" inputmode="decimal" step="0.5" value="'+dayH+'" placeholder="0" onchange="hSetHours(\''+jsn(login)+'\',\''+date+'\',this.value)" style="'+inp+'"></div>'+
-        '<div style="text-align:center;min-width:70px"><div style="font-size:11px;color:var(--muted)">за месяц</div><div style="font-weight:700">'+(e.hours_month||0)+' ч</div></div>'+
-        '<div style="text-align:right;min-width:90px"><div style="font-size:11px;color:var(--muted)">начислено</div><div style="font-weight:700;color:var(--green)"><span class="money" data-som="'+(e.pay_mode==='hourly'?(e.accrued||0):0)+'">'+fmt(e.pay_mode==='hourly'?(e.accrued||0):0)+'</span></div></div>'+
-      '</div>';
-    }).join('');
-    box.innerHTML='<div class="card kpi" style="margin-bottom:14px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px">'+
-        '<div><div class="label">Всего часов за месяц</div><div class="value">'+Math.round(totalMonth*10)/10+' ч</div></div>'+
-        '<div><div class="label">Начислено по часам (месяц)</div><div class="value" style="color:var(--green)"><span class="money" data-som="'+Math.round(totalPay)+'">'+fmt(Math.round(totalPay))+'</span></div></div>'+
-      '</div>'+rows;
-    renderMoney();
   }
   // --- Планы по отделам ---
   async function dpPost(body){
@@ -2619,7 +2567,8 @@
     order.forEach((d,di)=>{
       const arr=groups[d]; const closed=hrClosed.has(d);
       const dpay=arr.reduce((a,v)=>a+(+v.to_receive||0),0);
-      const here=arr.filter(v=>v.marked_today).length;
+      const _td=salesTodayStr();
+      const here=arr.filter(v=>((v.hours&&v.hours[_td])||v.hours_today||v.marked_today)).length;
       html+='<div class="card" style="margin-bottom:12px;padding:0;overflow:hidden">'+
         '<div onclick="hrDept(\''+jsn(d)+'\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:13px 16px;background:var(--panel2)">'+
           '<div><b style="font-size:15px">🏬 '+esc(d)+'</b> <span style="color:var(--muted);font-size:13px">· '+arr.length+' чел. · сегодня ✓'+here+'</span></div>'+
@@ -2632,21 +2581,27 @@
   }
   function hrRow(v,rid){
     const lg=jsn(v.login||v.name);
-    const presentBtn=v.marked_today
-      ? '<button class="btn" style="padding:5px 10px;font-size:12px;background:var(--green);color:#06121f" onclick="hrMark(\''+lg+'\',\'unpresent\')">✓ был</button>'
-      : '<button class="btn" style="padding:5px 10px;font-size:12px" onclick="hrMark(\''+lg+'\',\'present\')">Пришёл</button>';
-    const absentBtn=v.marked_absent_today
-      ? '<button class="btn" style="padding:5px 10px;font-size:12px;background:var(--red);color:#fff" onclick="hrMark(\''+lg+'\',\'unpresent\')">✗ не пришёл</button>'
-      : '<button class="btn ghost" style="padding:5px 10px;font-size:12px" onclick="hrMark(\''+lg+'\',\'absent\')">Не пришёл</button>';
+    const td=salesTodayStr();
+    const todayH=(v.hours&&v.hours[td])||v.hours_today||'';
+    const inpH='padding:5px 8px;width:74px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:14px;text-align:center';
+    const hourlyRate=v.hourly_rate||0;
+    // ввод часов «сегодня» прямо у сотрудника — вместо отметки целого дня
+    const hoursCtrl='<div style="display:flex;align-items:center;gap:6px" title="Цена часа: '+fmt(hourlyRate)+' сом">'+
+        '<span style="font-size:12px;color:var(--muted)">часов сегодня</span>'+
+        '<input type="number" inputmode="decimal" step="0.5" min="0" value="'+todayH+'" placeholder="0" onchange="hSetHours(\''+lg+'\',\''+td+'\',this.value)" style="'+inpH+'"><span style="font-size:12px;color:var(--muted)">ч</span>'+
+      '</div>';
+    const subMonth=(v.hours_month>0)
+      ? '· '+v.hours_month+' ч за месяц'
+      : '· '+v.present_days+' дн';
     const payInfo=v.salary_month
       ? '<div style="font-size:12px;color:var(--muted)">К выплате <b style="color:var(--text)"><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span></b>'+
           ((v.advance||v.bonus)?(' <span style="opacity:.7">(ав '+fmt(v.advance)+' · пр '+fmt(v.bonus)+')</span>'):'')+'</div>'
       : '<div style="font-size:12px;color:var(--muted)">оклад не задан</div>';
     return '<div style="border-top:1px solid var(--line);padding:10px 14px">'+
       '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">'+
-        '<div style="min-width:150px"><b>'+esc(v.name)+'</b> <span style="color:var(--muted);font-size:12px">· '+v.present_days+' дн</span></div>'+
+        '<div style="min-width:150px"><b>'+esc(v.name)+'</b> <span style="color:var(--muted);font-size:12px">'+subMonth+'</span></div>'+
         payInfo+
-        '<div style="display:flex;gap:6px;flex-wrap:wrap">'+presentBtn+absentBtn+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+hoursCtrl+
           '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHra(\''+lg+'\',\'advance\')" title="Аванс">💸 Аванс</button>'+
           '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHra(\''+lg+'\',\'bonus\')" title="Премия">🎁 Премия</button>'+
           '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHrCal(\''+lg+'\')" title="Календарь явки">📅 Календарь</button>'+
