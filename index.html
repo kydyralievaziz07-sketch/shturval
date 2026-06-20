@@ -287,7 +287,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.41.0<br>Instagram: открытый диалог сам обновляется — входящие сообщения появляются без перезахода
+      Штурвал v3.42.0<br>Instagram: быстрая загрузка (кэш + имена из базы) и входящие появляются за ~3 сек
     </div>
   </aside>
 
@@ -2117,9 +2117,15 @@
         box.insertAdjacentHTML('beforeend','<div style="font-size:12px;color:#ffb84d;padding:4px 8px">⚠️ '+esc(sendErrText(d.error||''))+'</div>'); inp.value=t; }
     }catch(e){ const b=document.getElementById(bid); if(b){ b.innerHTML=esc(t)+' ⚠️'; b.style.background='var(--red)'; } inp.value=t; }
   }
+  let igTick=0;
   function startIgAuto(){
     if(igTimer) return;
-    igTimer=setInterval(()=>{ const tb=document.getElementById('tab-iginbox'); if(!tb||tb.classList.contains('hide')) return; loadIgInbox(); if(igCur) igLoadThread(false); }, 8000);
+    igTimer=setInterval(()=>{
+      const tb=document.getElementById('tab-iginbox'); if(!tb||tb.classList.contains('hide')) return;
+      igTick++;
+      if(igCur) igLoadThread(false);              // открытый диалог — каждые 3с (входящие быстро)
+      if(igTick%4===0) loadIgInbox();             // список — раз в ~12с
+    }, 3000);
   }
   function ckHead(){
     const head=document.getElementById('ck-head'); if(!head) return; const deal=findDealByName(ckCurName);

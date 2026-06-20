@@ -498,23 +498,35 @@ def ig_send(recipient_id, text, from_account_id=None):
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.loads(r.read().decode() or "{}")
 
-# имена клиентов по их IGSID (кэш в памяти, чтобы не дёргать API каждый раз)
+# имена клиентов по их IGSID. Кэш в памяти + таблица ig_names (БЕЗ живых запросов в момент загрузки).
 _ig_names = {}
-def ig_customer_name(igsid, account_id):
-    if igsid in _ig_names:
-        return _ig_names[igsid]
-    name = ""
-    token = ig_token_for(account_id)
-    if token:
-        try:
-            url = IG_GRAPH + "/" + _q(str(igsid)) + "?fields=name,username&access_token=" + _q(token)
-            d = json.loads(urllib.request.urlopen(
-                urllib.request.Request(url, headers={"User-Agent": "Shturval/1.0"}), timeout=15).read().decode())
-            name = d.get("username") or d.get("name") or ""
-        except Exception:
-            name = ""
-    _ig_names[igsid] = name
-    return name
+_ig_names_loaded = False
+def ig_load_names():
+    """Один раз подгрузить все известные имена из БД в память."""
+    global _ig_names_loaded
+    if _ig_names_loaded:
+        return
+    try:
+        for row in (_supa("GET", "ig_names", "?company_id=eq.%s&select=igsid,name" % _q(COMPANY_ID)) or []):
+            _ig_names[str(row.get("igsid"))] = row.get("name") or ""
+    except Exception:
+        pass
+    _ig_names_loaded = True
+
+def ig_customer_name(igsid, account_id=None):
+    """Имя клиента из кэша/БД. НЕ делает живых запросов — загрузка списка должна быть быстрой."""
+    ig_load_names()
+    return _ig_names.get(str(igsid), "")
+
+def ig_save_name(igsid, name):
+    if not name:
+        return
+    _ig_names[str(igsid)] = name
+    try:
+        _supa("POST", "ig_names", "?on_conflict=company_id,igsid",
+              {"company_id": COMPANY_ID, "igsid": str(igsid), "name": name})
+    except Exception:
+        pass
 
 def _ig_pair(r):
     """(наш аккаунт, клиент) из строки ig_inbox независимо от направления."""
@@ -531,12 +543,11 @@ def ig_rows(limit=1000):
     except Exception:
         return []
 
-def ig_conversations():
-    """Список диалогов по всем аккаунтам: последний текст, время, имя клиента, аккаунт."""
+def _build_ig_conversations():
     amap = ig_account_map()
     rows = ig_rows()
     convos = {}
-    for r in rows:
+    for r in rows:                           # rows уже по убыванию времени — первый = последний
         acc, cust = _ig_pair(r)
         key = acc + "|" + cust
         if key not in convos:
@@ -546,11 +557,13 @@ def ig_conversations():
                            "last_dir": r.get("direction", "in"), "count": 0}
         convos[key]["count"] += 1
     out = sorted(convos.values(), key=lambda c: c["last_ts"], reverse=True)
-    for c in out[:40]:                       # имена тянем только для верхних 40 (экономим запросы)
-        c["customer"] = ig_customer_name(c["customer_id"], c["account_id"]) or c["customer_id"]
-    for c in out[40:]:
-        c["customer"] = c["customer_id"]
+    for c in out:
+        c["customer"] = ig_customer_name(c["customer_id"]) or c["customer_id"]
     return out
+
+def ig_conversations():
+    """Список диалогов (кэш 5с, имена — из БД, без живых запросов → быстро)."""
+    return cached("ig_convos", 5, _build_ig_conversations)
 
 def ig_thread(account_id, customer_id):
     """Сообщения одного диалога по возрастанию времени."""
