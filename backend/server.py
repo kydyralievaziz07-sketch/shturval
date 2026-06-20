@@ -126,6 +126,7 @@ SECTION_OF = [
     ("/api/categories", "prod"), ("/api/add-product", "prod"),
     ("/api/sales-history", "sales"), ("/api/sales", "sales"),
     ("/api/suppliers", "supl"), ("/api/expenses", "fin"),
+    ("/api/market", "market"),
     ("/api/chats", "chats"), ("/api/chat", "chats"), ("/api/send", "chats"),
     ("/api/bot-feedback", "chats"),
     ("/api/assistant", "ai"),
@@ -1439,6 +1440,66 @@ def expenses_view():
     return {"expenses": rows[:200], "by_category": by_cat, "periods": periods, "total_count": len(rows)}
 
 
+# ====== РЫНОК: цены товаров на маркетплейсах (Wildberries) ======
+def rub_to_kgs():
+    """Курс рубль→сом (для перевода цен WB). Кэш 6 часов, запасной ~1.2."""
+    def fetch():
+        try:
+            req = urllib.request.Request("https://open.er-api.com/v6/latest/RUB",
+                                         headers={"User-Agent": "Shturval/1.0"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                d = json.loads(r.read().decode("utf-8"))
+            v = float(d.get("rates", {}).get("KGS") or 0)
+            return v if v > 0 else 1.2
+        except Exception:
+            return 1.2
+    return cached("rub_kgs", 21600, fetch)
+
+def market_search(q):
+    """Поиск цен товара на Wildberries (открытый поиск, без ключей). Цены WB в рублях
+    переводим в сом. Результат кэшируем на 5 мин на запрос (бережём лимит WB)."""
+    q = (q or "").strip()
+    if not q:
+        return {"items": [], "query": "", "source": "Wildberries"}
+    def fetch():
+        url = ("https://search.wb.ru/exactmatch/ru/common/v5/search"
+               "?appType=1&curr=rub&dest=-1257786&resultset=catalog&sort=popular&spp=30&query="
+               + _q(q))
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Shturval/1.0",
+            "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.loads(r.read().decode("utf-8"))
+    try:
+        data = cached("mkt:" + q.lower(), 300, fetch)
+    except urllib.error.HTTPError as e:
+        return {"items": [], "query": q, "source": "Wildberries",
+                "error": "WB ответил HTTP %s — попробуй чуть позже" % e.code}
+    except Exception as e:
+        return {"items": [], "query": q, "source": "Wildberries", "error": str(e)}
+    products = (data or {}).get("products", []) or []
+    rate = rub_to_kgs()
+    items = []
+    for x in products[:40]:
+        sizes = x.get("sizes", []) or []
+        pr = 0
+        if sizes:
+            pr = (sizes[0].get("price") or {}).get("product") or (sizes[0].get("price") or {}).get("basic") or 0
+        rub = (pr or 0) / 100.0
+        items.append({"id": x.get("id"), "name": x.get("name", ""), "brand": x.get("brand", ""),
+                      "price_rub": round(rub), "price_kgs": round(rub * rate),
+                      "rating": x.get("reviewRating") or x.get("rating"),
+                      "feedbacks": x.get("feedbacks") or 0,
+                      "supplier": x.get("supplier", ""),
+                      "link": "https://www.wildberries.ru/catalog/%s/detail.aspx" % x.get("id")})
+    # дешёвые/дорогие для ориентира
+    prices = [i["price_kgs"] for i in items if i["price_kgs"] > 0]
+    return {"items": items, "query": q, "source": "Wildberries", "rate": round(rate, 3),
+            "count": len(items),
+            "min_kgs": min(prices) if prices else 0, "max_kgs": max(prices) if prices else 0,
+            "avg_kgs": round(sum(prices) / len(prices)) if prices else 0}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -1757,6 +1818,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, sales_day(date))
             except Exception as e:
                 return self._send(200, {"error": "Нет связи с 1С: " + str(e), "receipts": []})
+        if self.path.startswith("/api/market"):
+            from urllib.parse import urlparse, parse_qs
+            q = parse_qs(urlparse(self.path).query).get("q", [""])[0]
+            try:
+                return self._send(200, market_search(q))
+            except Exception as e:
+                return self._send(200, {"items": [], "error": str(e)})
         if self.path.startswith("/api/suppliers"):
             try:
                 return self._send(200, suppliers_list())

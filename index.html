@@ -287,7 +287,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.23.0<br>Оплата поставщику снова НЕ идёт в расходы (как было); быстрые окна оставлены
+      Штурвал v3.24.0<br>Рынок: поиск цен товаров на Wildberries (в сомах) — для сравнения и закупа
     </div>
   </aside>
 
@@ -556,20 +556,14 @@
     <!-- MARKET -->
     <section id="tab-market" class="hide">
       <div class="card">
-        <div class="toolbar">
-          <h3 style="margin:0">Предложения на рынке</h3>
-          <button class="btn">+ Выдвинуть предложение</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input id="mkt-q" placeholder="🔎 Что ищем? Например: кастрюля, полотенце, термос…" style="flex:1;min-width:220px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:11px 13px;color:var(--text);font-family:inherit;font-size:14px" onkeydown="if(event.key==='Enter')marketSearch()">
+          <button class="btn" onclick="marketSearch()">Найти цены</button>
         </div>
-        <table>
-          <thead><tr><th>Товар</th><th>Наша цена</th><th>Цена у конкурентов</th><th>Просмотры</th><th>Заказы</th><th>Статус</th></tr></thead>
-          <tbody>
-            <tr><td>Набор кастрюль 6 шт</td><td>24 900 сом</td><td><span class="up">26 500 сом ↑</span></td><td>1 240</td><td>18</td><td><span class="badge b-mk">Активно</span></td></tr>
-            <tr><td>Комплект постельного белья</td><td>15 500 сом</td><td><span class="down">14 200 сом ↓</span></td><td>980</td><td>12</td><td><span class="badge b-mk">Активно</span></td></tr>
-            <tr><td>Органайзер для шкафа</td><td>4 200 сом</td><td><span class="up">4 900 сом ↑</span></td><td>540</td><td>9</td><td><span class="badge b-mk">Активно</span></td></tr>
-          </tbody>
-        </table>
-        <div class="note" style="margin-top:16px">🔗 Здесь ты выдвигаешь товар на «рынок» (Instagram / сайт / WhatsApp и, при желании, маркетплейс) и сравниваешь цену с конкурентами. <span class="up">Зелёное</span> = у тебя дешевле, <span class="down">красное</span> = дороже рынка.</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:10px">🛒 Цены товаров с <b>Wildberries</b> — для сравнения и закупа. Показаны в сомах (пересчёт с рубля по курсу).</div>
       </div>
+      <div id="mkt-summary"></div>
+      <div id="mkt-results" class="card"><span style="color:var(--muted);font-size:13px">Введи название товара и нажми «Найти цены».</span></div>
     </section>
 
     <!-- ANALYTICS -->
@@ -878,6 +872,7 @@
       if(tab==='analytics') renderAnalytics();
       if(tab==='fin') renderFinance();
       if(tab==='supl') loadSuppliers();
+      if(tab==='market'){ const i=document.getElementById('mkt-q'); if(i) i.focus(); }
       window.scrollTo(0,0);
     });
   });
@@ -1325,6 +1320,32 @@
     try{ const r=await apiFetch('/api/suppliers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'del_txn',id:id})},ONEC_BASE); const d=await r.json(); if(d.ok){ _suplData=d.data; renderSuppliers(); } }catch(e){} }
   async function delSupplier(id){ if(!confirm('Удалить поставщика «'+supName(id)+'» и все его операции?')) return;
     try{ const r=await apiFetch('/api/suppliers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'del_supplier',id:id})},ONEC_BASE); const d=await r.json(); if(d.ok){ _suplData=d.data; renderSuppliers(); } }catch(e){} }
+
+  // ---- РЫНОК: цены товаров на Wildberries ----
+  async function marketSearch(){
+    const q=(document.getElementById('mkt-q').value||'').trim();
+    const box=document.getElementById('mkt-results'); const sum=document.getElementById('mkt-summary');
+    if(!q){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Введи название товара.</span>'; return; }
+    box.innerHTML='<span style="color:var(--muted);font-size:13px">⏳ Ищу цены на Wildberries…</span>'; sum.innerHTML='';
+    try{
+      const r=await apiFetch('/api/market?q='+encodeURIComponent(q),{},ONEC_BASE); const d=await r.json();
+      if(d.error){ box.innerHTML='<span style="color:var(--muted);font-size:13px">⚠️ '+esc(d.error)+'</span>'; return; }
+      const items=d.items||[];
+      if(!items.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Ничего не нашлось по «'+esc(q)+'».</span>'; return; }
+      sum.innerHTML='<div class="kpis" style="margin-bottom:16px">'+
+        '<div class="card kpi"><div class="label">Найдено</div><div class="value">'+d.count+'</div></div>'+
+        '<div class="card kpi"><div class="label">Самый дешёвый</div><div class="value"><span class="money" data-som="'+d.min_kgs+'">'+fmt(d.min_kgs)+'</span></div></div>'+
+        '<div class="card kpi"><div class="label">Средняя цена</div><div class="value"><span class="money" data-som="'+d.avg_kgs+'">'+fmt(d.avg_kgs)+'</span></div></div>'+
+        '<div class="card kpi"><div class="label">Самый дорогой</div><div class="value"><span class="money" data-som="'+d.max_kgs+'">'+fmt(d.max_kgs)+'</span></div></div></div>';
+      box.innerHTML='<table><thead><tr><th>Товар</th><th>Бренд</th><th style="text-align:right">Цена</th><th style="text-align:right">Рейтинг</th><th></th></tr></thead><tbody>'+
+        items.map(x=>'<tr><td>'+esc(x.name)+'</td><td style="color:var(--muted);font-size:13px">'+esc(x.brand||'')+'</td>'+
+          '<td style="text-align:right;white-space:nowrap"><span class="money" data-som="'+x.price_kgs+'">'+fmt(x.price_kgs)+'</span><div style="font-size:11px;color:var(--muted)">'+(x.price_rub||0).toLocaleString('ru-RU')+' ₽</div></td>'+
+          '<td style="text-align:right;white-space:nowrap">'+(x.rating?('⭐ '+x.rating):'—')+'<div style="font-size:11px;color:var(--muted)">'+(x.feedbacks||0)+' отз.</div></td>'+
+          '<td style="text-align:right"><a href="'+x.link+'" target="_blank" rel="noopener" style="color:#bcd2ff;font-size:12px;white-space:nowrap">открыть ↗</a></td></tr>').join('')+
+        '</tbody></table><div class="note" style="margin-top:12px">💱 Курс пересчёта: 1 ₽ ≈ '+(d.rate||'')+' сом. Цены и наличие на Wildberries могут меняться.</div>';
+      renderMoney();
+    }catch(e){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет связи с сервером — попробуй ещё раз.</span>'; }
+  }
   // «На исходе» — фильтры по количеству и категории + сортировка
   let LOW_SORT='asc';
   function setLowSort(dir){ LOW_SORT=dir; renderLow(); }
