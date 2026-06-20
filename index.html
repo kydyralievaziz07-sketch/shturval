@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.25.1<br>«Товары»: честное сообщение, когда 1С отвечает ошибкой (без ложного «просыпается»)
+      Штурвал v3.26.0<br>Чаты: предупреждение о 24-часовом окне Instagram до отправки (видно, когда ответ не уйдёт)
     </div>
   </aside>
 
@@ -421,6 +421,7 @@
           <div class="ck-head" id="ck-head">← Выберите клиента в списке слева</div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 4px 4px"><span id="ck-upd" style="font-size:11px;color:var(--muted)"></span><button class="btn ghost" style="padding:2px 10px;font-size:12px" onclick="if(ckCurId)loadConvoMsgs(ckCurId,false)" title="Обновить переписку вручную">↻ обновить</button></div>
           <div class="msgs" id="ck-msgs"></div>
+          <div id="ck-warn" style="display:none;font-size:12px;padding:6px 10px;margin:0 4px;border-radius:8px"></div>
           <div class="replybox"><input id="ck-reply" placeholder="Ответить клиенту…" onkeydown="if(event.key==='Enter')ckSend()"><button class="btn ghost" onclick="openBotFix()" title="Отметить, что бот ответил неправильно">⚠️ Бот ошибся</button><button class="btn" onclick="ckSend()">Отправить</button></div>
         </div>
       </div>
@@ -1991,6 +1992,7 @@
       box.dataset.sig=sig;
       box.innerHTML=msgs.length?msgs.map(bubbleHTML).join(''):'<div style="color:var(--muted);padding:10px">Нет сообщений</div>';
       box.scrollTop=box.scrollHeight;
+      ckWindowCheck(d.msgs||[]);
       if(upd) upd.textContent='🟢 обновлено '+nowHM();
     }catch(e){
       if(upd) upd.textContent='🟡 сервер просыпается… повтор через 5с';
@@ -2010,6 +2012,33 @@
     const box=document.getElementById('ck-msgs'); if(box) box.dataset.sig='';
     await loadConvoMsgs(c.id, false);
     startConvoAuto();
+  }
+  // Проверка 24-часового окна Instagram ДО отправки
+  let ckWindowOpen=true;
+  function ckWindowCheck(msgs){
+    const w=document.getElementById('ck-warn'); if(!w) return;
+    let lastIn=0;
+    for(const m of (msgs||[])){ if(m.t==='in' && m.ts && m.ts>lastIn) lastIn=m.ts; }
+    if(!lastIn){            // клиент ни разу не писал — Instagram писать не даст
+      ckWindowOpen=false;
+      w.style.display='block'; w.style.background='rgba(255,107,107,.15)'; w.style.color='#ff8f8f';
+      w.innerHTML='🔴 <b>Клиент ещё не писал вам.</b> Instagram разрешает писать первым только из рекламы — обычное сообщение не уйдёт.';
+      return;
+    }
+    const h=(Date.now()/1000 - lastIn)/3600;
+    if(h>24){
+      ckWindowOpen=false;
+      const days=Math.floor(h/24);
+      w.style.display='block'; w.style.background='rgba(255,107,107,.15)'; w.style.color='#ff8f8f';
+      w.innerHTML='🔴 <b>Окно закрыто.</b> Клиент писал '+(days>=1?days+' дн. назад':Math.round(h)+' ч назад')+'. Instagram даёт отвечать только 24 часа после сообщения клиента — ответ <b>не уйдёт</b>, пока он не напишет снова.';
+    } else if(h>20){
+      ckWindowOpen=true;
+      const left=Math.max(1,Math.round(24-h));
+      w.style.display='block'; w.style.background='rgba(241,188,55,.15)'; w.style.color='#f1bc37';
+      w.innerHTML='🟡 <b>Окно скоро закроется</b> — осталось ~'+left+' ч. Успейте ответить.';
+    } else {
+      ckWindowOpen=true; w.style.display='none'; w.innerHTML='';
+    }
   }
   // Человеческое объяснение, почему сообщение не ушло
   function sendErrText(m){
