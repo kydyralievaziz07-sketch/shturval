@@ -1250,23 +1250,36 @@ def user_by_name(name):
 def _present_in_month(days, m):
     return sum(1 for d, st in (days or {}).items() if isinstance(d, str) and d[:7] == m and st == "p")
 
+SHIFT_HOURS = 10.5                          # часов в смене (цена часа = ставка/день ÷ это)
+
 def payroll_view(user, rec=None):
     name = user.get("name", "")
     key = _pkey(user)                       # зарплата ведётся по логину (уникален)
     r = rec if rec is not None else payroll_rec(key)
     days = r.get("days") or {}
+    hrs = r.get("hours") or {}
     m = _cur_month(); today = _today_str()
     pd = _present_in_month(days, m) if days else int(r.get("present_days") or 0)
     sal = float(user.get("salary_month") or 0)
     rate = float(user.get("daily_rate") or 0)
     if rate <= 0 and sal > 0:
         rate = round(sal / 30.0)            # оклад ÷ 30 (магазин работает каждый день)
-    accrued = round(pd * rate)
+    hourly_rate = round(rate / SHIFT_HOURS) if rate > 0 else 0   # цена часа
+    hours_month = round(sum(float(v or 0) for d, v in hrs.items()
+                            if isinstance(d, str) and d[:7] == m), 1)
+    use_hourly = hours_month > 0            # «часы вместо дней»: если есть часы — считаем по часам
+    if use_hourly:
+        accrued = round(hours_month * rate / SHIFT_HOURS)
+    else:
+        accrued = round(pd * rate)
     bonus = float(r.get("bonus") or 0); adv = float(r.get("advance") or 0)
     return {"name": name, "login": user.get("login", ""),
             "role": user.get("role", ""), "department": user.get("department", ""),
             "salary_month": sal, "daily_rate": rate, "bonus_month": float(user.get("bonus_month") or 0),
             "present_days": pd, "accrued": accrued, "bonus": bonus,
+            "hourly_rate": hourly_rate, "shift_hours": SHIFT_HOURS,
+            "hours_month": hours_month, "hours_today": float(hrs.get(today) or 0),
+            "pay_mode": "hourly" if use_hourly else "daily", "hours": hrs,
             "advance": adv, "to_receive": round(accrued + bonus - adv), "days": days,
             "marked_today": days.get(today) == "p", "marked_absent_today": days.get(today) == "a"}
 
@@ -1639,6 +1652,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "сотрудник не найден"})
             r = payroll_rec(_pkey(tu))
             days = r.get("days") or {}
+            hrs = r.get("hours") or {}
             today = _today_str()
             # дата отметки: можно отметить любой день месяца (для календаря); по умолчанию сегодня
             day = (body.get("date") or "").strip()
@@ -1659,9 +1673,17 @@ class Handler(BaseHTTPRequestHandler):
                 r["advance"] = round(amt)
             elif action == "set_bonus":        # ЗАДАТЬ премию (редактирование/исправление)
                 r["bonus"] = round(amt)
+            elif action == "set_hours":        # ЗАДАТЬ часы за день (почасовая оплата)
+                h = float(body.get("hours") or 0)
+                if h <= 0:
+                    hrs.pop(day, None)         # 0 часов = снять отметку
+                else:
+                    hrs[day] = round(h, 2)
+                r["hours"] = hrs
             else:
                 return self._send(400, {"error": "неизвестное действие"})
             r["days"] = days
+            r["hours"] = hrs
             r["present_days"] = _present_in_month(days, _cur_month())
             r["last_present"] = today if days.get(today) == "p" else r.get("last_present", "")
             payroll_upsert(r)
@@ -1815,8 +1837,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"me": payroll_view(u)})
         if self.path.startswith("/api/deptplan"):
             u = self._user(); secs = u.get("sections", []) if u else []
-            if not (u and "all" in secs):          # планы отделов — только владелец
-                return self._send(403, {"error": "Только владелец"})
+            if not (u and ("all" in secs or "hr" in secs)):   # планы отделов — владелец и HR
+                return self._send(403, {"error": "Только владелец или HR"})
             return self._send(200, {"departments": dept_plan_all()})
         if self.path.startswith("/api/staff"):
             u = self._user()
