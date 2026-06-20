@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.27.0<br>Поставщики: к операции можно прикрепить чек/фото (хранится в базе, открывается по 📎)
+      Штурвал v3.28.0<br>Поставщики: поиск, сортировка по долгу, видно кто из сотрудников вносил операцию
     </div>
   </aside>
 
@@ -630,6 +630,14 @@
       </div>
       <div id="supl-status" class="note" style="margin-bottom:14px">⏳ Загружаю…</div>
       <div class="kpis" id="supl-kpis"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:16px">
+        <input id="supl-search" placeholder="🔍 Поиск поставщика…" oninput="renderSuppliers()" style="flex:1;min-width:180px">
+        <select id="supl-sort" onchange="renderSuppliers()" style="width:auto">
+          <option value="debt">Сортировка: долг ↓ (от большего)</option>
+          <option value="debt_asc">Долг ↑ (от меньшего)</option>
+          <option value="name">По имени (А–Я)</option>
+        </select>
+      </div>
       <div id="supl-list" style="margin-top:16px"></div>
     </section>
 
@@ -1280,9 +1288,16 @@
     const kp=document.getElementById('supl-kpis');
     if(kp) kp.innerHTML='<div class="card kpi"><div class="label">Всего должен поставщикам</div><div class="value" style="color:'+((d.total_debt||0)>0?'#ff6b6b':'#39d98a')+'"><span class="money" data-som="'+(d.total_debt||0)+'">'+fmt(d.total_debt||0)+'</span></div></div>'+
       '<div class="card kpi"><div class="label">Поставщиков</div><div class="value">'+(d.count||0)+'</div></div>';
-    const box=document.getElementById('supl-list'); const sups=d.suppliers||[];
+    const box=document.getElementById('supl-list'); const all=d.suppliers||[];
+    const qEl=document.getElementById('supl-search'); const q=(qEl?qEl.value:'').trim().toLowerCase();
+    const sortEl=document.getElementById('supl-sort'); const sort=sortEl?sortEl.value:'debt';
+    let sups=all.filter(s=>!q || (s.name||'').toLowerCase().includes(q) || (s.note||'').toLowerCase().includes(q));
+    sups=sups.slice().sort((a,b)=> sort==='name' ? (a.name||'').localeCompare(b.name||'','ru')
+                                 : sort==='debt_asc' ? (a.debt-b.debt)
+                                 : (b.debt-a.debt));
+    if(all.length && !sups.length){ box.innerHTML='<div class="card"><span style="color:var(--muted);font-size:13px">По запросу «'+esc(q)+'» поставщиков не найдено.</span></div>'; return; }
     box.innerHTML=sups.length?sups.map(s=>{
-      const txns=(s.txns||[]).slice(0,8).map(t=>'<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc((t.date||'').slice(5))+'</td><td>'+(t.type==='debt'?'📦 взял':'💸 отдал')+(t.note?' <span style="color:var(--muted);font-size:12px">· '+esc(t.note)+'</span>':'')+(t.qty?' <span style="color:var(--muted);font-size:12px">('+t.qty+' шт)</span>':'')+(t.receipt_url?' <a href="'+esc(t.receipt_url)+'" target="_blank" rel="noopener" style="font-size:12px;color:var(--accent,#5b8cff);text-decoration:none" title="Открыть чек">📎 чек</a>':'')+'</td><td style="text-align:right;white-space:nowrap;color:'+(t.type==='debt'?'#ff6b6b':'#39d98a')+'">'+(t.type==='debt'?'+':'−')+fmt(t.amount)+'</td><td style="width:24px;text-align:right"><span onclick="delSupTxn('+t.id+')" title="Удалить" style="cursor:pointer;color:var(--muted)">✕</span></td></tr>').join('');
+      const txns=(s.txns||[]).slice(0,8).map(t=>'<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc((t.date||'').slice(5))+'</td><td>'+(t.type==='debt'?'📦 взял':'💸 отдал')+(t.note?' <span style="color:var(--muted);font-size:12px">· '+esc(t.note)+'</span>':'')+(t.qty?' <span style="color:var(--muted);font-size:12px">('+t.qty+' шт)</span>':'')+(t.receipt_url?' <a href="'+esc(t.receipt_url)+'" target="_blank" rel="noopener" style="font-size:12px;color:var(--accent,#5b8cff);text-decoration:none" title="Открыть чек">📎 чек</a>':'')+(t.created_by?' <span style="color:var(--muted);font-size:11px">👤 '+esc(t.created_by)+'</span>':'')+'</td><td style="text-align:right;white-space:nowrap;color:'+(t.type==='debt'?'#ff6b6b':'#39d98a')+'">'+(t.type==='debt'?'+':'−')+fmt(t.amount)+'</td><td style="width:24px;text-align:right"><span onclick="delSupTxn('+t.id+')" title="Удалить" style="cursor:pointer;color:var(--muted)">✕</span></td></tr>').join('');
       return '<div class="card" style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">'+
         '<div><div style="font-weight:700;font-size:16px">'+esc(s.name)+'</div>'+(s.note?'<div style="font-size:12px;color:var(--muted)">'+esc(s.note)+'</div>':'')+'</div>'+
         '<div style="text-align:right"><div style="font-size:12px;color:var(--muted)">Текущий долг</div><div style="font-size:22px;font-weight:700;color:'+(s.debt>0?'#ff6b6b':'#39d98a')+'"><span class="money" data-som="'+s.debt+'">'+fmt(s.debt)+'</span></div></div></div>'+

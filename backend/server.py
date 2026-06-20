@@ -1696,13 +1696,15 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 return self._send(400, {"error": "плохой запрос"})
             action = body.get("action")
+            who = (self._user() or {}).get("name", "")   # кто вносит изменение
             try:
                 if action == "add_supplier":
                     name = (body.get("name") or "").strip()
                     if not name:
                         return self._send(400, {"error": "нужно название поставщика"})
                     _supa("POST", "suppliers", "",
-                          {"company_id": COMPANY_ID, "name": name, "note": (body.get("note") or "").strip()})
+                          {"company_id": COMPANY_ID, "name": name,
+                           "note": (body.get("note") or "").strip(), "created_by": who})
                 elif action == "add_txn":
                     sid = body.get("supplier_id")
                     typ = body.get("type")
@@ -1730,7 +1732,7 @@ class Handler(BaseHTTPRequestHandler):
                           {"company_id": COMPANY_ID, "supplier_id": sid, "type": typ,
                            "amount": round(_num(body.get("amount"))), "qty": _num(body.get("qty")),
                            "note": (body.get("note") or "").strip(), "date": day,
-                           "receipt_url": receipt_url})
+                           "receipt_url": receipt_url, "created_by": who})
                 elif action == "del_txn":
                     tid = str(body.get("id"))
                     # удаляем и связанный расход (если это была оплата поставщику)
