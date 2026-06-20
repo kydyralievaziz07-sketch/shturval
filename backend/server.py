@@ -1632,22 +1632,10 @@ class Handler(BaseHTTPRequestHandler):
                     day = (body.get("date") or "").strip()
                     if not (len(day) == 10 and day[4] == "-"):
                         day = _today_str()
-                    amt = round(_num(body.get("amount")))
-                    note = (body.get("note") or "").strip()
-                    res = _supa("POST", "supplier_txns", "",
-                                {"company_id": COMPANY_ID, "supplier_id": sid, "type": typ,
-                                 "amount": amt, "qty": _num(body.get("qty")),
-                                 "note": note, "date": day})
-                    # «отдал деньги» — это реальный расход → заводим связанную запись в Расходы
-                    if typ == "payment":
-                        txn_id = res[0].get("id") if isinstance(res, list) and res else None
-                        sup = _supa("GET", "suppliers", "?company_id=eq.%s&id=eq.%s&select=name"
-                                    % (_q(COMPANY_ID), _q(str(sid))))
-                        nm = sup[0].get("name") if sup else "поставщик"
-                        _supa("POST", "expenses", "",
-                              {"company_id": COMPANY_ID, "amount": amt, "date": day,
-                               "category": "Поставщик: " + nm, "note": note,
-                               "source": "supplier", "ref_id": txn_id})
+                    _supa("POST", "supplier_txns", "",
+                          {"company_id": COMPANY_ID, "supplier_id": sid, "type": typ,
+                           "amount": round(_num(body.get("amount"))), "qty": _num(body.get("qty")),
+                           "note": (body.get("note") or "").strip(), "date": day})
                 elif action == "del_txn":
                     tid = str(body.get("id"))
                     # удаляем и связанный расход (если это была оплата поставщику)
