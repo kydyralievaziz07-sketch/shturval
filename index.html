@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.35.0<br>Кадры: «пришёл/не пришёл» (целый день) + дополнительно часы, если отработал не весь день
+      Штурвал v3.36.0<br>Вход сохраняется на устройстве (не спрашивает логин снова); «Мой день» у HR показывает свою премию/аванс
     </div>
   </aside>
 
@@ -914,12 +914,14 @@
   const ONEC_BASE=(API_BASE!=='')?API_BASE:ONEC_CLOUD;
 
   // --- ВХОД ПО ПАРОЛЮ ---
-  const PW_KEY='shturval_pw', LG_KEY='shturval_login';
+  const PW_KEY='shturval_pw', LG_KEY='shturval_login', USER_KEY='shturval_user';
   function getPw(){ try{return localStorage.getItem(PW_KEY)||'';}catch(e){return '';} }
   function setPw(p){ try{localStorage.setItem(PW_KEY,p);}catch(e){} }
   function getLg(){ try{return localStorage.getItem(LG_KEY)||'';}catch(e){return '';} }
   function setLg(l){ try{localStorage.setItem(LG_KEY,l||'');}catch(e){} }
-  function clearPw(){ try{localStorage.removeItem(PW_KEY);localStorage.removeItem(LG_KEY);}catch(e){} }
+  function getCachedUser(){ try{return JSON.parse(localStorage.getItem(USER_KEY)||'null');}catch(e){return null;} }
+  function setCachedUser(d){ try{localStorage.setItem(USER_KEY,JSON.stringify(d));}catch(e){} }
+  function clearPw(){ try{localStorage.removeItem(PW_KEY);localStorage.removeItem(LG_KEY);localStorage.removeItem(USER_KEY);}catch(e){} }
   // обёртка над fetch: подставляет логин+пароль в заголовки, ловит 401 → показывает вход
   async function apiFetch(path,opts,base){
     opts=opts||{}; const h=Object.assign({},opts.headers||{}); const p=getPw(); const lg=getLg();
@@ -939,6 +941,7 @@
     // а НЕ «показать всё». ['all'] ставим только если поле sections вообще не пришло.
     USER={name:(d&&d.name)||'', sections:(d&&Array.isArray(d.sections))?d.sections:['all'],
           role:(d&&d.role)||'', department:(d&&d.department)||'', plan_day:(d&&d.plan_day)||0};
+    if(d&&d.ok) setCachedUser(d);   // запомним профиль, чтобы войти даже когда сервер спит
     applyAccess();
   }
   function applyAccess(){
@@ -975,16 +978,21 @@
     if(el) el.style.display = show ? 'flex' : 'none';
     if(show){ const il=document.getElementById('loginlg'), i=document.getElementById('loginpw'); if(i) i.value=''; if(il){ il.value=''; setTimeout(()=>il.focus(),50); } }
   }
-  async function checkAuth(){
-    // спрашиваем сервер: верный ли вход и какие разделы доступны
-    try{
-      const h={}; if(getPw()) h['X-Auth']=getPw(); if(getLg()) h['X-Login']=getLg();
-      const r=await fetch(ONEC_BASE+'/api/auth',{headers:h});
-      if(r.ok) return await r.json();   // {ok, name, sections}
-      return false;                      // 401 — нужен вход
-    }catch(e){
-      return null;                       // сервер недоступен
+  async function checkAuth(retries){
+    // спрашиваем сервер: верный ли вход и какие разделы доступны.
+    // сервер на бесплатном тарифе может «просыпаться» — повторяем несколько раз.
+    retries=(retries==null)?4:retries;
+    for(let i=0;i<=retries;i++){
+      try{
+        const h={}; if(getPw()) h['X-Auth']=getPw(); if(getLg()) h['X-Login']=getLg();
+        const r=await fetch(ONEC_BASE+'/api/auth',{headers:h});
+        if(r.ok) return await r.json();   // {ok, name, sections}
+        return false;                      // 401 — пароль реально не подошёл
+      }catch(e){
+        if(i<retries) await new Promise(res=>setTimeout(res,2500));  // ждём, пока сервер проснётся
+      }
     }
+    return null;                           // сервер так и не ответил
   }
   document.getElementById('loginform').addEventListener('submit',async e=>{
     e.preventDefault();
@@ -1002,6 +1010,18 @@
   });
   // при загрузке: решаем, показывать вход или сразу сайт
   (async function bootAuth(){
+    const hasCreds=!!getPw(); const cached=getCachedUser();
+    // Вход уже сохранён на этом устройстве → сразу показываем сайт по сохранённому профилю,
+    // НЕ заставляя вводить логин/пароль. Разлогиним только если сервер ЯВНО скажет «неверно».
+    if(hasCreds && cached){
+      applyUser(cached); showLogin(false);
+      if(canSee('crm')||canSee('dash')) loadCRM(); if(canSee('dash')) loadDashSales();
+      const res=await checkAuth();
+      if(res===false){ clearPw(); showLogin(true); }   // пароль реально не подошёл
+      else if(res&&res.ok){ applyUser(res); applyAccess(); }  // тихо освежили права/имя
+      return;
+    }
+    // Сохранённого входа нет — обычная проверка
     const res=await checkAuth();
     if(res&&res.ok){ applyUser(res); showLogin(false); if(canSee('crm')||canSee('dash')) loadCRM(); if(canSee('dash')) loadDashSales(); }
     else showLogin(true);
@@ -2239,7 +2259,16 @@
   async function loadMyPayroll(){
     const box=document.getElementById('myday-salary'); if(!box) return;
     let v=null;
-    try{ const r=await apiFetch('/api/payroll',{},ONEC_BASE); const d=await r.json(); v=d.me||((d.all||[])[0]); }catch(e){}
+    try{
+      const r=await apiFetch('/api/payroll',{},ONEC_BASE); const d=await r.json();
+      // важно: у HR/админа сервер отдаёт ВСЕХ (d.all) — надо найти СВОЮ запись по логину/имени,
+      // а не брать первого из списка (иначе показываются чужие зарплата/премия/аванс)
+      const myLg=(getLg()||'').toLowerCase();
+      v=d.me
+        || (myLg ? (d.all||[]).find(x=>(x.login||'').toLowerCase()===myLg) : null)
+        || (d.all||[]).find(x=>x.name===USER.name)
+        || null;
+    }catch(e){}
     if(!v){ box.innerHTML=''; return; }
     const mName=new Date().toLocaleDateString("ru-RU",{month:"long"});
     if(!v.salary_month){     // оклад не задан (напр. администратор) — показываем только дни
