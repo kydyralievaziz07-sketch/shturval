@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.43.1<br>Штурвал CRM: видно, на какой аккаунт пишет клиент (📷 метка в списке и в шапке чата)
+      Штурвал v3.43.2<br>Карточка заказа: показывает, на какой аккаунт (bizmart_*) пишет клиент, вместо общего «Instagram»
     </div>
   </aside>
 
@@ -2822,11 +2822,13 @@
   function closeDeal(){ document.getElementById('dealbg').classList.remove('open'); renderBoard(); }
   function renderDealModal(){
     const d=getDeal(curDealId); if(!d) return; const c=getClient(d.client_id); const items=(d.items||[]);
+    const cc=COCKPIT_CHATS.find(x=>x.name&&c.name&&x.name.toLowerCase()===c.name.toLowerCase()); const dlAcc=cc?cc.account:'';
     const itemsHtml=items.length?items.map((it,i)=>'<div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;padding:6px 0;border-bottom:1px solid var(--line)"><span>'+esc(it.title)+' <span style="color:var(--muted)">× '+it.qty+'</span></span><span><span class="money" data-som="'+(it.price*it.qty)+'">'+fmt(it.price*it.qty)+'</span> <span onclick="rmItem('+i+')" style="color:var(--red);cursor:pointer;margin-left:6px">✕</span></span></div>').join(''):'<div style="color:var(--muted);font-size:13px">Товары не добавлены</div>';
     const tasksHtml=dealTasks(d.id).map(t=>'<div style="display:flex;align-items:center;gap:8px;font-size:13px;padding:5px 0"><input type="checkbox" '+(t.done?'checked':'')+' onchange="toggleTask(\''+t.id+'\')"><span style="'+(t.done?'text-decoration:line-through;color:var(--muted)':'')+'">'+esc(t.title)+'</span><span style="margin-left:auto;font-size:12px;color:'+(!t.done&&t.due_at&&new Date(t.due_at).getTime()<Date.now()?'var(--red)':'var(--muted)')+'">'+fmtDT(t.due_at)+'</span></div>').join('')||'<div style="color:var(--muted);font-size:13px">Задач нет</div>';
     const actHtml=CRM.activity.filter(a=>a.deal_id===d.id).slice(0,20).map(a=>'<div class="act"><b>'+esc(a.type)+'</b> · '+esc(a.text)+'<span style="float:right">'+fmtDT(a.created_at)+'</span></div>').join('')||'<div style="color:var(--muted);font-size:13px">Пока пусто</div>';
     document.getElementById('dealmodal').innerHTML=
       '<div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0">Заказ</h3><span onclick="closeDeal()" style="cursor:pointer;color:var(--muted);font-size:18px">✕</span></div>'+
+      (dlAcc?'<div style="font-size:12px;color:var(--accent);margin-top:8px">📷 пишет на аккаунт <b>@'+esc(dlAcc)+'</b></div>':'')+
       '<div class="row" style="margin-top:8px"><div><label>Клиент</label><input value="'+esc(c.name)+'" placeholder="Имя клиента" oninput="updClient(\'name\',this.value)"></div>'+
       '<div><label>Телефон</label><input value="'+esc(c.phone||'')+'" placeholder="+996…" oninput="updClient(\'phone\',this.value)"></div></div>'+
       '<div class="row"><div><label>Статус</label><select onchange="updStatus(this.value)">'+CRM_STATUSES.map(s=>'<option '+(s===d.status?'selected':'')+'>'+esc(s)+'</option>').join('')+'</select></div>'+
@@ -2836,7 +2838,7 @@
       '<div class="crm-res" id="di-res" style="display:none"></div>'+
       '<label style="margin-top:14px">Задачи</label>'+tasksHtml+
       '<div class="row" style="margin-top:6px"><div style="flex:2"><input id="tk-title" placeholder="Что сделать (напр. перезвонить)"></div><div style="flex:1.4"><input id="tk-due" type="datetime-local"></div><button class="btn" style="align-self:flex-end" onclick="addTask()">+</button></div>'+
-      '<label style="margin-top:14px">💬 Переписка клиента (Instagram)</label>'+
+      '<label style="margin-top:14px">💬 Переписка клиента'+(dlAcc?' (📷 @'+esc(dlAcc)+')':' (Instagram)')+'</label>'+
       '<div id="dl-chat" style="font-size:13px"><button class="btn ghost" onclick="loadDealChat()">Загрузить переписку</button></div>'+
       '<label style="margin-top:14px">История</label>'+actHtml+
       '<div class="modal-foot"><button class="btn ghost" onclick="delDeal()">🗑 Удалить</button><button class="btn" onclick="closeDeal()">Готово</button></div>';
