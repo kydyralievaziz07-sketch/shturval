@@ -275,6 +275,7 @@
       <a data-tab="myday"><span class="ico">🎯</span> Мой день</a>
       <a data-tab="crm"><span class="ico">📡</span> Живые данные</a>
       <a data-tab="deals"><span class="ico">🧲</span> Штурвал CRM</a>
+      <a data-tab="iginbox"><span class="ico">📷</span> Instagram</a>
       <a data-tab="prod"><span class="ico">📦</span> Товары</a>
       <a data-tab="sales"><span class="ico">🛒</span> Продажи</a>
       <a data-tab="clients"><span class="ico">👥</span> Клиенты</a>
@@ -286,7 +287,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.39.0<br>Прямой Instagram: поддержка нескольких аккаунтов (1 CRM — 5 аккаунтов), ответ с нужного аккаунта
+      Штурвал v3.40.0<br>Раздел «Instagram»: живые переписки со всех аккаунтов напрямую + ответы (без ChatPlace)
     </div>
   </aside>
 
@@ -396,6 +397,22 @@
           <div class="replybox">
             <input id="replyInput" placeholder="Написать ответ клиенту…">
             <button class="btn" id="replyBtn">Отправить</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- INSTAGRAM (прямой, без ChatPlace) -->
+    <section id="tab-iginbox" class="hide">
+      <div class="note" id="ig-status" style="margin-bottom:14px">📷 Переписки из Instagram <b>напрямую</b> (без ChatPlace). Аккаунты: <span id="ig-accs">…</span></div>
+      <div class="inbox">
+        <div class="chatlist" id="ig-list"></div>
+        <div class="chatview">
+          <div class="head" id="ig-title">← Выберите диалог слева</div>
+          <div class="msgs" id="ig-msgs"></div>
+          <div class="replybox">
+            <input id="ig-reply" placeholder="Ответить клиенту в Instagram…" onkeydown="if(event.key==='Enter')igSend()">
+            <button class="btn" onclick="igSend()">Отправить</button>
           </div>
         </div>
       </div>
@@ -879,6 +896,7 @@
       if(tab==='ai') aiInit();
       if(tab==='deals'){ renderBoard(); startDealsAuto(); }
       if(tab==='chats') loadChats();
+      if(tab==='iginbox'){ loadIgInbox(); startIgAuto(); }
       if(tab==='prod'){ loadInventory(); loadProducts(); startProdAuto(); }
       if(tab==='sales'){ loadSales(); startSalesAuto(); }
       if(tab==='dash') loadDashSales();
@@ -952,6 +970,7 @@
       if(t==='set'||t==='myday') show=true;        // «Настройки» и «Мой день» — всем
       else if(t==='staff') show=isOwner();         // «Персонал» — только владельцу
       else if(t==='hr') show=isOwner()||USER.sections.indexOf('hr')>=0;  // «Кадры» — владелец и HR
+      else if(t==='iginbox') show=isOwner()||USER.sections.indexOf('chats')>=0;  // «Instagram» — владелец и кто ведёт чаты
       else show=canSee(t);
       a.style.display=show?'':'none';
       if(show && t!=='set' && !first) first=a;     // по умолчанию — первый рабочий раздел
@@ -2036,6 +2055,60 @@
     const h=igHandle(name);
     if(!h) return '';
     return '<a href="https://ig.me/m/'+encodeURIComponent(h)+'" target="_blank" rel="noopener" class="btn ghost" style="padding:5px 10px;font-size:12px;text-decoration:none;white-space:nowrap" title="Открыть переписку с @'+esc(h)+' прямо в Instagram">📷 Instagram</a>';
+  }
+  // ===== Раздел Instagram (прямые переписки, без ChatPlace) =====
+  let IG_CONVOS=[], igCur=null, igAccounts=[], igTimer=null;
+  function igTime(ms){ const t=new Date(ms>1e12?ms:ms*1000); return t.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'}); }
+  async function loadIgInbox(){
+    const list=document.getElementById('ig-list');
+    if(list && !IG_CONVOS.length) list.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">Загрузка…</div>';
+    try{
+      const r=await apiFetch('/api/ig/conversations?_='+Date.now(),{},ONEC_BASE); const d=await r.json();
+      IG_CONVOS=d.conversations||[]; igAccounts=d.accounts||[];
+      const a=document.getElementById('ig-accs'); if(a) a.textContent=igAccounts.map(x=>'@'+x.username).join(', ')||'—';
+      renderIgList();
+    }catch(e){ if(list&&!IG_CONVOS.length) list.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">Сервер просыпается — обнови через минуту.</div>'; }
+  }
+  function renderIgList(){
+    const list=document.getElementById('ig-list'); if(!list) return;
+    if(!IG_CONVOS.length){ list.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">Пока нет переписок. Когда клиент напишет в Директ — диалог появится здесь.</div>'; return; }
+    list.innerHTML=IG_CONVOS.map((c,i)=>{
+      const active=(igCur&&igCur.account_id===c.account_id&&igCur.customer_id===c.customer_id);
+      return '<div onclick="openIgThread('+i+')" style="padding:11px 13px;border-bottom:1px solid var(--line);cursor:pointer;'+(active?'background:var(--panel2)':'')+'">'+
+        '<div style="display:flex;justify-content:space-between;gap:6px"><b style="font-size:14px">'+esc(c.customer||c.customer_id)+'</b><span style="font-size:11px;color:var(--muted)">'+(c.last_ts?igTime(c.last_ts):'')+'</span></div>'+
+        '<div style="font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(c.last_dir==='out'?'Вы: ':'')+esc(c.last_text||'')+'</div>'+
+        '<div style="font-size:11px;color:var(--accent);margin-top:2px">📷 @'+esc(c.account)+'</div>'+
+      '</div>';
+    }).join('');
+  }
+  async function openIgThread(i){
+    const c=IG_CONVOS[i]; if(!c) return; igCur=c; renderIgList();
+    document.getElementById('ig-title').innerHTML='<b>'+esc(c.customer||c.customer_id)+'</b> <span style="color:var(--muted);font-size:12px">· 📷 @'+esc(c.account)+'</span>';
+    const box=document.getElementById('ig-msgs'); box.innerHTML='<div style="padding:10px;color:var(--muted)">Загрузка…</div>';
+    try{
+      const r=await apiFetch('/api/ig/thread?account='+encodeURIComponent(c.account_id)+'&customer='+encodeURIComponent(c.customer_id)+'&_='+Date.now(),{},ONEC_BASE);
+      const d=await r.json(); const msgs=d.msgs||[];
+      box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+(m.t==='out'?'out':'in')+'">'+linkify(m.x)+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>').join(''):'<div style="padding:10px;color:var(--muted)">Нет сообщений</div>';
+      box.scrollTop=box.scrollHeight;
+    }catch(e){ box.innerHTML='<div style="padding:10px;color:var(--muted)">Не удалось загрузить.</div>'; }
+  }
+  async function igSend(){
+    const inp=document.getElementById('ig-reply'); const t=(inp.value||'').trim(); if(!t) return;
+    if(!igCur){ alert('Сначала выбери диалог слева.'); return; }
+    inp.value='';
+    const box=document.getElementById('ig-msgs'); const bid='ig'+Date.now();
+    box.insertAdjacentHTML('beforeend','<div class="bubble out" id="'+bid+'">'+esc(t)+' <span style="opacity:.6;font-size:11px">⏳</span></div>'); box.scrollTop=box.scrollHeight;
+    try{
+      const r=await apiFetch('/api/ig/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:igCur.account_id,customer_id:igCur.customer_id,text:t})},ONEC_BASE);
+      const d=await r.json(); const b=document.getElementById(bid);
+      if(d.ok){ if(b) b.innerHTML=esc(t)+' <span style="opacity:.7;font-size:11px">✓ отправлено</span>'; }
+      else { if(b){ b.innerHTML=esc(t)+' <span style="opacity:.7;font-size:11px">⚠️ не доставлено</span>'; b.style.background='var(--red)'; }
+        box.insertAdjacentHTML('beforeend','<div style="font-size:12px;color:#ffb84d;padding:4px 8px">⚠️ '+esc(sendErrText(d.error||''))+'</div>'); inp.value=t; }
+    }catch(e){ const b=document.getElementById(bid); if(b){ b.innerHTML=esc(t)+' ⚠️'; b.style.background='var(--red)'; } inp.value=t; }
+  }
+  function startIgAuto(){
+    if(igTimer) return;
+    igTimer=setInterval(()=>{ const tb=document.getElementById('tab-iginbox'); if(!tb||tb.classList.contains('hide')) return; loadIgInbox(); }, 12000);
   }
   function ckHead(){
     const head=document.getElementById('ck-head'); if(!head) return; const deal=findDealByName(ckCurName);

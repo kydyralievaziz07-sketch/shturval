@@ -134,6 +134,8 @@ SECTION_OF = [
     ("/api/market", "market"),
     ("/api/chats", "chats"), ("/api/chat", "chats"), ("/api/send", "chats"),
     ("/api/bot-feedback", "chats"),
+    ("/api/ig/conversations", "chats"), ("/api/ig/thread", "chats"),
+    ("/api/ig/reply", "chats"), ("/api/ig/accounts", "chats"),
     ("/api/assistant", "ai"),
 ]
 
@@ -495,6 +497,85 @@ def ig_send(recipient_id, text, from_account_id=None):
                                  headers={"Content-Type": "application/json", "User-Agent": "Shturval/1.0"})
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.loads(r.read().decode() or "{}")
+
+# имена клиентов по их IGSID (кэш в памяти, чтобы не дёргать API каждый раз)
+_ig_names = {}
+def ig_customer_name(igsid, account_id):
+    if igsid in _ig_names:
+        return _ig_names[igsid]
+    name = ""
+    token = ig_token_for(account_id)
+    if token:
+        try:
+            url = IG_GRAPH + "/" + _q(str(igsid)) + "?fields=name,username&access_token=" + _q(token)
+            d = json.loads(urllib.request.urlopen(
+                urllib.request.Request(url, headers={"User-Agent": "Shturval/1.0"}), timeout=15).read().decode())
+            name = d.get("username") or d.get("name") or ""
+        except Exception:
+            name = ""
+    _ig_names[igsid] = name
+    return name
+
+def _ig_pair(r):
+    """(наш аккаунт, клиент) из строки ig_inbox независимо от направления."""
+    if r.get("direction") == "out":
+        return str(r.get("sender_id")), str(r.get("recipient_id"))
+    return str(r.get("recipient_id")), str(r.get("sender_id"))
+
+def ig_rows(limit=1000):
+    if not supa_on():
+        return []
+    try:
+        return _supa("GET", "ig_inbox",
+                     "?company_id=eq.%s&select=*&order=ts.desc,id.desc&limit=%d" % (_q(COMPANY_ID), limit)) or []
+    except Exception:
+        return []
+
+def ig_conversations():
+    """Список диалогов по всем аккаунтам: последний текст, время, имя клиента, аккаунт."""
+    amap = ig_account_map()
+    rows = ig_rows()
+    convos = {}
+    for r in rows:
+        acc, cust = _ig_pair(r)
+        key = acc + "|" + cust
+        if key not in convos:
+            convos[key] = {"account_id": acc, "customer_id": cust,
+                           "account": (amap.get(acc) or {}).get("username", acc),
+                           "last_text": r.get("text", ""), "last_ts": int(r.get("ts") or 0),
+                           "last_dir": r.get("direction", "in"), "count": 0}
+        convos[key]["count"] += 1
+    out = sorted(convos.values(), key=lambda c: c["last_ts"], reverse=True)
+    for c in out[:40]:                       # имена тянем только для верхних 40 (экономим запросы)
+        c["customer"] = ig_customer_name(c["customer_id"], c["account_id"]) or c["customer_id"]
+    for c in out[40:]:
+        c["customer"] = c["customer_id"]
+    return out
+
+def ig_thread(account_id, customer_id):
+    """Сообщения одного диалога по возрастанию времени."""
+    msgs = []
+    for r in ig_rows():
+        acc, cust = _ig_pair(r)
+        if acc == str(account_id) and cust == str(customer_id):
+            ts = int(r.get("ts") or 0)
+            msgs.append({"t": ("out" if r.get("direction") == "out" else "in"),
+                         "x": r.get("text", ""), "ts": ts,
+                         "tm": time.strftime("%d.%m %H:%M", time.localtime(ts / 1000)) if ts > 1e12
+                               else (time.strftime("%d.%m %H:%M", time.localtime(ts)) if ts else "")})
+    msgs.sort(key=lambda m: m["ts"])
+    return {"msgs": msgs, "customer": ig_customer_name(customer_id, account_id) or customer_id}
+
+def ig_reply(account_id, customer_id, text):
+    """Ответить клиенту с нужного аккаунта и сохранить в историю."""
+    ig_send(customer_id, text, account_id)
+    try:
+        _supa("POST", "ig_inbox", "",
+              {"company_id": COMPANY_ID, "sender_id": str(account_id),
+               "recipient_id": str(customer_id), "text": text,
+               "ts": int(time.time() * 1000), "direction": "out", "raw": {}})
+    except Exception:
+        pass
 
 # --- 1С (Yaros DataGate): товары, остатки, цены ---
 import base64
@@ -1681,6 +1762,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": False, "error": "ChatPlace: " + str(e)})
             _cache.pop("chats", None)                            # сбросить кэш списка
             return self._send(200, {"ok": True})
+        if self.path.startswith("/api/ig/reply"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            acc = str(body.get("account_id") or ""); cust = str(body.get("customer_id") or "")
+            text = (body.get("text") or "").strip()
+            if not acc or not cust or not text:
+                return self._send(400, {"error": "нужны account_id, customer_id и text"})
+            try:
+                ig_reply(acc, cust, text)
+            except Exception as e:
+                return self._send(200, {"ok": False, "error": "Instagram: " + str(e)})
+            return self._send(200, {"ok": True})
         if self.path.startswith("/api/add-product"):
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -2002,6 +2098,25 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, search_products(q, max(1, page), cat=cat, in_stock=in_stock, scat=scat))
             except Exception as e:
                 return self._send(200, {"error": "Нет связи с 1С: " + str(e), "items": [], "total": 0})
+        if self.path.startswith("/api/ig/conversations"):
+            try:
+                return self._send(200, {"conversations": ig_conversations(),
+                                        "accounts": [{"username": a.get("username"), "ig_id": a.get("ig_id")}
+                                                     for a in ig_accounts()]})
+            except Exception as e:
+                return self._send(200, {"conversations": [], "error": str(e)})
+        if self.path.startswith("/api/ig/thread"):
+            p = _parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            acc = (p.get("account") or [""])[0]; cust = (p.get("customer") or [""])[0]
+            if not acc or not cust:
+                return self._send(400, {"error": "нужны account и customer"})
+            try:
+                return self._send(200, ig_thread(acc, cust))
+            except Exception as e:
+                return self._send(200, {"msgs": [], "error": str(e)})
+        if self.path.startswith("/api/ig/accounts"):
+            return self._send(200, {"accounts": [{"username": a.get("username"), "ig_id": a.get("ig_id")}
+                                                 for a in ig_accounts()]})
         if self.path.startswith("/api/chats"):
             if CFG.get("CHATPLACE_KEY"):
                 try:
