@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.43.0<br>Штурвал CRM: переписка теперь напрямую через Instagram (вместо ChatPlace), всё в одном разделе
+      Штурвал v3.43.1<br>Штурвал CRM: видно, на какой аккаунт пишет клиент (📷 метка в списке и в шапке чата)
     </div>
   </aside>
 
@@ -2021,16 +2021,16 @@
       // поиск по всем стадиям: клиенты из чатов + из CRM, у кого ник/имя содержит запрос
       items=COCKPIT_CHATS.filter(c=>c.name&&c.name.toLowerCase().includes(ckSearch)).map(c=>{
         const d=findDealByName(c.name);
-        return {name:c.name,sub:(d?d.status:(c.status||'новый'))+(c.time?(' · '+c.time):''),chatId:c.id,ts:c.ts||0,unread:!!c.unread};
+        return {name:c.name,sub:(d?d.status:(c.status||'новый'))+(c.time?(' · '+c.time):''),chatId:c.id,ts:c.ts||0,unread:!!c.unread,account:c.account||''};
       });
       CRM.deals.forEach(d=>{ const cl=getClient(d.client_id);
         if(cl.name&&cl.name.toLowerCase().includes(ckSearch)&&!items.some(it=>it.name&&it.name.toLowerCase()===cl.name.toLowerCase()))
           items.push({name:cl.name,sub:d.status,chatId:null,ts:0,unread:false});
       });
     } else if(ckView==='Новая заявка'){
-      items=COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка'); }).map(c=>({name:c.name,sub:(c.time||'')+' · '+(c.status||'новый'),chatId:c.id,ts:c.ts||0,unread:!!c.unread}));
+      items=COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка'); }).map(c=>({name:c.name,sub:(c.time||'')+' · '+(c.status||'новый'),chatId:c.id,ts:c.ts||0,unread:!!c.unread,account:c.account||''}));
     } else {
-      items=CRM.deals.filter(d=>d.status===ckView).map(d=>{ const cl=getClient(d.client_id); const chat=COCKPIT_CHATS.find(x=>x.name&&cl.name&&x.name.toLowerCase()===cl.name.toLowerCase()); return {name:cl.name||'Без имени',sub:fmt(dealAmount(d)),chatId:chat?chat.id:null,ts:chat?(chat.ts||0):0,unread:chat?!!chat.unread:false}; });
+      items=CRM.deals.filter(d=>d.status===ckView).map(d=>{ const cl=getClient(d.client_id); const chat=COCKPIT_CHATS.find(x=>x.name&&cl.name&&x.name.toLowerCase()===cl.name.toLowerCase()); return {name:cl.name||'Без имени',sub:fmt(dealAmount(d)),chatId:chat?chat.id:null,ts:chat?(chat.ts||0):0,unread:chat?!!chat.unread:false,account:chat?chat.account:''}; });
     }
     // свежие — наверх; ждущие ответа (синяя точка) — ещё выше
     items.sort((a,b)=>(b.unread-a.unread)||(b.ts-a.ts));
@@ -2044,7 +2044,7 @@
       }
       return;
     }
-    box.innerHTML=items.map((it,i)=>'<div class="chatitem'+(it.chatId&&it.chatId===ckCurId?' active':'')+'" draggable="true" data-i="'+i+'"><div class="ci-name">'+(it.unread?'<span title="Клиент написал — без ответа" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2f80ed;margin-right:6px;vertical-align:middle"></span>':'')+esc(it.name)+'</div><div class="ci-last">'+esc(it.sub)+'</div></div>').join('');
+    box.innerHTML=items.map((it,i)=>'<div class="chatitem'+(it.chatId&&it.chatId===ckCurId?' active':'')+'" draggable="true" data-i="'+i+'"><div class="ci-name">'+(it.unread?'<span title="Клиент написал — без ответа" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2f80ed;margin-right:6px;vertical-align:middle"></span>':'')+esc(it.name)+(it.account?' <span style="font-size:11px;color:var(--accent);font-weight:400">📷 '+esc(it.account)+'</span>':'')+'</div><div class="ci-last">'+esc(it.sub)+'</div></div>').join('');
     box.querySelectorAll('.chatitem').forEach(el=>{ const it=items[+el.dataset.i];
       el.addEventListener('click',()=>openItem(it));
       el.addEventListener('dragstart',e=>{ dragChat={name:it.name,id:it.chatId}; e.dataTransfer.effectAllowed='move'; });
@@ -2144,8 +2144,10 @@
   }
   function ckHead(){
     const head=document.getElementById('ck-head'); if(!head) return; const deal=findDealByName(ckCurName);
+    const curChat=COCKPIT_CHATS.find(x=>x.id===ckCurId); const acc=curChat?curChat.account:'';
     head.innerHTML='<span style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
         '<span style="cursor:pointer" onclick="openDealForClient()" title="Открыть карточку заказа">📋 <b>'+esc(ckCurName||'—')+'</b>'+(deal?' · <span style="color:var(--muted)">'+esc(deal.status)+'</span>':'')+'</span>'+
+        (acc?'<span style="font-size:12px;color:var(--accent)">📷 пишет на @'+esc(acc)+'</span>':'')+
         igBtnHTML(ckCurName)+
       '</span>'+
       (ckCurName?'<span style="display:flex;align-items:center;gap:5px;font-size:13px">💰 <input type="number" value="'+(deal?Math.round(dealAmount(deal)):0)+'" placeholder="сумма счёта" style="width:120px;padding:5px 8px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text)" onchange="setAmount(this.value)"> сом</span>':'');
