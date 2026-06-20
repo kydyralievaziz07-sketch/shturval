@@ -287,7 +287,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.21.0<br>Новый раздел «Поставщики» (учёт долгов) + Финансы: расходы и чистая прибыль по периодам
+      Штурвал v3.22.0<br>Оплата поставщику = авто-расход; окна закрываются сразу (без двойных нажатий)
     </div>
   </aside>
 
@@ -1214,7 +1214,7 @@
   function openM(id){ const m=document.getElementById(id); if(m) m.classList.add('open'); }
   function closeM(id){ const m=document.getElementById(id); if(m) m.classList.remove('open'); }
   // ---- ФИНАНСЫ: деньги по периодам + расходы ----
-  let finPeriod='week', _expData=null;
+  let finPeriod='week', _expData=null, _saving=false;
   const finPLabel={today:'сегодня',week:'за неделю',month:'за месяц'};
   function setFinPeriod(p){ finPeriod=p; document.querySelectorAll('#finperiod button').forEach(b=>b.classList.toggle('active',b.dataset.fp===p)); renderFinMoney(); renderExpensesList(); }
   document.querySelectorAll('#finperiod button').forEach(b=>b.addEventListener('click',()=>setFinPeriod(b.dataset.fp)));
@@ -1233,7 +1233,7 @@
     const wkAgo=(function(){const d=new Date();d.setDate(d.getDate()-6);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');})();
     const inP=(dt)=>finPeriod==='today'?dt===today:(finPeriod==='week'?dt>=wkAgo:dt.slice(0,7)===today.slice(0,7));
     const list=(_expData.expenses||[]).filter(x=>inP(x.date||''));
-    box.innerHTML=list.length?'<table><tbody>'+list.map(x=>'<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc((x.date||'').slice(5))+'</td><td>'+esc(x.category||'—')+(x.note?' <span style="color:var(--muted);font-size:12px">· '+esc(x.note)+'</span>':'')+'</td><td style="text-align:right;white-space:nowrap"><span class="money" data-som="'+x.amount+'">'+fmt(x.amount)+'</span></td><td style="width:26px;text-align:right"><span onclick="delExpense('+x.id+')" title="Удалить" style="cursor:pointer;color:var(--muted)">✕</span></td></tr>').join('')+'</tbody></table>':'<span style="color:var(--muted);font-size:13px">Расходов '+finPLabel[finPeriod]+' нет</span>';
+    box.innerHTML=list.length?'<table><tbody>'+list.map(x=>{const auto=(x.source==='supplier');return '<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc((x.date||'').slice(5))+'</td><td>'+esc(x.category||'—')+(x.note?' <span style="color:var(--muted);font-size:12px">· '+esc(x.note)+'</span>':'')+(auto?' <span style="color:var(--muted);font-size:11px">↗ из «Поставщиков»</span>':'')+'</td><td style="text-align:right;white-space:nowrap"><span class="money" data-som="'+x.amount+'">'+fmt(x.amount)+'</span></td><td style="width:26px;text-align:right">'+(auto?'<span title="Управляется в разделе «Поставщики»" style="color:var(--muted)">🔗</span>':'<span onclick="delExpense('+x.id+')" title="Удалить" style="cursor:pointer;color:var(--muted)">✕</span>')+'</td></tr>';}).join('')+'</tbody></table>':'<span style="color:var(--muted);font-size:13px">Расходов '+finPLabel[finPeriod]+' нет</span>';
     const cb=document.getElementById('fin-exp-cats');
     if(cb){ const cats=_expData.by_category||[]; const mx=Math.max.apply(null,cats.map(c=>c.amount).concat([1]));
       cb.innerHTML=cats.length?cats.map(c=>'<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>'+esc(c.category)+'</span><span class="money" data-som="'+c.amount+'">'+fmt(c.amount)+'</span></div><div class="progress"><div style="width:'+Math.round(c.amount/mx*100)+'%"></div></div></div>').join(''):'<span style="color:var(--muted);font-size:13px">Пока нет расходов в этом месяце</span>'; }
@@ -1250,10 +1250,14 @@
   }
   function openExpense(){ const dt=document.getElementById('exp-date'); if(dt) dt.value=salesTodayStr(); ['exp-amt','exp-cat','exp-note'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';}); openM('expbg'); }
   async function saveExpense(){
+    if(_saving) return;
     const amt=parseFloat(document.getElementById('exp-amt').value||'0'); if(!amt||amt<=0){ alert('Введите сумму расхода'); return; }
     const body={action:'add',amount:amt,category:document.getElementById('exp-cat').value.trim(),note:document.getElementById('exp-note').value.trim(),date:document.getElementById('exp-date').value||salesTodayStr()};
+    _saving=true; closeM('expbg');           // закрываем сразу — без зависания и без двойных нажатий
     try{ const r=await apiFetch('/api/expenses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},ONEC_BASE); const d=await r.json();
-      if(d.ok){ _expData=d.data; renderFinMoney(); renderExpensesList(); closeM('expbg'); } else alert('Не сохранилось: '+(d.error||'')); }catch(e){ alert('Нет связи с сервером'); }
+      if(d.ok){ _expData=d.data; renderFinMoney(); renderExpensesList(); } else alert('Не сохранилось: '+(d.error||'')); }
+    catch(e){ alert('Нет связи с сервером — расход не сохранён, попробуй ещё раз'); }
+    finally{ _saving=false; }
   }
   async function delExpense(id){ if(!confirm('Удалить этот расход?')) return;
     try{ const r=await apiFetch('/api/expenses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'del',id:id})},ONEC_BASE); const d=await r.json();
@@ -1291,9 +1295,14 @@
   }
   function openSupplier(){ ['sup-name','sup-note'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';}); openM('suplbg'); }
   async function saveSupplier(){
+    if(_saving) return;
     const name=document.getElementById('sup-name').value.trim(); if(!name){ alert('Введите название'); return; }
-    try{ const r=await apiFetch('/api/suppliers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'add_supplier',name:name,note:document.getElementById('sup-note').value.trim()})},ONEC_BASE); const d=await r.json();
-      if(d.ok){ _suplData=d.data; renderSuppliers(); closeM('suplbg'); } else alert('Не сохранилось: '+(d.error||'')); }catch(e){ alert('Нет связи'); }
+    const note=document.getElementById('sup-note').value.trim();
+    _saving=true; closeM('suplbg');
+    try{ const r=await apiFetch('/api/suppliers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'add_supplier',name:name,note:note})},ONEC_BASE); const d=await r.json();
+      if(d.ok){ _suplData=d.data; renderSuppliers(); } else alert('Не сохранилось: '+(d.error||'')); }
+    catch(e){ alert('Нет связи — поставщик не добавлен, попробуй ещё раз'); }
+    finally{ _saving=false; }
   }
   function openSupTxn(sid,type){ supTxnCtx={sid:sid,type:type};
     document.getElementById('suptxn-title').textContent=(type==='debt'?'📦 Взял товар (увеличит долг)':'💸 Отдал деньги (уменьшит долг)');
@@ -1303,11 +1312,14 @@
     document.getElementById('suptxn-date').value=salesTodayStr(); openM('suptxnbg');
   }
   async function saveSupTxn(){
-    if(!supTxnCtx) return;
+    if(_saving || !supTxnCtx) return;
     const amt=parseFloat(document.getElementById('suptxn-amt').value||'0'); if(!amt||amt<=0){ alert('Введите сумму'); return; }
     const body={action:'add_txn',supplier_id:supTxnCtx.sid,type:supTxnCtx.type,amount:amt,qty:parseFloat(document.getElementById('suptxn-qty').value||'0'),note:document.getElementById('suptxn-note').value.trim(),date:document.getElementById('suptxn-date').value||salesTodayStr()};
+    _saving=true; closeM('suptxnbg');
     try{ const r=await apiFetch('/api/suppliers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},ONEC_BASE); const d=await r.json();
-      if(d.ok){ _suplData=d.data; renderSuppliers(); closeM('suptxnbg'); } else alert('Не сохранилось: '+(d.error||'')); }catch(e){ alert('Нет связи'); }
+      if(d.ok){ _suplData=d.data; renderSuppliers(); } else alert('Не сохранилось: '+(d.error||'')); }
+    catch(e){ alert('Нет связи — операция не сохранена, попробуй ещё раз'); }
+    finally{ _saving=false; }
   }
   async function delSupTxn(id){ if(!confirm('Удалить эту операцию?')) return;
     try{ const r=await apiFetch('/api/suppliers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'del_txn',id:id})},ONEC_BASE); const d=await r.json(); if(d.ok){ _suplData=d.data; renderSuppliers(); } }catch(e){} }
