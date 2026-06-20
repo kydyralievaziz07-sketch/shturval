@@ -467,6 +467,21 @@ def ig_upsert_account(token):
           {"company_id": COMPANY_ID, "ig_id": ig_id, "username": username, "token": token})
     return {"ig_id": ig_id, "username": username}
 
+def _ig_fetch_name_async(igsid, account_id):
+    """В фоне узнать ник нового клиента и сохранить (чтобы webhook отвечал быстро)."""
+    def run():
+        try:
+            tok = ig_token_for(account_id)
+            if not tok:
+                return
+            url = IG_GRAPH + "/" + _q(str(igsid)) + "?fields=username,name&access_token=" + _q(tok)
+            d = json.loads(urllib.request.urlopen(
+                urllib.request.Request(url, headers={"User-Agent": "Shturval/1.0"}), timeout=15).read().decode())
+            ig_save_name(igsid, d.get("username") or d.get("name") or "")
+        except Exception:
+            pass
+    threading.Thread(target=run, daemon=True).start()
+
 def ig_store_event(evt):
     """Разобрать webhook-событие Instagram и сохранить входящие сообщения в таблицу ig_inbox."""
     if not isinstance(evt, dict):
@@ -476,15 +491,17 @@ def ig_store_event(evt):
             msg = m.get("message") or {}
             if not msg or msg.get("is_echo"):       # echo = наши же отправленные, пропускаем
                 continue
-            row = {"company_id": COMPANY_ID,
-                   "sender_id": str((m.get("sender") or {}).get("id", "")),
-                   "recipient_id": str((m.get("recipient") or {}).get("id", "")),  # наш аккаунт
+            sender = str((m.get("sender") or {}).get("id", ""))
+            recipient = str((m.get("recipient") or {}).get("id", ""))  # наш аккаунт
+            row = {"company_id": COMPANY_ID, "sender_id": sender, "recipient_id": recipient,
                    "mid": msg.get("mid", ""), "text": msg.get("text", ""),
                    "ts": int(m.get("timestamp") or 0), "direction": "in", "raw": m}
             try:
                 _supa("POST", "ig_inbox", "", row)
             except Exception:
                 pass
+            if sender and sender not in _ig_names:   # новый клиент — узнаём ник в фоне
+                _ig_fetch_name_async(sender, recipient)
 
 def ig_send(recipient_id, text, from_account_id=None):
     """Отправить сообщение в Instagram. from_account_id = НАШ аккаунт (тот, на который писал клиент)."""
@@ -507,9 +524,16 @@ def ig_load_names():
     if time.time() - _ig_names_ts < 300 and _ig_names:
         return
     try:
-        rows = _supa("GET", "ig_names", "?company_id=eq.%s&select=igsid,name" % _q(COMPANY_ID)) or []
-        for row in rows:
-            _ig_names[str(row.get("igsid"))] = row.get("name") or ""
+        off = 0
+        while True:                          # БД отдаёт максимум 1000 строк — тянем постранично
+            rows = _supa("GET", "ig_names",
+                         "?company_id=eq.%s&select=igsid,name&order=igsid&limit=1000&offset=%d"
+                         % (_q(COMPANY_ID), off)) or []
+            for row in rows:
+                _ig_names[str(row.get("igsid"))] = row.get("name") or ""
+            if len(rows) < 1000:
+                break
+            off += 1000
         _ig_names_ts = time.time()
     except Exception:
         pass
