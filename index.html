@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.36.0<br>Вход сохраняется на устройстве (не спрашивает логин снова); «Мой день» у HR показывает свою премию/аванс
+      Штурвал v3.37.0<br>Чаты: кнопка «📷 Instagram» — открыть переписку с клиентом прямо в Instagram (мимо ChatPlace)
     </div>
   </aside>
 
@@ -2023,9 +2023,26 @@
   function findDealByName(name){ const c=findClient(name); return c?CRM.deals.find(d=>d.client_id===c.id)||null:null; }
   function ensureClient(name){ let c=findClient(name); if(!c){ c={id:uid(),name:name,phone:'',source:'instagram',created_at:new Date().toISOString()}; CRM.clients.push(c); } return c; }
   function ensureDeal(name,status){ const c=ensureClient(name); let d=CRM.deals.find(x=>x.client_id===c.id); if(!d){ d={id:uid(),client_id:c.id,status:status||'Новая заявка',items:[],owner:(USER.name||''),created_at:new Date().toISOString(),comment:''}; CRM.deals.push(d); logActivity(c.id,d.id,'системное','Заказ создан из чата'); } return d; }
+  // достаём ник Instagram из имени клиента ("@stimul218" → "stimul218"); для имён с пробелами/кириллицей — пусто
+  function igHandle(name){
+    let s=(name||'').trim();
+    if(!s) return '';
+    if(s[0]==='@') s=s.slice(1);
+    s=s.split(/[\s/|·]/)[0];                       // отрезаем всё после пробела/слэша
+    return /^[A-Za-z0-9._]{1,40}$/.test(s) ? s : '';
+  }
+  // прямая ссылка-кнопка в Instagram (переписка) — мимо ChatPlace
+  function igBtnHTML(name){
+    const h=igHandle(name);
+    if(!h) return '';
+    return '<a href="https://ig.me/m/'+encodeURIComponent(h)+'" target="_blank" rel="noopener" class="btn ghost" style="padding:5px 10px;font-size:12px;text-decoration:none;white-space:nowrap" title="Открыть переписку с @'+esc(h)+' прямо в Instagram">📷 Instagram</a>';
+  }
   function ckHead(){
     const head=document.getElementById('ck-head'); if(!head) return; const deal=findDealByName(ckCurName);
-    head.innerHTML='<span style="cursor:pointer" onclick="openDealForClient()" title="Открыть карточку заказа">📋 <b>'+esc(ckCurName||'—')+'</b>'+(deal?' · <span style="color:var(--muted)">'+esc(deal.status)+'</span>':'')+'</span>'+
+    head.innerHTML='<span style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+        '<span style="cursor:pointer" onclick="openDealForClient()" title="Открыть карточку заказа">📋 <b>'+esc(ckCurName||'—')+'</b>'+(deal?' · <span style="color:var(--muted)">'+esc(deal.status)+'</span>':'')+'</span>'+
+        igBtnHTML(ckCurName)+
+      '</span>'+
       (ckCurName?'<span style="display:flex;align-items:center;gap:5px;font-size:13px">💰 <input type="number" value="'+(deal?Math.round(dealAmount(deal)):0)+'" placeholder="сумма счёта" style="width:120px;padding:5px 8px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text)" onchange="setAmount(this.value)"> сом</span>':'');
   }
   function setAmount(v){ if(!ckCurName) return; const d=ensureDeal(ckCurName); d.amount=parseFloat(v)||0; crmPersist(); renderFunnel(); renderCrmStats(); renderCrmDash(); renderLeft(); }
