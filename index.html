@@ -293,7 +293,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.45.0<br>Новое меню: разделы сверху, подпункты слева (как в amoCRM)
+      Штурвал v3.46.0<br>Два дашборда: CRM (онлайн-магазин, воронка) и Магазин (1С: продажи/выручка); Аналитика — в Магазине
     </div>
   </aside>
 
@@ -317,6 +317,12 @@
     </div>
 
     <!-- DASHBOARD -->
+    <!-- CRM ДАШБОРД (онлайн-магазин) -->
+    <section id="tab-crmdash" class="hide">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">🛒 Онлайн-магазин — заявки, сделки и воронка (из переписок Instagram и CRM)</div>
+      <div id="crmhome"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div>
+    </section>
+
     <section id="tab-dash">
       <div style="font-size:12px;color:var(--muted);margin-bottom:8px">🛒 Продажи сегодня — живые данные из <b>1С</b> (касса)</div>
       <div id="dash-sales-kpis" class="kpis" style="margin-bottom:18px">
@@ -324,13 +330,6 @@
         <div class="card kpi"><div class="label">Выручка сегодня</div><div class="value">—</div></div>
         <div class="card kpi"><div class="label">Прибыль сегодня</div><div class="value">—</div></div>
         <div class="card kpi"><div class="label">Средний чек</div><div class="value">—</div></div>
-      </div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">📡 Заявки и сделки из <b>amoCRM</b></div>
-      <div class="kpis">
-        <div class="card kpi"><div class="label" id="dl1">Сделок за неделю</div><div class="value" id="dk1">—</div></div>
-        <div class="card kpi"><div class="label" id="dl2">Сумма за неделю</div><div class="value" id="dk2">—</div></div>
-        <div class="card kpi"><div class="label">Успешных сделок</div><div class="value" id="dk3">—</div></div>
-        <div class="card kpi"><div class="label">Сумма успешных</div><div class="value" id="dk4">—</div></div>
       </div>
 
       <div class="grid2">
@@ -876,7 +875,8 @@
 
 <script>
   const titles = {
-    dash     :["Рабочий стол","Магазин Бизмарт — общая картина"],
+    dash     :["Рабочий стол","Магазин (1С) — продажи, выручка, товары"],
+    crmdash  :["Рабочий стол","Онлайн-магазин — заявки, сделки, воронка"],
     myday    :["Мой день","Твой план, продажи и KPI на сегодня"],
     crm      :["Живые данные","Реальные сделки и воронки из amoCRM"],
     deals    :["Сделки","Воронка, переписка и заявки в одном окне"],
@@ -896,6 +896,7 @@
   };
   // ===== Навигация: модули сверху, подпункты слева (как в amoCRM) =====
   const TABMETA={
+    crmdash:{icon:'📊',label:'Рабочий стол'},
     dash:{icon:'📊',label:'Рабочий стол'}, deals:{icon:'🧲',label:'Сделки'},
     tasks:{icon:'✅',label:'Задачи'}, clients:{icon:'👥',label:'Клиенты'},
     analytics:{icon:'📈',label:'Аналитика'}, crm:{icon:'📡',label:'Живые данные'},
@@ -905,8 +906,8 @@
     ai:{icon:'🤖',label:'ИИ-помощник'}
   };
   const MODULES=[
-    {key:'crm',  icon:'🧲', label:'CRM',     tabs:['dash','deals','tasks','clients','analytics','crm']},
-    {key:'shop', icon:'📦', label:'Магазин', tabs:['prod','sales','supl','fin']},
+    {key:'crm',  icon:'🧲', label:'CRM',     tabs:['crmdash','deals','tasks','clients','crm']},
+    {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','analytics','supl','fin']},
     {key:'team', icon:'👥', label:'Команда', tabs:['myday','hr']},
     {key:'ai',   icon:'🤖', label:'ИИ',      tabs:['ai']}
   ];
@@ -925,6 +926,7 @@
     else if(tab==='clients') renderClients();
     else if(tab==='ai') aiInit();
     else if(tab==='deals'){ renderBoard(); startDealsAuto(); }
+    else if(tab==='crmdash'){ renderCrmHome(); fetchChats(); }
     else if(tab==='tasks') renderTasks();
     else if(tab==='prod'){ loadInventory(); loadProducts(); startProdAuto(); }
     else if(tab==='sales'){ loadSales(); startSalesAuto(); }
@@ -1923,6 +1925,32 @@
   // === ЕДИНЫЙ ЭКРАН: воронка сверху + чаты слева + диалог справа ===
   function renderBoard(){ renderFunnel(); renderToday(); renderCrmStats(); renderCrmDash(); fetchChats(); }
   function renderToday(){ const end=new Date(); end.setHours(23,59,59,999); const cnt=CRM.tasks.filter(t=>!t.done&&t.due_at&&new Date(t.due_at).getTime()<=end.getTime()).length; const el=document.getElementById('deals-today'); if(el) el.innerHTML='📋 На сегодня: <b>'+cnt+'</b> задач'; }
+  // CRM-дашборд (онлайн-магазин): показатели + воронка по стадиям Штурвала
+  function renderCrmHome(){
+    const box=document.getElementById('crmhome'); if(!box) return;
+    const PAID=['Оплачено','Отгружено','Закрыто']; const deals=CRM.deals||[];
+    const newLeads=(typeof newLeadsCount==='function')?newLeadsCount():deals.filter(d=>d.status==='Новая заявка').length;
+    const inWork=deals.filter(d=>['Закрыто','Отказ'].indexOf(d.status)<0).length;
+    const paid=deals.filter(d=>PAID.indexOf(d.status)>=0);
+    const sumOk=paid.reduce((s,d)=>s+dealAmount(d),0);
+    const start=new Date(); start.setHours(0,0,0,0);
+    const sumToday=paid.filter(d=>d.paid_at&&new Date(d.paid_at).getTime()>=start.getTime()).reduce((s,d)=>s+dealAmount(d),0);
+    const chats=(COCKPIT_CHATS||[]).length; const waiting=(COCKPIT_CHATS||[]).filter(c=>c.unread).length;
+    const kpi=(l,v)=>'<div class="card kpi"><div class="label">'+l+'</div><div class="value">'+v+'</div></div>';
+    let html='<div class="kpis" style="margin-bottom:18px">'+
+      kpi('🆕 Новых заявок',newLeads)+
+      kpi('🤝 Сделок в работе',inWork)+
+      kpi('✅ Сумма успешных','<span class="money" data-som="'+sumOk+'">'+fmt(sumOk)+'</span>')+
+      kpi('📅 Оплачено сегодня','<span class="money" data-som="'+sumToday+'">'+fmt(sumToday)+'</span>')+'</div>';
+    const maxN=Math.max(1,...CRM_STATUSES.map(st=>deals.filter(d=>d.status===st).length));
+    html+='<div class="card" style="margin-bottom:16px"><h3>🔻 Воронка продаж</h3>'+CRM_STATUSES.map(st=>{
+      const n=deals.filter(d=>d.status===st).length; const w=Math.round(n/maxN*100);
+      const col=st==='Отказ'?'#ff6b6b':(PAID.indexOf(st)>=0?'var(--green)':'var(--accent)');
+      return '<div style="margin:9px 0"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px"><span>'+esc(st)+'</span><b>'+n+'</b></div><div style="height:10px;background:var(--panel2);border-radius:6px;overflow:hidden"><div style="height:100%;width:'+w+'%;background:'+col+'"></div></div></div>';
+    }).join('')+'</div>';
+    html+='<div class="kpis" style="grid-template-columns:repeat(2,1fr)">'+kpi('📷 Instagram-диалогов',chats)+kpi('🔵 Ждут ответа',waiting)+'</div>';
+    box.innerHTML=html; renderMoney&&renderMoney();
+  }
   function renderCrmStats(){
     const el=document.getElementById('crm-stats'); if(!el) return;
     const wrote=COCKPIT_CHATS.length;
@@ -2035,7 +2063,7 @@
     }
     catch(e){ COCKPIT_CHATS=[]; LAST_CHAT_ERR='нет связи с сервером'; }
     autoClassify();
-    renderLeft(); renderFunnel(); renderCrmStats(); renderCrmDash();
+    renderLeft(); renderFunnel(); renderCrmStats(); renderCrmDash(); renderCrmHome();
   }
   // Авто-воронка: раскладываем чаты по стадиям из подсказки сервера (c.stage).
   // Сделки, которые двигали ВРУЧНУЮ (d.manual===true), не трогаем.
