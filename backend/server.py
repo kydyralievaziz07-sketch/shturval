@@ -484,26 +484,28 @@ def get_categories():
             _goods["cats"] = {}
     return _goods["cats"]
 
+def _warm_sales():
+    try:
+        if CFG.get("YAROS_URL"):
+            s = cached("sales", 30, build_sales)
+            _save_sales_daily(s)
+    except Exception:
+        pass
+
 def _warmer():
-    """Фоновый поток: держит каталог 1С и сводку amoCRM тёплыми, чтобы запросы отвечали мгновенно."""
+    """Фоновый поток: держит каталог 1С, сводку amoCRM и продажи тёплыми, чтобы запросы
+    отвечали мгновенно. Все три прогреваются ПАРАЛЛЕЛЬНО — на холодном старте это ~50с
+    (самый долгий — каталог 20 МБ) вместо суммы ~60с при последовательной загрузке."""
     while True:
-        try:
-            if CFG.get("YAROS_URL"):
-                _refresh_catalog()
-        except Exception:
-            pass
-        try:
-            if CFG.get("AMO_TOKEN"):
-                _refresh_overview()
-        except Exception:
-            pass
-        # продажи: обновляем кэш и сохраняем дневной итог в Supabase (история по дням)
-        try:
-            if CFG.get("YAROS_URL"):
-                s = cached("sales", 30, build_sales)
-                _save_sales_daily(s)
-        except Exception:
-            pass
+        jobs = []
+        if CFG.get("YAROS_URL"):
+            jobs.append(_refresh_catalog)
+            jobs.append(_warm_sales)
+        if CFG.get("AMO_TOKEN"):
+            jobs.append(_refresh_overview)
+        ths = [threading.Thread(target=j, daemon=True) for j in jobs]
+        for t in ths: t.start()
+        for t in ths: t.join()
         time.sleep(110)
 
 # ====== Крупные категории товаров (по запросу владельца) ======
@@ -632,7 +634,7 @@ def build_inventory():
                                "units": int(v["units"]), "count": v["count"]})
     # «на исходе»: отдаём весь список (qty 1–3) с категорией — фильтрацию делает фронт
     low_out = sorted(low, key=lambda x: x["qty"])[:800]
-    return {
+    _inv_res = {
         "cats_units": cats_units,
         "cats_value": cats_value,
         "all_cats": all_cats,
@@ -648,6 +650,19 @@ def build_inventory():
         "low": low_out,
         "updated": time.strftime("%H:%M:%S"),
     }
+    kv_save("inventory", _inv_res)     # запоминаем последний удачный снимок склада
+    return _inv_res
+
+def get_inventory():
+    """Сводка склада, устойчивая к сбоям 1С: при ошибке отдаёт последний снимок из базы."""
+    try:
+        return cached("inventory", 120, build_inventory)
+    except Exception:
+        d = kv_load("inventory")
+        if d:
+            d = dict(d); d["stale"] = True
+            return d
+        raise
 
 def build_categories():
     cats = get_categories()
@@ -817,11 +832,14 @@ def sales_day(date):
                 d = dict(_sales_last["data"]); d["stale"] = True; return d
             if supa_on():
                 try:
+                    # самый свежий сохранённый день (сегодняшний, если есть; иначе последний доступный)
                     rows = _supa("GET", "sales_daily",
-                                 "?company_id=eq.%s&date=eq.%s&select=detail"
-                                 % (_q(COMPANY_ID), _q(_today_str())))
+                                 "?company_id=eq.%s&order=date.desc&limit=1&select=date,detail"
+                                 % _q(COMPANY_ID))
                     if rows and rows[0].get("detail"):
-                        d = dict(rows[0]["detail"]); d["stale"] = True; return d
+                        d = dict(rows[0]["detail"]); d["stale"] = True
+                        d["stale_date"] = rows[0].get("date")
+                        return d
                 except Exception:
                     pass
             raise
@@ -1090,6 +1108,25 @@ COMPANY_ID = "bizmart"   # пока одна компания; мульти-те
 
 def supa_on():
     return bool(CFG.get("SUPABASE_URL") and CFG.get("SUPABASE_KEY"))
+
+def kv_save(key, value):
+    """Сохранить последний удачный снимок (склад/продажи) в базу — чтобы пережить и
+    сбой 1С, и перезапуск сервера."""
+    if not supa_on():
+        return
+    try:
+        _supa("POST", "kv_cache", "?on_conflict=k", {"k": key, "v": value})
+    except Exception:
+        pass
+
+def kv_load(key):
+    if not supa_on():
+        return None
+    try:
+        rows = _supa("GET", "kv_cache", "?k=eq.%s&select=v" % _q(key))
+        return rows[0]["v"] if rows else None
+    except Exception:
+        return None
 
 def _supa(method, table, params="", body=None):
     """Запрос к Supabase REST (PostgREST). Секретный ключ обходит RLS (полный доступ)."""
@@ -1524,7 +1561,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"categories": [], "error": str(e)})
         if self.path.startswith("/api/inventory"):
             try:
-                return self._send(200, cached("inventory", 120, build_inventory))
+                return self._send(200, get_inventory())
             except Exception as e:
                 return self._send(200, {"error": "Нет связи с 1С: " + str(e)})
         if self.path.startswith("/api/sales-history"):

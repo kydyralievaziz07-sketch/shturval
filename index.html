@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.16.1<br>Продажи: выбор любого дня + блок 1С на дашборде; устойчивость к сбоям 1С (показ последнего снимка)
+      Штурвал v3.17.0<br>Аналитика (все категории) и Финансы (1С) на живых данных; устойчивость к сбоям 1С; быстрее прогрев
     </div>
   </aside>
 
@@ -597,14 +597,15 @@
 
     <!-- FINANCE -->
     <section id="tab-fin" class="hide">
-      <div class="kpis">
-        <div class="card kpi"><div class="label">Поступления (1С)</div><div class="value">3 240 000 сом</div></div>
-        <div class="card kpi"><div class="label">Закуп товара (1С)</div><div class="value">1 480 000 сом</div></div>
-        <div class="card kpi"><div class="label">Остаток на счетах</div><div class="value">5 420 000 сом</div></div>
-        <div class="card kpi"><div class="label">Стоимость склада</div><div class="value">9 800 000 сом</div></div>
-      </div>
-      <div class="card">
-        <div class="note">🔗 Этот раздел автоматически подтянет данные из твоей <b>1С</b> (стоит у тебя на компьютере). Сейчас цифры демонстрационные. Связь с 1С настроим отдельным шагом.</div>
+      <div id="fin-status" class="note" style="margin-bottom:16px">⏳ Загружаю данные из 1С…</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">📦 Склад сейчас (из 1С) — сколько денег «лежит» в товаре</div>
+      <div class="kpis" id="fin-stock"></div>
+      <div style="font-size:12px;color:var(--muted);margin:20px 0 8px">🛒 Продажи и прибыль (из чеков 1С)</div>
+      <div class="kpis" id="fin-sales"></div>
+      <div class="card" style="margin-top:18px">
+        <h3>💡 Что это значит</h3>
+        <div class="note"><b>Склад в рознице</b> — на какую сумму товара лежит на складе по ценам продажи. <b>Закуп склада</b> — во сколько этот товар обошёлся (себестоимость). <b>Потенц. наценка</b> — сколько заработаешь, если продать весь склад. <b>Выручка/прибыль</b> — реальные продажи из касс 1С.
+        <br><br>📌 «Остаток на счетах/в кассе» 1С по этому каналу не передаёт (чеки — это продажи, а не банк). Если нужно — уточним у 1С-программиста отдельный метод.</div>
       </div>
     </section>
 
@@ -795,6 +796,7 @@
       if(tab==='sales'){ loadSales(); startSalesAuto(); }
       if(tab==='dash') loadDashSales();
       if(tab==='analytics') renderAnalytics();
+      if(tab==='fin') renderFinance();
       window.scrollTo(0,0);
     });
   });
@@ -1065,8 +1067,10 @@
   }
   function renderInventory(d){
     const st=document.getElementById('prod-status');
-    st.style.borderStyle='solid'; st.style.borderColor='#39d98a';
-    st.innerHTML='🟢 <b>Каталог из 1С</b> · обновлено '+esc(d.updated||'')+' · всего '+(d.total_sku||0).toLocaleString('ru-RU')+' позиций · <span style="color:var(--muted)">обновляется само каждую минуту</span>';
+    st.style.borderStyle='solid'; st.style.borderColor=d.stale?'#ffb84d':'#39d98a';
+    st.innerHTML=d.stale
+      ? '🟠 <b>1С временно недоступна</b> · показываю последний сохранённый каталог (на '+esc(d.updated||'')+'). Обновится, когда 1С ответит.'
+      : '🟢 <b>Каталог из 1С</b> · обновлено '+esc(d.updated||'')+' · всего '+(d.total_sku||0).toLocaleString('ru-RU')+' позиций · <span style="color:var(--muted)">обновляется само каждую минуту</span>';
     const km=(label,som)=>'<div class="card kpi"><div class="label">'+label+'</div><div class="value"><span class="money" data-som="'+(som||0)+'">'+fmt(som||0)+'</span></div></div>';
     document.getElementById('prod-kpis').innerHTML=
       kpiCard('Позиций (SKU)',(d.total_sku||0).toLocaleString('ru-RU'))+
@@ -1093,22 +1097,54 @@
     renderSuperCats(d);
     renderCatBrowser(d);
     setDonutMode(DONUT_MODE);
+    drawAnalytics(d);          // обновляем «Аналитику» теми же свежими данными
+    drawFinance(d);            // и «Финансы (1С)»
   }
-  // Аналитика: остатки по 14 категориям (по количеству)
+  // Аналитика: остатки по ВСЕМ категориям (охватывает все товары)
+  function drawAnalytics(d){
+    const box=document.getElementById('an-cats'); if(!box) return;
+    // берём все категории (all_cats — полный список из 1С); если их нет, откатываемся на 14 крупных
+    let cats=(d.all_cats&&d.all_cats.length?d.all_cats:(d.super_cats||[])).slice().filter(c=>c.units>0).sort((a,b)=>b.units-a.units);
+    if(!cats.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет данных (нет связи с 1С — попробую ещё раз сам)</span>'; return; }
+    const mx=Math.max.apply(null,cats.map(c=>c.units).concat([1]));
+    const head='<div style="font-size:13px;color:var(--muted);margin-bottom:12px">Всего на складе: <b style="color:var(--text)">'+(d.total_sku||0).toLocaleString('ru-RU')+'</b> позиций · <b style="color:var(--text)">'+(d.total_units||0).toLocaleString('ru-RU')+'</b> шт · категорий: <b style="color:var(--text)">'+cats.length+'</b></div>';
+    box.innerHTML=head+'<div style="max-height:520px;overflow:auto;padding-right:4px">'+cats.map(c=>'<div style="margin-bottom:11px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px">'+
+      '<span>'+esc(c.title)+' <span style="color:var(--muted)">· '+c.count+' тов.</span></span>'+
+      '<span style="color:var(--muted)">'+c.units.toLocaleString('ru-RU')+' шт</span></div>'+
+      '<div class="progress"><div style="width:'+Math.round(c.units/mx*100)+'%"></div></div></div>').join('')+'</div>';
+  }
   function renderAnalytics(){
     const box=document.getElementById('an-cats'); if(!box) return;
-    const draw=(d)=>{
-      const cats=(d.super_cats||[]).slice().filter(c=>c.units>0).sort((a,b)=>b.units-a.units);
-      if(!cats.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет данных</span>'; return; }
-      const mx=Math.max.apply(null,cats.map(c=>c.units).concat([1]));
-      box.innerHTML=cats.map(c=>'<div style="margin-bottom:11px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px">'+
-        '<span>'+esc(c.title)+' <span style="color:var(--muted)">· '+c.count+' тов.</span></span>'+
-        '<span style="color:var(--muted)">'+c.units.toLocaleString('ru-RU')+' шт</span></div>'+
-        '<div class="progress"><div style="width:'+Math.round(c.units/mx*100)+'%"></div></div></div>').join('');
-    };
-    if(window._invData){ draw(window._invData); }
-    else { box.innerHTML='<span style="color:var(--muted);font-size:13px">Загрузка из 1С…</span>';
-      apiFetch('/api/inventory',{},ONEC_BASE).then(r=>r.json()).then(d=>{ window._invData=d; draw(d); }).catch(()=>{ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет связи с 1С</span>'; }); }
+    if(window._invData&&!window._invData.error){ drawAnalytics(window._invData); }
+    else { box.innerHTML='<span style="color:var(--muted);font-size:13px">⏳ Загружаю товары из 1С… (если сервер «просыпался» — это до минуты)</span>';
+      loadInventory();   // надёжный загрузчик с повторами; по готовности renderInventory вызовет drawAnalytics
+    }
+  }
+  // Финансы (1С): склад в деньгах + продажи/прибыль (реальные данные)
+  function drawFinance(d){
+    const box=document.getElementById('fin-stock'); if(!box||!d||d.error) return;
+    const km=(l,s)=>'<div class="card kpi"><div class="label">'+l+'</div><div class="value"><span class="money" data-som="'+(s||0)+'">'+fmt(s||0)+'</span></div></div>';
+    box.innerHTML=km('Склад в рознице',d.retail_value)+km('Закуп склада (себестоимость)',d.cost_value)+
+      km('Потенц. наценка',d.margin_value)+kpiCard('Позиций · штук',(d.total_sku||0).toLocaleString('ru-RU')+' · '+(d.total_units||0).toLocaleString('ru-RU'));
+    const st=document.getElementById('fin-status'); if(st){ st.style.borderStyle='solid'; st.style.borderColor='#39d98a'; st.innerHTML='🟢 <b>Данные из 1С</b> · склад обновлён '+esc(d.updated||''); }
+    renderMoney();
+  }
+  async function fillFinanceSales(){
+    const box=document.getElementById('fin-sales'); if(!box) return;
+    const km=(l,s)=>'<div class="card kpi"><div class="label">'+l+'</div><div class="value"><span class="money" data-som="'+(s||0)+'">'+fmt(s||0)+'</span></div></div>';
+    try{
+      const r=await apiFetch('/api/sales',{},ONEC_BASE); const s=await r.json();
+      let sumS=0,sumP=0,n=0;
+      try{ const rh=await apiFetch('/api/sales-history?days=60',{},ONEC_BASE); const h=await rh.json(); const days=(h.days||[]); n=days.length; sumS=days.reduce((a,x)=>a+(x.sales||0),0); sumP=days.reduce((a,x)=>a+(x.profit||0),0); }catch(_){}
+      box.innerHTML=km('Выручка сегодня',s.net_sales)+km('Прибыль сегодня',s.profit)+
+        km('Выручка за '+(n||1)+' дн.',sumS)+km('Прибыль за '+(n||1)+' дн.',sumP);
+      renderMoney();
+    }catch(e){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет связи с 1С — попробуй обновить страницу</span>'; }
+  }
+  function renderFinance(){
+    if(window._invData&&!window._invData.error) drawFinance(window._invData);
+    else { const st=document.getElementById('fin-status'); if(st) st.innerHTML='⏳ Загружаю склад из 1С… (если сервер «просыпался» — до минуты)'; loadInventory(); }
+    fillFinanceSales();
   }
   // «На исходе» — фильтры по количеству и категории + сортировка
   let LOW_SORT='asc';
@@ -1270,7 +1306,7 @@
     st.innerHTML=past
       ? '📅 <b>Отчёт за '+esc(d.date||salesDate)+'</b> · из нашей базы (сохранённый день)'
       : (d.stale
-         ? '🟠 <b>1С временно недоступна</b> · показываю последнее сохранённое (на '+esc(d.updated||'')+'). Обновится, когда 1С снова ответит.'
+         ? '🟠 <b>1С временно недоступна</b> · показываю последнее сохранённое'+(d.stale_date?(' за '+esc(d.stale_date)):'')+' (на '+esc(d.updated||'')+'). Обновится, когда 1С снова ответит.'
          : '🟢 <b>Продажи из 1С (касса)</b> · за сегодня · обновлено '+esc(d.updated||'')+' · <span style="color:var(--muted)">обновляется само каждую минуту</span>');
     const sfx=past?'':' сегодня';
     const km=(label,som)=>'<div class="card kpi"><div class="label">'+label+'</div><div class="value"><span class="money" data-som="'+(som||0)+'">'+fmt(som||0)+'</span></div></div>';
