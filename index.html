@@ -287,7 +287,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.24.0<br>Рынок: поиск цен товаров на Wildberries (в сомах) — для сравнения и закупа
+      Штурвал v3.24.1<br>Рынок: поиск цен WB напрямую из браузера (обход анти-бота серверных IP)
     </div>
   </aside>
 
@@ -1321,30 +1321,45 @@
   async function delSupplier(id){ if(!confirm('Удалить поставщика «'+supName(id)+'» и все его операции?')) return;
     try{ const r=await apiFetch('/api/suppliers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'del_supplier',id:id})},ONEC_BASE); const d=await r.json(); if(d.ok){ _suplData=d.data; renderSuppliers(); } }catch(e){} }
 
-  // ---- РЫНОК: цены товаров на Wildberries ----
+  // ---- РЫНОК: цены товаров на Wildberries (запрос из браузера: у WB открыт CORS,
+  // а домашний IP + настоящий браузер обходят анти-бот, который режет серверные IP) ----
+  let _rubKgs=null;
+  async function rubKgsRate(){
+    if(_rubKgs) return _rubKgs;
+    try{ const r=await fetch('https://open.er-api.com/v6/latest/RUB'); const d=await r.json(); _rubKgs=(d.rates&&d.rates.KGS)?d.rates.KGS:1.2; }catch(e){ _rubKgs=1.2; }
+    return _rubKgs;
+  }
+  function wbPrice(x){ const s=(x.sizes&&x.sizes[0]&&x.sizes[0].price)||{}; return ((s.product||s.basic||x.salePriceU||x.priceU||0))/100; }
   async function marketSearch(){
     const q=(document.getElementById('mkt-q').value||'').trim();
     const box=document.getElementById('mkt-results'); const sum=document.getElementById('mkt-summary');
     if(!q){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Введи название товара.</span>'; return; }
     box.innerHTML='<span style="color:var(--muted);font-size:13px">⏳ Ищу цены на Wildberries…</span>'; sum.innerHTML='';
+    const rate=await rubKgsRate();
+    let data=null;
     try{
-      const r=await apiFetch('/api/market?q='+encodeURIComponent(q),{},ONEC_BASE); const d=await r.json();
-      if(d.error){ box.innerHTML='<span style="color:var(--muted);font-size:13px">⚠️ '+esc(d.error)+'</span>'; return; }
-      const items=d.items||[];
-      if(!items.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Ничего не нашлось по «'+esc(q)+'».</span>'; return; }
-      sum.innerHTML='<div class="kpis" style="margin-bottom:16px">'+
-        '<div class="card kpi"><div class="label">Найдено</div><div class="value">'+d.count+'</div></div>'+
-        '<div class="card kpi"><div class="label">Самый дешёвый</div><div class="value"><span class="money" data-som="'+d.min_kgs+'">'+fmt(d.min_kgs)+'</span></div></div>'+
-        '<div class="card kpi"><div class="label">Средняя цена</div><div class="value"><span class="money" data-som="'+d.avg_kgs+'">'+fmt(d.avg_kgs)+'</span></div></div>'+
-        '<div class="card kpi"><div class="label">Самый дорогой</div><div class="value"><span class="money" data-som="'+d.max_kgs+'">'+fmt(d.max_kgs)+'</span></div></div></div>';
-      box.innerHTML='<table><thead><tr><th>Товар</th><th>Бренд</th><th style="text-align:right">Цена</th><th style="text-align:right">Рейтинг</th><th></th></tr></thead><tbody>'+
-        items.map(x=>'<tr><td>'+esc(x.name)+'</td><td style="color:var(--muted);font-size:13px">'+esc(x.brand||'')+'</td>'+
-          '<td style="text-align:right;white-space:nowrap"><span class="money" data-som="'+x.price_kgs+'">'+fmt(x.price_kgs)+'</span><div style="font-size:11px;color:var(--muted)">'+(x.price_rub||0).toLocaleString('ru-RU')+' ₽</div></td>'+
-          '<td style="text-align:right;white-space:nowrap">'+(x.rating?('⭐ '+x.rating):'—')+'<div style="font-size:11px;color:var(--muted)">'+(x.feedbacks||0)+' отз.</div></td>'+
-          '<td style="text-align:right"><a href="'+x.link+'" target="_blank" rel="noopener" style="color:#bcd2ff;font-size:12px;white-space:nowrap">открыть ↗</a></td></tr>').join('')+
-        '</tbody></table><div class="note" style="margin-top:12px">💱 Курс пересчёта: 1 ₽ ≈ '+(d.rate||'')+' сом. Цены и наличие на Wildberries могут меняться.</div>';
-      renderMoney();
-    }catch(e){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет связи с сервером — попробуй ещё раз.</span>'; }
+      const url='https://search.wb.ru/exactmatch/ru/common/v5/search?appType=1&curr=rub&dest=-1257786&resultset=catalog&sort=popular&spp=30&query='+encodeURIComponent(q);
+      const r=await fetch(url,{headers:{'Accept':'*/*'}});
+      if(!r.ok) throw new Error('wb'+r.status);
+      data=await r.json();
+    }catch(e){ box.innerHTML='<span style="color:var(--muted);font-size:13px">⚠️ Wildberries сейчас не отвечает (у них защита от автоматических запросов). Подожди минуту и попробуй ещё раз.</span>'; return; }
+    const products=(data&&data.products)||[];
+    if(!products.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Ничего не нашлось по «'+esc(q)+'».</span>'; return; }
+    const items=products.slice(0,40).map(x=>{const rub=wbPrice(x);return {name:x.name||'',brand:x.brand||'',rub:Math.round(rub),kgs:Math.round(rub*rate),rating:x.reviewRating||x.rating,feedbacks:x.feedbacks||0,link:'https://www.wildberries.ru/catalog/'+x.id+'/detail.aspx'};});
+    const pr=items.map(i=>i.kgs).filter(v=>v>0);
+    const mn=pr.length?Math.min.apply(null,pr):0, mx=pr.length?Math.max.apply(null,pr):0, av=pr.length?Math.round(pr.reduce((a,b)=>a+b,0)/pr.length):0;
+    sum.innerHTML='<div class="kpis" style="margin-bottom:16px">'+
+      '<div class="card kpi"><div class="label">Найдено</div><div class="value">'+items.length+'</div></div>'+
+      '<div class="card kpi"><div class="label">Самый дешёвый</div><div class="value"><span class="money" data-som="'+mn+'">'+fmt(mn)+'</span></div></div>'+
+      '<div class="card kpi"><div class="label">Средняя цена</div><div class="value"><span class="money" data-som="'+av+'">'+fmt(av)+'</span></div></div>'+
+      '<div class="card kpi"><div class="label">Самый дорогой</div><div class="value"><span class="money" data-som="'+mx+'">'+fmt(mx)+'</span></div></div></div>';
+    box.innerHTML='<table><thead><tr><th>Товар</th><th>Бренд</th><th style="text-align:right">Цена</th><th style="text-align:right">Рейтинг</th><th></th></tr></thead><tbody>'+
+      items.map(x=>'<tr><td>'+esc(x.name)+'</td><td style="color:var(--muted);font-size:13px">'+esc(x.brand)+'</td>'+
+        '<td style="text-align:right;white-space:nowrap"><span class="money" data-som="'+x.kgs+'">'+fmt(x.kgs)+'</span><div style="font-size:11px;color:var(--muted)">'+(x.rub||0).toLocaleString('ru-RU')+' ₽</div></td>'+
+        '<td style="text-align:right;white-space:nowrap">'+(x.rating?('⭐ '+x.rating):'—')+'<div style="font-size:11px;color:var(--muted)">'+(x.feedbacks||0)+' отз.</div></td>'+
+        '<td style="text-align:right"><a href="'+x.link+'" target="_blank" rel="noopener" style="color:#bcd2ff;font-size:12px;white-space:nowrap">открыть ↗</a></td></tr>').join('')+
+      '</tbody></table><div class="note" style="margin-top:12px">💱 1 ₽ ≈ '+rate.toFixed(2)+' сом. Цены и наличие на Wildberries могут меняться.</div>';
+    renderMoney();
   }
   // «На исходе» — фильтры по количеству и категории + сортировка
   let LOW_SORT='asc';
