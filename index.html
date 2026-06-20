@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.25.0<br>Раздел «Рынок» временно скрыт (WB блокирует авто-запросы цен)
+      Штурвал v3.25.1<br>«Товары»: честное сообщение, когда 1С отвечает ошибкой (без ложного «просыпается»)
     </div>
   </aside>
 
@@ -1122,7 +1122,12 @@
       st.innerHTML='🟠 1С в облаке подключается отдельным шагом.'; return; }
     try{
       const r=await apiFetch('/api/inventory',{},ONEC_BASE); if(!r.ok) throw 0;
-      const d=await r.json(); if(d.error) throw 0;
+      const d=await r.json();
+      if(d.error){   // сервер ответил, но 1С отдала ошибку — ждать «пробуждения» бесполезно
+        st.style.borderStyle='dashed'; st.style.borderColor='#ff6b6b';
+        st.innerHTML='🔴 <b>1С сейчас недоступна.</b> Сервер 1С отвечает ошибкой сеанса, поэтому каталог товаров не загрузить. Это устраняется на стороне 1С — нужно сообщить 1С-программисту. <span style="color:var(--muted)">amoCRM и зарплаты/кадры работают как обычно.</span>';
+        return;
+      }
       window._invData=d; renderInventory(d);
     }catch(e){
       if(e&&(e.message==='unauthorized'||e.message==='forbidden')) return;
@@ -1132,11 +1137,11 @@
         st.innerHTML='🔴 <b>Нет связи с 1С.</b> Запусти на компьютере <b>backend/Запустить-сервер.command</b> и обнови страницу.';
       } else if(attempt<7){
         st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d';
-        st.innerHTML='⏳ <b>Сервер 1С просыпается…</b> после паузы это занимает до минуты. Жду, не закрывай (попытка '+attempt+'/6)…';
+        st.innerHTML='⏳ <b>Сервер просыпается…</b> после паузы это занимает до минуты. Жду, не закрывай (попытка '+attempt+'/6)…';
         clearTimeout(prodInvTimer); prodInvTimer=setTimeout(()=>loadInventory(attempt+1),12000);
       } else {
         st.style.borderStyle='dashed'; st.style.borderColor='#ff6b6b';
-        st.innerHTML='🔴 <b>Сервер 1С пока не ответил.</b> Обнови страницу через минуту.';
+        st.innerHTML='🔴 <b>Сервер пока не ответил.</b> Обнови страницу через минуту.';
       }
     }
   }
