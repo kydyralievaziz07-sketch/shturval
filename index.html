@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.26.0<br>Чаты: предупреждение о 24-часовом окне Instagram до отправки (видно, когда ответ не уйдёт)
+      Штурвал v3.27.0<br>Поставщики: к операции можно прикрепить чек/фото (хранится в базе, открывается по 📎)
     </div>
   </aside>
 
@@ -796,6 +796,9 @@
     <input id="suptxn-note" placeholder="например: посуда, партия №3">
     <label>Дата</label>
     <input type="date" id="suptxn-date">
+    <label>Чек / фото (необязательно)</label>
+    <input type="file" id="suptxn-file" accept="image/*,application/pdf" capture="environment" onchange="supFilePick()">
+    <div id="suptxn-fileinfo" style="font-size:12px;color:var(--muted);margin-top:4px"></div>
     <div class="modal-foot">
       <button class="btn" onclick="saveSupTxn()">Сохранить</button>
       <button class="btn ghost" onclick="closeM('suptxnbg')">Отмена</button>
@@ -1279,7 +1282,7 @@
       '<div class="card kpi"><div class="label">Поставщиков</div><div class="value">'+(d.count||0)+'</div></div>';
     const box=document.getElementById('supl-list'); const sups=d.suppliers||[];
     box.innerHTML=sups.length?sups.map(s=>{
-      const txns=(s.txns||[]).slice(0,8).map(t=>'<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc((t.date||'').slice(5))+'</td><td>'+(t.type==='debt'?'📦 взял':'💸 отдал')+(t.note?' <span style="color:var(--muted);font-size:12px">· '+esc(t.note)+'</span>':'')+(t.qty?' <span style="color:var(--muted);font-size:12px">('+t.qty+' шт)</span>':'')+'</td><td style="text-align:right;white-space:nowrap;color:'+(t.type==='debt'?'#ff6b6b':'#39d98a')+'">'+(t.type==='debt'?'+':'−')+fmt(t.amount)+'</td><td style="width:24px;text-align:right"><span onclick="delSupTxn('+t.id+')" title="Удалить" style="cursor:pointer;color:var(--muted)">✕</span></td></tr>').join('');
+      const txns=(s.txns||[]).slice(0,8).map(t=>'<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc((t.date||'').slice(5))+'</td><td>'+(t.type==='debt'?'📦 взял':'💸 отдал')+(t.note?' <span style="color:var(--muted);font-size:12px">· '+esc(t.note)+'</span>':'')+(t.qty?' <span style="color:var(--muted);font-size:12px">('+t.qty+' шт)</span>':'')+(t.receipt_url?' <a href="'+esc(t.receipt_url)+'" target="_blank" rel="noopener" style="font-size:12px;color:var(--accent,#5b8cff);text-decoration:none" title="Открыть чек">📎 чек</a>':'')+'</td><td style="text-align:right;white-space:nowrap;color:'+(t.type==='debt'?'#ff6b6b':'#39d98a')+'">'+(t.type==='debt'?'+':'−')+fmt(t.amount)+'</td><td style="width:24px;text-align:right"><span onclick="delSupTxn('+t.id+')" title="Удалить" style="cursor:pointer;color:var(--muted)">✕</span></td></tr>').join('');
       return '<div class="card" style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">'+
         '<div><div style="font-weight:700;font-size:16px">'+esc(s.name)+'</div>'+(s.note?'<div style="font-size:12px;color:var(--muted)">'+esc(s.note)+'</div>':'')+'</div>'+
         '<div style="text-align:right"><div style="font-size:12px;color:var(--muted)">Текущий долг</div><div style="font-size:22px;font-weight:700;color:'+(s.debt>0?'#ff6b6b':'#39d98a')+'"><span class="money" data-som="'+s.debt+'">'+fmt(s.debt)+'</span></div></div></div>'+
@@ -1308,14 +1311,31 @@
     document.getElementById('suptxn-title').textContent=(type==='debt'?'📦 Взял товар (увеличит долг)':'💸 Отдал деньги (уменьшит долг)');
     document.getElementById('suptxn-sub').textContent='Поставщик: '+supName(sid);
     ['suptxn-amt','suptxn-qty','suptxn-note'].forEach(id=>document.getElementById(id).value='');
+    const f=document.getElementById('suptxn-file'); if(f) f.value='';
+    const fi=document.getElementById('suptxn-fileinfo'); if(fi) fi.textContent='';
     document.getElementById('suptxn-qtywrap').style.display=(type==='debt'?'':'none');
     document.getElementById('suptxn-date').value=salesTodayStr(); openM('suptxnbg');
   }
+  function supFilePick(){
+    const f=document.getElementById('suptxn-file'); const fi=document.getElementById('suptxn-fileinfo');
+    const file=f&&f.files&&f.files[0];
+    if(!file){ if(fi) fi.textContent=''; return; }
+    const mb=(file.size/1048576);
+    if(mb>10){ fi.style.color='#ff6b6b'; fi.textContent='⚠️ Файл '+mb.toFixed(1)+' МБ — слишком большой (макс 10 МБ)'; f.value=''; return; }
+    fi.style.color='var(--muted)'; fi.textContent='📎 '+file.name+' · '+mb.toFixed(1)+' МБ';
+  }
+  function fileToB64(file){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(file); }); }
   async function saveSupTxn(){
     if(_saving || !supTxnCtx) return;
     const amt=parseFloat(document.getElementById('suptxn-amt').value||'0'); if(!amt||amt<=0){ alert('Введите сумму'); return; }
     const body={action:'add_txn',supplier_id:supTxnCtx.sid,type:supTxnCtx.type,amount:amt,qty:parseFloat(document.getElementById('suptxn-qty').value||'0'),note:document.getElementById('suptxn-note').value.trim(),date:document.getElementById('suptxn-date').value||salesTodayStr()};
-    _saving=true; closeM('suptxnbg');
+    _saving=true;
+    const fEl=document.getElementById('suptxn-file'); const file=fEl&&fEl.files&&fEl.files[0];
+    try{
+      if(file){ if(file.size>10*1048576){ alert('Файл больше 10 МБ — выберите меньше'); _saving=false; return; }
+        body.receipt_b64=await fileToB64(file); body.receipt_name=file.name; body.receipt_type=file.type||'application/octet-stream'; }
+    }catch(e){ alert('Не удалось прочитать файл'); _saving=false; return; }
+    closeM('suptxnbg');
     try{ const r=await apiFetch('/api/suppliers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},ONEC_BASE); const d=await r.json();
       if(d.ok){ _suplData=d.data; renderSuppliers(); } else alert('Не сохранилось: '+(d.error||'')); }
     catch(e){ alert('Нет связи — операция не сохранена, попробуй ещё раз'); }

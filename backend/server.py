@@ -1159,6 +1159,24 @@ def _supa(method, table, params="", body=None):
         txt = r.read().decode("utf-8")
         return json.loads(txt) if txt.strip() else []
 
+def _supa_upload(raw, content_type, name, folder="receipts"):
+    """Загрузить файл (байты) в Supabase Storage (бакет receipts) и вернуть публичный URL.
+    Путь: {company_id}/{unix}_{безопасное_имя}. Возвращает '' при неудаче."""
+    base = CFG.get("SUPABASE_URL", "").rstrip("/")
+    key = CFG.get("SUPABASE_KEY", "")
+    if not base or not key:
+        return ""
+    safe = _re.sub(r"[^A-Za-z0-9._-]+", "_", (name or "file"))[-60:] or "file"
+    path = "%s/%s_%s" % (COMPANY_ID, int(time.time()), safe)
+    url = base + "/storage/v1/object/" + folder + "/" + _q(path)
+    req = urllib.request.Request(url, data=raw, method="POST", headers={
+        "apikey": key, "Authorization": "Bearer " + key,
+        "Content-Type": content_type or "application/octet-stream",
+        "x-upsert": "true", "User-Agent": "Shturval/1.0"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        r.read()
+    return base + "/storage/v1/object/public/" + folder + "/" + _q(path)
+
 # ====== ЗАРПЛАТА / КАДРЫ ======
 # Хранение: Supabase (постоянно). Файл — резервный вариант, если база не настроена.
 PAYROLL_FILE = os.path.join(HERE, "payroll.json")
@@ -1693,10 +1711,26 @@ class Handler(BaseHTTPRequestHandler):
                     day = (body.get("date") or "").strip()
                     if not (len(day) == 10 and day[4] == "-"):
                         day = _today_str()
+                    # прикреплённый чек (фото/файл) — грузим в Storage, сохраняем ссылку
+                    receipt_url = ""
+                    rb64 = body.get("receipt_b64") or ""
+                    if rb64:
+                        try:
+                            if "," in rb64 and rb64[:5] == "data:":
+                                rb64 = rb64.split(",", 1)[1]
+                            raw = base64.b64decode(rb64)
+                            if len(raw) > 10 * 1024 * 1024:
+                                return self._send(200, {"ok": False, "error": "Файл больше 10 МБ — сожмите или выберите меньше"})
+                            receipt_url = _supa_upload(
+                                raw, body.get("receipt_type") or "application/octet-stream",
+                                body.get("receipt_name") or "cheque")
+                        except Exception as ue:
+                            return self._send(200, {"ok": False, "error": "Не удалось загрузить чек: " + str(ue)})
                     _supa("POST", "supplier_txns", "",
                           {"company_id": COMPANY_ID, "supplier_id": sid, "type": typ,
                            "amount": round(_num(body.get("amount"))), "qty": _num(body.get("qty")),
-                           "note": (body.get("note") or "").strip(), "date": day})
+                           "note": (body.get("note") or "").strip(), "date": day,
+                           "receipt_url": receipt_url})
                 elif action == "del_txn":
                     tid = str(body.get("id"))
                     # удаляем и связанный расход (если это была оплата поставщику)
