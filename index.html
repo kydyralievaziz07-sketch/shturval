@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.44.0<br>Переписка: видны фото прямо в чате, видео и посты — ссылкой
+      Штурвал v3.44.1<br>Переписка: время сообщения видно сразу (в т.ч. у только что отправленных)
     </div>
   </aside>
 
@@ -2250,7 +2250,8 @@
     inp.value='';
     const box=document.getElementById('ck-msgs');
     const bid='b'+Date.now();
-    box.insertAdjacentHTML('beforeend','<div class="bubble out" id="'+bid+'">'+esc(t)+' <span style="opacity:.6;font-size:11px">⏳</span></div>'); box.scrollTop=box.scrollHeight;
+    const hm=nowHM().slice(0,5);          // ЧЧ:ММ — показываем время сразу
+    box.insertAdjacentHTML('beforeend','<div class="bubble out" id="'+bid+'">'+esc(t)+'<span style="display:block;font-size:10px;opacity:.55;margin-top:2px">'+hm+' ⏳</span></div>'); box.scrollTop=box.scrollHeight;
     const dl=findDealByName(ckCurName); if(dl){ logActivity(dl.client_id,dl.id,'сообщение','Ответ: '+t); crmPersist(); }
     let ok=false, errMsg='';
     const pp=String(ckCurId).split('|'); const accId=pp[0]||'', custId=pp[1]||'';
@@ -2261,7 +2262,7 @@
       }catch(e){ await new Promise(res=>setTimeout(res,2000)); }   // сервер просыпается — повтор
     }
     const b=document.getElementById(bid);
-    if(b){ b.innerHTML=esc(t)+' <span style="opacity:.7;font-size:11px">'+(ok?'✓ отправлено':'⚠️ не доставлено')+'</span>'; if(!ok) b.style.background='var(--red)'; }
+    if(b){ b.innerHTML=esc(t)+'<span style="display:block;font-size:10px;opacity:.6;margin-top:2px">'+hm+' '+(ok?'✓ отправлено':'⚠️ не доставлено')+'</span>'; if(!ok) b.style.background='var(--red)'; }
     if(ok){ const c=COCKPIT_CHATS.find(x=>x.id===ckCurId); if(c) c.unread=false; renderLeft(); setTimeout(()=>loadConvoMsgs(ckCurId, true), 1500); }
     else { inp.value=t;   // вернём текст, чтобы не печатать заново
       box.insertAdjacentHTML('beforeend','<div style="font-size:12px;color:#ffb84d;padding:4px 8px 10px">⚠️ '+esc(sendErrText(errMsg))+'</div>'); box.scrollTop=box.scrollHeight; }
