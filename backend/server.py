@@ -424,7 +424,46 @@ def build_chat_messages(cid):
     return {"msgs": msgs}
 
 # ===== Instagram напрямую (Meta Graph API), без ChatPlace =====
-IG_GRAPH = "https://graph.facebook.com/v21.0"
+# Подключение через «Instagram Login» (graph.instagram.com). Один Штурвал — много аккаунтов.
+IG_GRAPH = "https://graph.instagram.com/v21.0"
+
+def ig_accounts():
+    """Все подключённые Instagram-аккаунты компании: {ig_id, username, token}."""
+    if not supa_on():
+        return []
+    try:
+        return _supa("GET", "ig_accounts",
+                     "?company_id=eq.%s&select=*" % _q(COMPANY_ID)) or []
+    except Exception:
+        return []
+
+def ig_account_map():
+    """ig_id -> запись аккаунта (для маршрутизации сообщений по аккаунтам)."""
+    return {str(a.get("ig_id")): a for a in ig_accounts() if a.get("ig_id")}
+
+def ig_token_for(account_id):
+    """Токен того аккаунта, НА который пришло сообщение (account_id = recipient_id из webhook)."""
+    a = ig_account_map().get(str(account_id))
+    if a and a.get("token"):
+        return a["token"]
+    return CFG.get("IG_TOKEN", "")              # запасной (если один аккаунт в конфиге)
+
+def ig_resolve(token):
+    """Узнать ig_id и username по токену (graph.instagram.com/me)."""
+    url = IG_GRAPH + "/me?fields=user_id,username&access_token=" + _q(token)
+    req = urllib.request.Request(url, headers={"User-Agent": "Shturval/1.0"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        d = json.loads(r.read().decode() or "{}")
+    return str(d.get("user_id") or d.get("id") or ""), d.get("username", "")
+
+def ig_upsert_account(token):
+    """Сохранить/обновить аккаунт по токену (узнаём ig_id и username сами)."""
+    ig_id, username = ig_resolve(token)
+    if not ig_id:
+        raise RuntimeError("Токен не дал user_id — проверьте его")
+    _supa("POST", "ig_accounts", "?on_conflict=company_id,ig_id",
+          {"company_id": COMPANY_ID, "ig_id": ig_id, "username": username, "token": token})
+    return {"ig_id": ig_id, "username": username}
 
 def ig_store_event(evt):
     """Разобрать webhook-событие Instagram и сохранить входящие сообщения в таблицу ig_inbox."""
@@ -437,7 +476,7 @@ def ig_store_event(evt):
                 continue
             row = {"company_id": COMPANY_ID,
                    "sender_id": str((m.get("sender") or {}).get("id", "")),
-                   "recipient_id": str((m.get("recipient") or {}).get("id", "")),
+                   "recipient_id": str((m.get("recipient") or {}).get("id", "")),  # наш аккаунт
                    "mid": msg.get("mid", ""), "text": msg.get("text", ""),
                    "ts": int(m.get("timestamp") or 0), "direction": "in", "raw": m}
             try:
@@ -445,9 +484,9 @@ def ig_store_event(evt):
             except Exception:
                 pass
 
-def ig_send(recipient_id, text):
-    """Отправить сообщение в Instagram напрямую через Graph API (нужен IG_TOKEN)."""
-    token = CFG.get("IG_TOKEN", "")
+def ig_send(recipient_id, text, from_account_id=None):
+    """Отправить сообщение в Instagram. from_account_id = НАШ аккаунт (тот, на который писал клиент)."""
+    token = ig_token_for(from_account_id) if from_account_id else CFG.get("IG_TOKEN", "")
     if not token:
         raise RuntimeError("Instagram пока не подключён (нет токена). Сначала настройте приложение Meta.")
     url = IG_GRAPH + "/me/messages?access_token=" + _q(token)
