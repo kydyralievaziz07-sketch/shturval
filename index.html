@@ -287,7 +287,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.40.1<br>Фикс: раздел «Instagram» не открывался (не было заголовка вкладки) — теперь грузит диалоги
+      Штурвал v3.41.0<br>Instagram: открытый диалог сам обновляется — входящие сообщения появляются без перезахода
     </div>
   </aside>
 
@@ -2085,13 +2085,23 @@
   async function openIgThread(i){
     const c=IG_CONVOS[i]; if(!c) return; igCur=c; renderIgList();
     document.getElementById('ig-title').innerHTML='<b>'+esc(c.customer||c.customer_id)+'</b> <span style="color:var(--muted);font-size:12px">· 📷 @'+esc(c.account)+'</span>';
-    const box=document.getElementById('ig-msgs'); box.innerHTML='<div style="padding:10px;color:var(--muted)">Загрузка…</div>';
+    const box=document.getElementById('ig-msgs'); if(box){ box.innerHTML='<div style="padding:10px;color:var(--muted)">Загрузка…</div>'; box.dataset.sig=''; }
+    await igLoadThread(true);
+  }
+  // загрузка/обновление открытого диалога. silent=false — первый раз (показываем «Загрузка»)
+  async function igLoadThread(first){
+    const c=igCur; const box=document.getElementById('ig-msgs'); if(!c||!box) return;
     try{
       const r=await apiFetch('/api/ig/thread?account='+encodeURIComponent(c.account_id)+'&customer='+encodeURIComponent(c.customer_id)+'&_='+Date.now(),{},ONEC_BASE);
-      const d=await r.json(); const msgs=d.msgs||[];
+      const d=await r.json(); if(igCur!==c) return; const msgs=d.msgs||[];
+      const last=msgs[msgs.length-1];
+      const sig=msgs.length+'|'+(last?(last.ts+':'+last.x):'');
+      if(box.dataset.sig===sig && !first) return;          // нового ничего — не трогаем
+      const atBottom=(box.scrollHeight-box.scrollTop-box.clientHeight)<70;
+      box.dataset.sig=sig;
       box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+(m.t==='out'?'out':'in')+'">'+linkify(m.x)+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>').join(''):'<div style="padding:10px;color:var(--muted)">Нет сообщений</div>';
-      box.scrollTop=box.scrollHeight;
-    }catch(e){ box.innerHTML='<div style="padding:10px;color:var(--muted)">Не удалось загрузить.</div>'; }
+      if(first||atBottom) box.scrollTop=box.scrollHeight;
+    }catch(e){ if(first) box.innerHTML='<div style="padding:10px;color:var(--muted)">Не удалось загрузить.</div>'; }
   }
   async function igSend(){
     const inp=document.getElementById('ig-reply'); const t=(inp.value||'').trim(); if(!t) return;
@@ -2109,7 +2119,7 @@
   }
   function startIgAuto(){
     if(igTimer) return;
-    igTimer=setInterval(()=>{ const tb=document.getElementById('tab-iginbox'); if(!tb||tb.classList.contains('hide')) return; loadIgInbox(); }, 12000);
+    igTimer=setInterval(()=>{ const tb=document.getElementById('tab-iginbox'); if(!tb||tb.classList.contains('hide')) return; loadIgInbox(); if(igCur) igLoadThread(false); }, 8000);
   }
   function ckHead(){
     const head=document.getElementById('ck-head'); if(!head) return; const deal=findDealByName(ckCurName);
