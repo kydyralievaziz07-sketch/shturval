@@ -56,6 +56,11 @@ def load_secret():
     # База данных Supabase (постоянное хранение)
     cfg["SUPABASE_URL"] = env("SUPABASE_URL")
     cfg["SUPABASE_KEY"] = env("SUPABASE_KEY")
+    # Instagram напрямую (Meta Graph API) — без ChatPlace
+    cfg["IG_VERIFY_TOKEN"] = env("IG_VERIFY_TOKEN") or "shturval-ig-2026"   # слово-пароль для webhook (вписать в Meta)
+    cfg["IG_TOKEN"] = env("IG_TOKEN")            # токен доступа Instagram/страницы (заполнит владелец после настройки Meta)
+    cfg["IG_APP_SECRET"] = env("IG_APP_SECRET")  # секрет приложения Meta (для проверки подписи и обновления токена)
+    cfg["IG_ACCOUNT_ID"] = env("IG_ACCOUNT_ID")  # id бизнес-аккаунта Instagram
     return cfg
 
 CFG = load_secret()
@@ -417,6 +422,40 @@ def build_chat_messages(cid):
         msgs.append({"t": ("in" if m.get("side") == "client" else "out"),
                      "x": x, "ts": ts, "tm": tm, "id": m.get("id", "")})
     return {"msgs": msgs}
+
+# ===== Instagram напрямую (Meta Graph API), без ChatPlace =====
+IG_GRAPH = "https://graph.facebook.com/v21.0"
+
+def ig_store_event(evt):
+    """Разобрать webhook-событие Instagram и сохранить входящие сообщения в таблицу ig_inbox."""
+    if not isinstance(evt, dict):
+        return
+    for entry in (evt.get("entry") or []):
+        for m in (entry.get("messaging") or []):
+            msg = m.get("message") or {}
+            if not msg or msg.get("is_echo"):       # echo = наши же отправленные, пропускаем
+                continue
+            row = {"company_id": COMPANY_ID,
+                   "sender_id": str((m.get("sender") or {}).get("id", "")),
+                   "recipient_id": str((m.get("recipient") or {}).get("id", "")),
+                   "mid": msg.get("mid", ""), "text": msg.get("text", ""),
+                   "ts": int(m.get("timestamp") or 0), "direction": "in", "raw": m}
+            try:
+                _supa("POST", "ig_inbox", "", row)
+            except Exception:
+                pass
+
+def ig_send(recipient_id, text):
+    """Отправить сообщение в Instagram напрямую через Graph API (нужен IG_TOKEN)."""
+    token = CFG.get("IG_TOKEN", "")
+    if not token:
+        raise RuntimeError("Instagram пока не подключён (нет токена). Сначала настройте приложение Meta.")
+    url = IG_GRAPH + "/me/messages?access_token=" + _q(token)
+    body = json.dumps({"recipient": {"id": recipient_id}, "message": {"text": text}}).encode()
+    req = urllib.request.Request(url, data=body, method="POST",
+                                 headers={"Content-Type": "application/json", "User-Agent": "Shturval/1.0"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read().decode() or "{}")
 
 # --- 1С (Yaros DataGate): товары, остатки, цены ---
 import base64
@@ -1118,7 +1157,7 @@ def ai_answer(question, crm, history):
 
 
 # ====== БАЗА ДАННЫХ (Supabase / Postgres, REST API) ======
-from urllib.parse import quote as _q
+from urllib.parse import quote as _q, unquote as _unq, parse_qs as _parse_qs
 
 COMPANY_ID = "bizmart"   # пока одна компания; мульти-тенант — позже (поле company_id уже заложено)
 
@@ -1567,6 +1606,20 @@ class Handler(BaseHTTPRequestHandler):
         return self._user() is not None
 
     def do_POST(self):
+        # Instagram webhook — ПУБЛИЧНЫЙ (Meta шлёт события без нашего логина). Отвечаем быстро 200.
+        if self.path.startswith("/api/ig/webhook"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(length) if length else b""
+                evt = json.loads(raw or b"{}")
+            except Exception:
+                evt = {}
+            try:
+                ig_store_event(evt)
+            except Exception:
+                pass
+            self.send_response(200); self.send_header("Content-Type", "text/plain")
+            self.end_headers(); self.wfile.write(b"EVENT_RECEIVED"); return
         if self.path.startswith("/api/"):
             u = self._user()
             if not u:
@@ -1803,6 +1856,17 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/health"):
             ok = bool(CFG.get("AMO_TOKEN")) and bool(CFG.get("AMO_SUBDOMAIN"))
             return self._send(200, {"ok": ok, "account": CFG.get("AMO_SUBDOMAIN")})
+        # Instagram webhook — ПУБЛИЧНЫЙ (Meta проверяет адрес). Должно отвечать сырым challenge.
+        if self.path.startswith("/api/ig/webhook"):
+            p = _parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            mode = (p.get("hub.mode") or [""])[0]
+            token = (p.get("hub.verify_token") or [""])[0]
+            challenge = (p.get("hub.challenge") or [""])[0]
+            if mode == "subscribe" and token == CFG.get("IG_VERIFY_TOKEN", ""):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain"); self.end_headers()
+                self.wfile.write(challenge.encode("utf-8")); return
+            self.send_response(403); self.end_headers(); return
         if self.path.startswith("/api/auth"):
             u = self._user()
             return self._send(200 if u else 401, {"ok": bool(u),
