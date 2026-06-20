@@ -281,12 +281,13 @@
       <a data-tab="market"><span class="ico">🏪</span> Рынок</a>
       <a data-tab="analytics"><span class="ico">📈</span> Аналитика</a>
       <a data-tab="fin"><span class="ico">💰</span> Финансы (1С)</a>
+      <a data-tab="supl"><span class="ico">🤝</span> Поставщики</a>
       <a data-tab="ai"><span class="ico">🤖</span> ИИ-помощник</a>
       <a data-tab="hr"><span class="ico">🗓</span> Кадры</a>
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.20.0<br>Понятное объяснение, почему сообщение в Instagram не доставлено (правило 24 часов)
+      Штурвал v3.21.0<br>Новый раздел «Поставщики» (учёт долгов) + Финансы: расходы и чистая прибыль по периодам
     </div>
   </aside>
 
@@ -598,16 +599,44 @@
 
     <!-- FINANCE -->
     <section id="tab-fin" class="hide">
-      <div id="fin-status" class="note" style="margin-bottom:16px">⏳ Загружаю данные из 1С…</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">📦 Склад сейчас (из 1С) — сколько денег «лежит» в товаре</div>
+      <div id="fin-status" class="note" style="margin-bottom:14px">⏳ Загружаю данные…</div>
+      <div class="toolbar" style="margin-bottom:10px">
+        <div class="period" id="finperiod">
+          <button data-fp="today">День</button>
+          <button class="active" data-fp="week">Неделя</button>
+          <button data-fp="month">Месяц</button>
+        </div>
+        <button class="btn" onclick="openExpense()">💸 Добавить расход</button>
+      </div>
+      <div class="kpis" id="fin-money"></div>
+      <div class="grid2" style="margin-top:16px">
+        <div class="card">
+          <h3>💸 Расходы <span id="fin-exp-period" style="font-size:12px;color:var(--muted);font-weight:400"></span></h3>
+          <div id="fin-expenses" style="max-height:340px;overflow:auto"><span style="color:var(--muted);font-size:13px">—</span></div>
+        </div>
+        <div class="card">
+          <h3>📂 Расходы по категориям <span style="font-size:12px;color:var(--muted);font-weight:400">— за месяц</span></h3>
+          <div id="fin-exp-cats"><span style="color:var(--muted);font-size:13px">—</span></div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin:20px 0 8px">📦 Склад сейчас (из 1С) — сколько денег «лежит» в товаре</div>
       <div class="kpis" id="fin-stock"></div>
-      <div style="font-size:12px;color:var(--muted);margin:20px 0 8px">🛒 Продажи и прибыль (из чеков 1С)</div>
-      <div class="kpis" id="fin-sales"></div>
       <div class="card" style="margin-top:18px">
         <h3>💡 Что это значит</h3>
-        <div class="note"><b>Склад в рознице</b> — на какую сумму товара лежит на складе по ценам продажи. <b>Закуп склада</b> — во сколько этот товар обошёлся (себестоимость). <b>Потенц. наценка</b> — сколько заработаешь, если продать весь склад. <b>Выручка/прибыль</b> — реальные продажи из касс 1С.
-        <br><br>📌 «Остаток на счетах/в кассе» 1С по этому каналу не передаёт (чеки — это продажи, а не банк). Если нужно — уточним у 1С-программиста отдельный метод.</div>
+        <div class="note"><b>Выручка</b> — сколько продали (из касс 1С). <b>Прибыль с товара</b> — выручка минус закуп проданного. <b>Расходы</b> — то, что ты сам внёс (аренда, зарплаты, прочее). <b>Чистая прибыль = прибыль с товара − расходы</b> — сколько реально осталось.
+        <br><br>📌 Период (День/Неделя/Месяц) переключается кнопками сверху. История продаж копится с 18.06.2026 — за полный месяц цифры наберутся со временем.</div>
       </div>
+    </section>
+
+    <!-- ПОСТАВЩИКИ -->
+    <section id="tab-supl" class="hide">
+      <div class="toolbar" style="margin-bottom:12px">
+        <div style="font-size:12px;color:var(--muted)">🤝 Учёт поставщиков: что брал, сколько должен, сколько отдал</div>
+        <button class="btn" onclick="openSupplier()">➕ Добавить поставщика</button>
+      </div>
+      <div id="supl-status" class="note" style="margin-bottom:14px">⏳ Загружаю…</div>
+      <div class="kpis" id="supl-kpis"></div>
+      <div id="supl-list" style="margin-top:16px"></div>
     </section>
 
     <!-- AI -->
@@ -748,6 +777,55 @@
     </div>
   </div></div>
 
+  <!-- ОКНО: Новый поставщик -->
+  <div class="modal-bg" id="suplbg"><div class="modal" style="width:420px">
+    <h3>➕ Новый поставщик</h3>
+    <label>Название (имя/компания)</label>
+    <input id="sup-name" placeholder="Например: ОсОО Альфа" onkeydown="if(event.key==='Enter')saveSupplier()">
+    <label>Заметка (необязательно)</label>
+    <input id="sup-note" placeholder="телефон, что поставляет…">
+    <div class="modal-foot">
+      <button class="btn" onclick="saveSupplier()">Сохранить</button>
+      <button class="btn ghost" onclick="closeM('suplbg')">Отмена</button>
+    </div>
+  </div></div>
+
+  <!-- ОКНО: Операция с поставщиком (взял в долг / отдал деньги) -->
+  <div class="modal-bg" id="suptxnbg"><div class="modal" style="width:440px">
+    <h3 id="suptxn-title">Операция</h3>
+    <div id="suptxn-sub" style="font-size:13px;color:var(--muted)"></div>
+    <label>Сумма, сом</label>
+    <input type="number" id="suptxn-amt" inputmode="decimal" placeholder="0" onkeydown="if(event.key==='Enter')saveSupTxn()">
+    <div id="suptxn-qtywrap"><label>Количество товара (необязательно)</label>
+    <input type="number" id="suptxn-qty" inputmode="decimal" placeholder="0"></div>
+    <label>Что именно / комментарий</label>
+    <input id="suptxn-note" placeholder="например: посуда, партия №3">
+    <label>Дата</label>
+    <input type="date" id="suptxn-date">
+    <div class="modal-foot">
+      <button class="btn" onclick="saveSupTxn()">Сохранить</button>
+      <button class="btn ghost" onclick="closeM('suptxnbg')">Отмена</button>
+    </div>
+  </div></div>
+
+  <!-- ОКНО: Добавить расход -->
+  <div class="modal-bg" id="expbg"><div class="modal" style="width:420px">
+    <h3>💸 Новый расход</h3>
+    <label>Сумма, сом</label>
+    <input type="number" id="exp-amt" inputmode="decimal" placeholder="0" onkeydown="if(event.key==='Enter')saveExpense()">
+    <label>Категория</label>
+    <input id="exp-cat" list="exp-cats" placeholder="Аренда, Зарплата, Реклама, Доставка…">
+    <datalist id="exp-cats"><option>Аренда</option><option>Зарплата</option><option>Реклама</option><option>Доставка</option><option>Коммуналка</option><option>Налоги</option><option>Закуп</option><option>Прочее</option></datalist>
+    <label>Комментарий (необязательно)</label>
+    <input id="exp-note" placeholder="за что">
+    <label>Дата</label>
+    <input type="date" id="exp-date">
+    <div class="modal-foot">
+      <button class="btn" onclick="saveExpense()">Сохранить</button>
+      <button class="btn ghost" onclick="closeM('expbg')">Отмена</button>
+    </div>
+  </div></div>
+
   <!-- NOTIFICATIONS DRAWER -->
   <div class="overlay" id="overlay" onclick="toggleDrawer()"></div>
   <div class="drawer" id="drawer">
@@ -771,7 +849,8 @@
     clients  :["Клиенты","Кто покупает и кто возвращается"],
     market   :["Рынок","Предложения и цены конкурентов"],
     analytics:["Аналитика","ABC-анализ, остатки, прогнозы"],
-    fin      :["Финансы (1С)","Деньги, закуп и остатки из 1С"],
+    fin      :["Финансы","Выручка, прибыль, расходы и чистая прибыль"],
+    supl     :["Поставщики","Что брал, сколько должен, сколько отдал"],
     ai       :["ИИ-помощник","Подсказки, прогнозы и чат по данным"],
     staff    :["Персонал","Сотрудники, роли и зоны ответственности"],
     hr       :["Кадры","Явка, авансы и премии сотрудников"],
@@ -798,6 +877,7 @@
       if(tab==='dash') loadDashSales();
       if(tab==='analytics') renderAnalytics();
       if(tab==='fin') renderFinance();
+      if(tab==='supl') loadSuppliers();
       window.scrollTo(0,0);
     });
   });
@@ -1130,23 +1210,109 @@
     const st=document.getElementById('fin-status'); if(st){ st.style.borderStyle='solid'; st.style.borderColor='#39d98a'; st.innerHTML='🟢 <b>Данные из 1С</b> · склад обновлён '+esc(d.updated||''); }
     renderMoney();
   }
-  async function fillFinanceSales(){
-    const box=document.getElementById('fin-sales'); if(!box) return;
-    const km=(l,s)=>'<div class="card kpi"><div class="label">'+l+'</div><div class="value"><span class="money" data-som="'+(s||0)+'">'+fmt(s||0)+'</span></div></div>';
-    try{
-      const r=await apiFetch('/api/sales',{},ONEC_BASE); const s=await r.json();
-      let sumS=0,sumP=0,n=0;
-      try{ const rh=await apiFetch('/api/sales-history?days=60',{},ONEC_BASE); const h=await rh.json(); const days=(h.days||[]); n=days.length; sumS=days.reduce((a,x)=>a+(x.sales||0),0); sumP=days.reduce((a,x)=>a+(x.profit||0),0); }catch(_){}
-      box.innerHTML=km('Выручка сегодня',s.net_sales)+km('Прибыль сегодня',s.profit)+
-        km('Выручка за '+(n||1)+' дн.',sumS)+km('Прибыль за '+(n||1)+' дн.',sumP);
-      renderMoney();
-    }catch(e){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет связи с 1С — попробуй обновить страницу</span>'; }
+  // общие всплывающие окна
+  function openM(id){ const m=document.getElementById(id); if(m) m.classList.add('open'); }
+  function closeM(id){ const m=document.getElementById(id); if(m) m.classList.remove('open'); }
+  // ---- ФИНАНСЫ: деньги по периодам + расходы ----
+  let finPeriod='week', _expData=null;
+  const finPLabel={today:'сегодня',week:'за неделю',month:'за месяц'};
+  function setFinPeriod(p){ finPeriod=p; document.querySelectorAll('#finperiod button').forEach(b=>b.classList.toggle('active',b.dataset.fp===p)); renderFinMoney(); renderExpensesList(); }
+  document.querySelectorAll('#finperiod button').forEach(b=>b.addEventListener('click',()=>setFinPeriod(b.dataset.fp)));
+  function renderFinMoney(){
+    const box=document.getElementById('fin-money'); if(!box||!_expData) return;
+    const p=(_expData.periods||{})[finPeriod]||{};
+    const km=(l,s,c)=>'<div class="card kpi"><div class="label">'+l+'</div><div class="value"'+(c?' style="color:'+c+'"':'')+'><span class="money" data-som="'+(s||0)+'">'+fmt(s||0)+'</span></div></div>';
+    box.innerHTML=km('Выручка '+finPLabel[finPeriod],p.sales)+km('Прибыль с товара',p.profit)+
+      km('Расходы',p.expense,'#ffb84d')+km('Чистая прибыль',p.net,((p.net||0)>=0?'#39d98a':'#ff6b6b'));
+    renderMoney();
+    const ep=document.getElementById('fin-exp-period'); if(ep) ep.textContent='— '+finPLabel[finPeriod];
+  }
+  function renderExpensesList(){
+    const box=document.getElementById('fin-expenses'); if(!box||!_expData) return;
+    const today=salesTodayStr();
+    const wkAgo=(function(){const d=new Date();d.setDate(d.getDate()-6);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');})();
+    const inP=(dt)=>finPeriod==='today'?dt===today:(finPeriod==='week'?dt>=wkAgo:dt.slice(0,7)===today.slice(0,7));
+    const list=(_expData.expenses||[]).filter(x=>inP(x.date||''));
+    box.innerHTML=list.length?'<table><tbody>'+list.map(x=>'<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc((x.date||'').slice(5))+'</td><td>'+esc(x.category||'—')+(x.note?' <span style="color:var(--muted);font-size:12px">· '+esc(x.note)+'</span>':'')+'</td><td style="text-align:right;white-space:nowrap"><span class="money" data-som="'+x.amount+'">'+fmt(x.amount)+'</span></td><td style="width:26px;text-align:right"><span onclick="delExpense('+x.id+')" title="Удалить" style="cursor:pointer;color:var(--muted)">✕</span></td></tr>').join('')+'</tbody></table>':'<span style="color:var(--muted);font-size:13px">Расходов '+finPLabel[finPeriod]+' нет</span>';
+    const cb=document.getElementById('fin-exp-cats');
+    if(cb){ const cats=_expData.by_category||[]; const mx=Math.max.apply(null,cats.map(c=>c.amount).concat([1]));
+      cb.innerHTML=cats.length?cats.map(c=>'<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>'+esc(c.category)+'</span><span class="money" data-som="'+c.amount+'">'+fmt(c.amount)+'</span></div><div class="progress"><div style="width:'+Math.round(c.amount/mx*100)+'%"></div></div></div>').join(''):'<span style="color:var(--muted);font-size:13px">Пока нет расходов в этом месяце</span>'; }
+    renderMoney();
+  }
+  async function loadExpenses(){
+    try{ const r=await apiFetch('/api/expenses',{},ONEC_BASE); _expData=await r.json(); renderFinMoney(); renderExpensesList(); }catch(e){}
   }
   function renderFinance(){
     if(window._invData&&!window._invData.error) drawFinance(window._invData);
-    else { const st=document.getElementById('fin-status'); if(st) st.innerHTML='⏳ Загружаю склад из 1С… (если сервер «просыпался» — до минуты)'; loadInventory(); }
-    fillFinanceSales();
+    else loadInventory();
+    loadExpenses();
+    const st=document.getElementById('fin-status'); if(st){ st.style.borderStyle='solid'; st.style.borderColor='#39d98a'; st.innerHTML='🟢 <b>Финансы</b> · продажи из 1С минус твои расходы. Период — кнопками сверху.'; }
   }
+  function openExpense(){ const dt=document.getElementById('exp-date'); if(dt) dt.value=salesTodayStr(); ['exp-amt','exp-cat','exp-note'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';}); openM('expbg'); }
+  async function saveExpense(){
+    const amt=parseFloat(document.getElementById('exp-amt').value||'0'); if(!amt||amt<=0){ alert('Введите сумму расхода'); return; }
+    const body={action:'add',amount:amt,category:document.getElementById('exp-cat').value.trim(),note:document.getElementById('exp-note').value.trim(),date:document.getElementById('exp-date').value||salesTodayStr()};
+    try{ const r=await apiFetch('/api/expenses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},ONEC_BASE); const d=await r.json();
+      if(d.ok){ _expData=d.data; renderFinMoney(); renderExpensesList(); closeM('expbg'); } else alert('Не сохранилось: '+(d.error||'')); }catch(e){ alert('Нет связи с сервером'); }
+  }
+  async function delExpense(id){ if(!confirm('Удалить этот расход?')) return;
+    try{ const r=await apiFetch('/api/expenses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'del',id:id})},ONEC_BASE); const d=await r.json();
+      if(d.ok){ _expData=d.data; renderFinMoney(); renderExpensesList(); } }catch(e){} }
+
+  // ---- ПОСТАВЩИКИ ----
+  let _suplData=null, supTxnCtx=null;
+  function supName(id){ const s=((_suplData&&_suplData.suppliers)||[]).find(x=>x.id===id); return s?s.name:''; }
+  async function loadSuppliers(){
+    const st=document.getElementById('supl-status');
+    try{ const r=await apiFetch('/api/suppliers',{},ONEC_BASE); _suplData=await r.json(); renderSuppliers(); }
+    catch(e){ if(st) st.innerHTML='🔴 Нет связи с сервером'; }
+  }
+  function renderSuppliers(){
+    const d=_suplData||{}; const st=document.getElementById('supl-status');
+    if(st){ st.style.borderStyle='solid'; st.style.borderColor='#39d98a'; st.innerHTML='🟢 Данные сохраняются в базе'; }
+    const kp=document.getElementById('supl-kpis');
+    if(kp) kp.innerHTML='<div class="card kpi"><div class="label">Всего должен поставщикам</div><div class="value" style="color:'+((d.total_debt||0)>0?'#ff6b6b':'#39d98a')+'"><span class="money" data-som="'+(d.total_debt||0)+'">'+fmt(d.total_debt||0)+'</span></div></div>'+
+      '<div class="card kpi"><div class="label">Поставщиков</div><div class="value">'+(d.count||0)+'</div></div>';
+    const box=document.getElementById('supl-list'); const sups=d.suppliers||[];
+    box.innerHTML=sups.length?sups.map(s=>{
+      const txns=(s.txns||[]).slice(0,8).map(t=>'<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc((t.date||'').slice(5))+'</td><td>'+(t.type==='debt'?'📦 взял':'💸 отдал')+(t.note?' <span style="color:var(--muted);font-size:12px">· '+esc(t.note)+'</span>':'')+(t.qty?' <span style="color:var(--muted);font-size:12px">('+t.qty+' шт)</span>':'')+'</td><td style="text-align:right;white-space:nowrap;color:'+(t.type==='debt'?'#ff6b6b':'#39d98a')+'">'+(t.type==='debt'?'+':'−')+fmt(t.amount)+'</td><td style="width:24px;text-align:right"><span onclick="delSupTxn('+t.id+')" title="Удалить" style="cursor:pointer;color:var(--muted)">✕</span></td></tr>').join('');
+      return '<div class="card" style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">'+
+        '<div><div style="font-weight:700;font-size:16px">'+esc(s.name)+'</div>'+(s.note?'<div style="font-size:12px;color:var(--muted)">'+esc(s.note)+'</div>':'')+'</div>'+
+        '<div style="text-align:right"><div style="font-size:12px;color:var(--muted)">Текущий долг</div><div style="font-size:22px;font-weight:700;color:'+(s.debt>0?'#ff6b6b':'#39d98a')+'"><span class="money" data-som="'+s.debt+'">'+fmt(s.debt)+'</span></div></div></div>'+
+        '<div style="display:flex;gap:8px;margin:12px 0;flex-wrap:wrap">'+
+        '<button class="btn" onclick="openSupTxn('+s.id+',\'debt\')">📦 Взял товар (+долг)</button>'+
+        '<button class="btn ghost" onclick="openSupTxn('+s.id+',\'payment\')">💸 Отдал деньги (−долг)</button>'+
+        '<button class="btn ghost" style="margin-left:auto" onclick="delSupplier('+s.id+')" title="Удалить поставщика">🗑</button></div>'+
+        '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Взял всего: '+fmt(s.total_taken)+' · Отдал всего: '+fmt(s.total_paid)+'</div>'+
+        (txns?'<table><tbody>'+txns+'</tbody></table>':'<span style="color:var(--muted);font-size:13px">Операций пока нет</span>')+
+        '</div>';
+    }).join(''):'<div class="card"><span style="color:var(--muted);font-size:13px">Поставщиков пока нет. Нажми «➕ Добавить поставщика».</span></div>';
+    renderMoney();
+  }
+  function openSupplier(){ ['sup-name','sup-note'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';}); openM('suplbg'); }
+  async function saveSupplier(){
+    const name=document.getElementById('sup-name').value.trim(); if(!name){ alert('Введите название'); return; }
+    try{ const r=await apiFetch('/api/suppliers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'add_supplier',name:name,note:document.getElementById('sup-note').value.trim()})},ONEC_BASE); const d=await r.json();
+      if(d.ok){ _suplData=d.data; renderSuppliers(); closeM('suplbg'); } else alert('Не сохранилось: '+(d.error||'')); }catch(e){ alert('Нет связи'); }
+  }
+  function openSupTxn(sid,type){ supTxnCtx={sid:sid,type:type};
+    document.getElementById('suptxn-title').textContent=(type==='debt'?'📦 Взял товар (увеличит долг)':'💸 Отдал деньги (уменьшит долг)');
+    document.getElementById('suptxn-sub').textContent='Поставщик: '+supName(sid);
+    ['suptxn-amt','suptxn-qty','suptxn-note'].forEach(id=>document.getElementById(id).value='');
+    document.getElementById('suptxn-qtywrap').style.display=(type==='debt'?'':'none');
+    document.getElementById('suptxn-date').value=salesTodayStr(); openM('suptxnbg');
+  }
+  async function saveSupTxn(){
+    if(!supTxnCtx) return;
+    const amt=parseFloat(document.getElementById('suptxn-amt').value||'0'); if(!amt||amt<=0){ alert('Введите сумму'); return; }
+    const body={action:'add_txn',supplier_id:supTxnCtx.sid,type:supTxnCtx.type,amount:amt,qty:parseFloat(document.getElementById('suptxn-qty').value||'0'),note:document.getElementById('suptxn-note').value.trim(),date:document.getElementById('suptxn-date').value||salesTodayStr()};
+    try{ const r=await apiFetch('/api/suppliers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},ONEC_BASE); const d=await r.json();
+      if(d.ok){ _suplData=d.data; renderSuppliers(); closeM('suptxnbg'); } else alert('Не сохранилось: '+(d.error||'')); }catch(e){ alert('Нет связи'); }
+  }
+  async function delSupTxn(id){ if(!confirm('Удалить эту операцию?')) return;
+    try{ const r=await apiFetch('/api/suppliers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'del_txn',id:id})},ONEC_BASE); const d=await r.json(); if(d.ok){ _suplData=d.data; renderSuppliers(); } }catch(e){} }
+  async function delSupplier(id){ if(!confirm('Удалить поставщика «'+supName(id)+'» и все его операции?')) return;
+    try{ const r=await apiFetch('/api/suppliers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'del_supplier',id:id})},ONEC_BASE); const d=await r.json(); if(d.ok){ _suplData=d.data; renderSuppliers(); } }catch(e){} }
   // «На исходе» — фильтры по количеству и категории + сортировка
   let LOW_SORT='asc';
   function setLowSort(dir){ LOW_SORT=dir; renderLow(); }
@@ -2086,7 +2252,7 @@
   }
   function renderStaff(d){
     const b=document.getElementById('staff-body'); if(!b) return; const staff=d.staff||[];
-    const secNames={all:'Все разделы',dash:'Дашборд',myday:'Мой день',crm:'Живые данные',deals:'CRM',chats:'Чаты',prod:'Товары',sales:'Продажи',clients:'Клиенты',market:'Рынок',analytics:'Аналитика',fin:'Финансы',ai:'ИИ-помощник',staff:'Персонал',set:'Настройки'};
+    const secNames={all:'Все разделы',dash:'Дашборд',myday:'Мой день',crm:'Живые данные',deals:'CRM',chats:'Чаты',prod:'Товары',sales:'Продажи',clients:'Клиенты',market:'Рынок',analytics:'Аналитика',fin:'Финансы',supl:'Поставщики',ai:'ИИ-помощник',staff:'Персонал',set:'Настройки'};
     const depts=new Set(staff.filter(s=>s.department).map(s=>s.department));
     const rows=staff.map(s=>{
       const secs=(s.sections||[]).map(x=>secNames[x]||x).join(', ')||'—';

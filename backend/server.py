@@ -125,6 +125,7 @@ SECTION_OF = [
     ("/api/inventory", "prod"), ("/api/products", "prod"),
     ("/api/categories", "prod"), ("/api/add-product", "prod"),
     ("/api/sales-history", "sales"), ("/api/sales", "sales"),
+    ("/api/suppliers", "supl"), ("/api/expenses", "fin"),
     ("/api/chats", "chats"), ("/api/chat", "chats"), ("/api/send", "chats"),
     ("/api/bot-feedback", "chats"),
     ("/api/assistant", "ai"),
@@ -1351,6 +1352,93 @@ def dept_plan_all():
     return out
 
 
+# ====== ПОСТАВЩИКИ (долги) и РАСХОДЫ ======
+def _days_ago(n):
+    t = time.localtime(time.time() - n * 86400)
+    return "%04d-%02d-%02d" % (t.tm_year, t.tm_mon, t.tm_mday)
+
+def suppliers_list():
+    """Поставщики с подсчётом текущего долга: долг = (взял в долг) − (отдал деньги)."""
+    sups, txns = [], []
+    if supa_on():
+        try:
+            sups = _supa("GET", "suppliers", "?company_id=eq.%s&select=*&order=name" % _q(COMPANY_ID))
+            txns = _supa("GET", "supplier_txns",
+                         "?company_id=eq.%s&select=*&order=date.desc,id.desc" % _q(COMPANY_ID))
+        except Exception:
+            pass
+    bs = {}
+    for t in txns:
+        bs.setdefault(t.get("supplier_id"), []).append(t)
+    out = []
+    for s in sups:
+        ts = bs.get(s.get("id"), [])
+        taken = sum(_num(t.get("amount")) for t in ts if t.get("type") == "debt")
+        paid = sum(_num(t.get("amount")) for t in ts if t.get("type") == "payment")
+        out.append({"id": s.get("id"), "name": s.get("name", ""), "note": s.get("note", ""),
+                    "debt": round(taken - paid), "total_taken": round(taken),
+                    "total_paid": round(paid), "txns": ts[:60]})
+    return {"suppliers": out, "total_debt": round(sum(s["debt"] for s in out)), "count": len(out)}
+
+def sales_sums():
+    """Выручка и прибыль по периодам (день/неделя/месяц): сохранённые дни + сегодня живьём."""
+    today = _today_str()
+    days = {}
+    if supa_on():
+        try:
+            rows = _supa("GET", "sales_daily",
+                         "?company_id=eq.%s&select=date,sales,profit" % _q(COMPANY_ID))
+            for r in rows:
+                days[r.get("date")] = {"sales": _num(r.get("sales")), "profit": _num(r.get("profit"))}
+        except Exception:
+            pass
+    try:
+        s = cached("sales", 30, build_sales)
+        if not s.get("stale"):
+            days[today] = {"sales": _num(s.get("net_sales")), "profit": _num(s.get("profit"))}
+    except Exception:
+        pass
+    wk, mo = _days_ago(6), today[:7]
+    def agg(pred):
+        return (sum(v["sales"] for d, v in days.items() if pred(d)),
+                sum(v["profit"] for d, v in days.items() if pred(d)))
+    res = {}
+    for key, pred in (("today", lambda d: d == today),
+                      ("week", lambda d: d >= wk),
+                      ("month", lambda d: (d or "")[:7] == mo)):
+        sa, pr = agg(pred)
+        res[key] = {"sales": round(sa), "profit": round(pr)}
+    return res
+
+def expenses_view():
+    """Расходы: список, суммы по периодам, по категориям и ЧИСТАЯ ПРИБЫЛЬ = прибыль − расходы."""
+    rows = []
+    if supa_on():
+        try:
+            rows = _supa("GET", "expenses",
+                         "?company_id=eq.%s&select=*&order=date.desc,id.desc" % _q(COMPANY_ID))
+        except Exception:
+            rows = []
+    today = _today_str(); wk = _days_ago(6); mo = today[:7]
+    def esum(pred):
+        return round(sum(_num(r.get("amount")) for r in rows if pred(r.get("date", ""))))
+    e = {"today": esum(lambda d: d == today),
+         "week": esum(lambda d: d >= wk),
+         "month": esum(lambda d: (d or "")[:7] == mo)}
+    cat = {}
+    for r in rows:
+        if (r.get("date", "") or "")[:7] == mo:
+            c = (r.get("category") or "Без категории")
+            cat[c] = cat.get(c, 0) + _num(r.get("amount"))
+    by_cat = [{"category": k, "amount": round(v)} for k, v in sorted(cat.items(), key=lambda i: -i[1])]
+    ss = sales_sums()
+    periods = {}
+    for p in ("today", "week", "month"):
+        periods[p] = {"sales": ss[p]["sales"], "profit": ss[p]["profit"],
+                      "expense": e[p], "net": round(ss[p]["profit"] - e[p])}
+    return {"expenses": rows[:200], "by_category": by_cat, "periods": periods, "total_count": len(rows)}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -1522,6 +1610,72 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "неизвестное действие"})
             dept_plan_upsert(r)
             return self._send(200, {"ok": True, "departments": dept_plan_all()})
+        if self.path.startswith("/api/suppliers"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            action = body.get("action")
+            try:
+                if action == "add_supplier":
+                    name = (body.get("name") or "").strip()
+                    if not name:
+                        return self._send(400, {"error": "нужно название поставщика"})
+                    _supa("POST", "suppliers", "",
+                          {"company_id": COMPANY_ID, "name": name, "note": (body.get("note") or "").strip()})
+                elif action == "add_txn":
+                    sid = body.get("supplier_id")
+                    typ = body.get("type")
+                    if not sid or typ not in ("debt", "payment"):
+                        return self._send(400, {"error": "нужны поставщик и тип операции"})
+                    day = (body.get("date") or "").strip()
+                    if not (len(day) == 10 and day[4] == "-"):
+                        day = _today_str()
+                    _supa("POST", "supplier_txns", "",
+                          {"company_id": COMPANY_ID, "supplier_id": sid, "type": typ,
+                           "amount": round(_num(body.get("amount"))), "qty": _num(body.get("qty")),
+                           "note": (body.get("note") or "").strip(), "date": day})
+                elif action == "del_txn":
+                    _supa("DELETE", "supplier_txns",
+                          "?company_id=eq.%s&id=eq.%s" % (_q(COMPANY_ID), _q(str(body.get("id")))))
+                elif action == "del_supplier":
+                    sid = str(body.get("id"))
+                    _supa("DELETE", "supplier_txns",
+                          "?company_id=eq.%s&supplier_id=eq.%s" % (_q(COMPANY_ID), _q(sid)))
+                    _supa("DELETE", "suppliers", "?company_id=eq.%s&id=eq.%s" % (_q(COMPANY_ID), _q(sid)))
+                else:
+                    return self._send(400, {"error": "неизвестное действие"})
+                return self._send(200, {"ok": True, "data": suppliers_list()})
+            except Exception as e:
+                return self._send(200, {"ok": False, "error": str(e)})
+        if self.path.startswith("/api/expenses"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            action = body.get("action")
+            try:
+                if action == "add":
+                    amt = round(_num(body.get("amount")))
+                    if amt <= 0:
+                        return self._send(400, {"error": "нужна сумма расхода"})
+                    day = (body.get("date") or "").strip()
+                    if not (len(day) == 10 and day[4] == "-"):
+                        day = _today_str()
+                    _supa("POST", "expenses", "",
+                          {"company_id": COMPANY_ID, "amount": amt,
+                           "category": (body.get("category") or "").strip(),
+                           "note": (body.get("note") or "").strip(), "date": day})
+                elif action == "del":
+                    _supa("DELETE", "expenses",
+                          "?company_id=eq.%s&id=eq.%s" % (_q(COMPANY_ID), _q(str(body.get("id")))))
+                else:
+                    return self._send(400, {"error": "неизвестное действие"})
+                return self._send(200, {"ok": True, "data": expenses_view()})
+            except Exception as e:
+                return self._send(200, {"ok": False, "error": str(e)})
         self._send(404, {"error": "не найдено"})
 
     def do_GET(self):
@@ -1592,6 +1746,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, sales_day(date))
             except Exception as e:
                 return self._send(200, {"error": "Нет связи с 1С: " + str(e), "receipts": []})
+        if self.path.startswith("/api/suppliers"):
+            try:
+                return self._send(200, suppliers_list())
+            except Exception as e:
+                return self._send(200, {"suppliers": [], "total_debt": 0, "error": str(e)})
+        if self.path.startswith("/api/expenses"):
+            try:
+                return self._send(200, expenses_view())
+            except Exception as e:
+                return self._send(200, {"expenses": [], "error": str(e)})
         if self.path.startswith("/api/products"):
             from urllib.parse import urlparse, parse_qs
             qs = parse_qs(urlparse(self.path).query)
