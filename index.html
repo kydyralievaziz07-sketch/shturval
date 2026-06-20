@@ -286,7 +286,7 @@
       <a data-tab="set"><span class="ico">⚙️</span> Настройки</a>
     </nav>
     <div class="side-foot">
-      Штурвал v3.18.0<br>Воронка: поиск клиента по нику/имени по всем стадиям
+      Штурвал v3.19.0<br>Отправка в Instagram: ловим реальные ошибки ChatPlace (раньше «отправлено» показывалось даже при сбое)
     </div>
   </aside>
 
@@ -1507,12 +1507,19 @@
     if(!curChatId){ alert('Это пример-диалог. Отправка работает с живыми чатами (запусти локальный сервер).'); return; }
     inp.value=''; inp.disabled=true;
     const box=document.getElementById('msgs');
-    box.insertAdjacentHTML('beforeend','<div class="bubble out">'+esc(text)+'</div>'); box.scrollTop=box.scrollHeight;
+    const bid='b'+Date.now();
+    box.insertAdjacentHTML('beforeend','<div class="bubble out" id="'+bid+'">'+esc(text)+' <span style="opacity:.6;font-size:11px">⏳</span></div>'); box.scrollTop=box.scrollHeight;
+    let ok=false, errMsg='';
     try{
-      await apiFetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chatId:curChatId,text:text})},ONEC_BASE);
-    }catch(e){ alert('Не удалось отправить — проверь, запущен ли сервер.'); }
+      const r=await apiFetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chatId:curChatId,text:text})},ONEC_BASE);
+      const res=await r.json(); ok=!!(res&&res.ok); if(!ok&&res) errMsg=res.error||'';
+    }catch(e){ errMsg='нет связи с сервером'; }
+    const b=document.getElementById(bid);
+    if(b){ b.innerHTML=esc(text)+' <span style="opacity:.7;font-size:11px">'+(ok?'✓ отправлено':'⚠️ не доставлено')+'</span>'; if(!ok) b.style.background='var(--red)'; }
+    if(!ok){ inp.value=text;
+      box.insertAdjacentHTML('beforeend','<div style="font-size:12px;color:#ffb84d;padding:4px 8px 10px">⚠️ '+esc(sendErrText(errMsg))+'</div>'); box.scrollTop=box.scrollHeight; }
     inp.disabled=false; inp.focus();
-    setTimeout(()=>{ if(curChatId) openChat(curChatId,curChatName); }, 1500);
+    if(ok) setTimeout(()=>{ if(curChatId) openChat(curChatId,curChatName); }, 1500);
   }
   (function(){
     const b=document.getElementById('replyBtn'), i=document.getElementById('replyInput');
@@ -1786,6 +1793,19 @@
     await loadConvoMsgs(c.id, false);
     startConvoAuto();
   }
+  // Человеческое объяснение, почему сообщение не ушло
+  function sendErrText(m){
+    m=(m||'').toLowerCase();
+    if(m.includes('window')||m.includes('24')||m.includes('окн')||m.includes('outside')||m.includes('allowed')||m.includes('срок'))
+      return 'Instagram разрешает отвечать клиенту только в течение 24 часов после его последнего сообщения. Время вышло — можно ответить, когда клиент напишет снова.';
+    if(m.includes('not found')||m.includes('не найден'))
+      return 'Чат не найден — возможно, переписку удалили в Instagram.';
+    if(m.includes('429')||m.includes('limit')||m.includes('rate')||m.includes('ограничил'))
+      return 'Instagram/ChatPlace временно ограничил отправку. Подожди минуту и попробуй снова.';
+    if(m.includes('chatplace'))
+      return m.replace(/chatplace:?/i,'ChatPlace: ');
+    return m||'не удалось отправить';
+  }
   async function ckSend(){
     const inp=document.getElementById('ck-reply'); const t=inp.value.trim(); if(!t) return;
     if(!ckCurId){ alert('Сначала выбери чат в списке слева.'); return; }
@@ -1804,7 +1824,8 @@
     const b=document.getElementById(bid);
     if(b){ b.innerHTML=esc(t)+' <span style="opacity:.7;font-size:11px">'+(ok?'✓ отправлено':'⚠️ не доставлено')+'</span>'; if(!ok) b.style.background='var(--red)'; }
     if(ok){ const c=COCKPIT_CHATS.find(x=>x.id===ckCurId); if(c) c.unread=false; renderLeft(); setTimeout(()=>loadConvoMsgs(ckCurId, true), 1500); }
-    else if(errMsg) console.log('send error:', errMsg);
+    else { inp.value=t;   // вернём текст, чтобы не печатать заново
+      box.insertAdjacentHTML('beforeend','<div style="font-size:12px;color:#ffb84d;padding:4px 8px 10px">⚠️ '+esc(sendErrText(errMsg))+'</div>'); box.scrollTop=box.scrollHeight; }
   }
   function openDealForClient(){ if(!ckCurName) return; const d=ensureDeal(ckCurName); crmPersist(); openDeal(d.id); }
   // --- Обучение бота: сбор исправлений ---
@@ -2395,9 +2416,12 @@
   async function dealReply(chatId){
     const inp=document.getElementById('dl-reply'); const txt=inp.value.trim(); if(!txt) return; inp.value='';
     const d=getDeal(curDealId);
-    try{ await apiFetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chatId:chatId,text:txt})},ONEC_BASE);
-      logActivity(d.client_id,d.id,'сообщение','Ответ: '+txt); crmPersist(); setTimeout(loadDealChat,1300);
-    }catch(e){ alert('Не удалось отправить'); }
+    let ok=false, errMsg='';
+    try{ const r=await apiFetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chatId:chatId,text:txt})},ONEC_BASE);
+      const res=await r.json(); ok=!!(res&&res.ok); if(!ok&&res) errMsg=res.error||'';
+    }catch(e){ errMsg='нет связи с сервером'; }
+    if(ok){ logActivity(d.client_id,d.id,'сообщение','Ответ: '+txt); crmPersist(); setTimeout(loadDealChat,1300); }
+    else { inp.value=txt; alert('⚠️ Сообщение не отправлено.\n\n'+sendErrText(errMsg)); }
   }
 </script>
 </body>

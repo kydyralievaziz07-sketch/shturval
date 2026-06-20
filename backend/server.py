@@ -280,10 +280,24 @@ def chatplace_call(name, arguments):
     })
     with urllib.request.urlopen(req, timeout=25) as r:
         resp = json.loads(r.read().decode("utf-8"))
+    # JSON-RPC-ошибка
+    if resp.get("error"):
+        err = resp["error"]
+        raise RuntimeError(str(err.get("message") or err))
+    result = resp.get("result", {})
+    # ошибка на уровне инструмента (например отправка: "Chat not found",
+    # "вне 24-часового окна" и т.п.) — ChatPlace отдаёт isError=true + текст
+    if isinstance(result, dict) and result.get("isError"):
+        txt = "ошибка ChatPlace"
+        try:
+            txt = result["content"][0]["text"]
+        except Exception:
+            pass
+        raise RuntimeError(txt)
     try:
-        return json.loads(resp["result"]["content"][0]["text"])
+        return json.loads(result["content"][0]["text"])
     except Exception:
-        return resp.get("result", {})
+        return result
 
 # ====== АВТО-ВОРОНКА: классификация чатов по содержанию переписки ======
 # Ключевые слова (нижний регистр). Достаточно вхождения подстроки.
