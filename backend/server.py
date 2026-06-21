@@ -158,6 +158,25 @@ def _pkey(user):
     """Ключ зарплаты — логин (уникален). Если логина нет — имя (старое поведение)."""
     return (user.get("login") or user.get("name") or "").strip()
 
+# --- пароли: новые храним хешем (pbkdf2), старые (открытый текст) ещё принимаем ---
+def _hash_pw(pw):
+    salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", (pw or "").encode("utf-8"), salt, 120000)
+    return "pbkdf2$%s$%s" % (salt.hex(), dk.hex())
+
+def _verify_pw(stored, pw):
+    stored = str(stored or "")
+    if not stored or not pw:
+        return False
+    if stored.startswith("pbkdf2$"):
+        try:
+            _, salt_hex, hash_hex = stored.split("$", 2)
+            dk = hashlib.pbkdf2_hmac("sha256", pw.encode("utf-8"), bytes.fromhex(salt_hex), 120000)
+            return hmac.compare_digest(dk.hex(), hash_hex)
+        except Exception:
+            return False
+    return hmac.compare_digest(stored, pw)   # старый формат — открытый текст
+
 # какой раздел нужен для каждого data-эндпоинта (для проверки прав)
 SECTION_OF = [
     ("/api/overview", "crm"),
@@ -1985,13 +2004,12 @@ class Handler(BaseHTTPRequestHandler):
         login = (self.headers.get("X-Login") or "").strip().lower()
         if login:                                  # вход логин+пароль
             u = USERS_BY_LOGIN.get(login)
-            # сравнение пароля в постоянное время (защита от тайминг-атаки)
-            if u and pw and hmac.compare_digest(str(u.get("pw") or ""), pw):
+            if u and _verify_pw(u.get("pw"), pw):  # хеш или старый открытый текст, в пост. время
                 return u
             return None
         if pw:                                      # обратная совместимость: только пароль
             for cand in USERS.values():
-                if hmac.compare_digest(str(cand.get("pw") or ""), pw):
+                if _verify_pw(cand.get("pw"), pw):
                     return cand
         return None
 
@@ -2230,10 +2248,11 @@ class Handler(BaseHTTPRequestHandler):
                     secs_in = body.get("sections")
                     if not secs_in:
                         secs_in = ["myday"]
+                    _newpw = (body.get("pw") or "").strip()
                     row = _emp_row(login, name=name,
                                    role=(body.get("role") or "").strip(),
                                    department=(body.get("department") or "").strip(),
-                                   pw=(body.get("pw") or "").strip(),
+                                   pw=(_hash_pw(_newpw) if _newpw else ""),
                                    sections=secs_in,
                                    salary_month=round(float(body.get("salary_month") or 0)))
                     team_save(row)
@@ -2262,7 +2281,7 @@ class Handler(BaseHTTPRequestHandler):
                     if "sections" in body and body.get("sections"):
                         over["sections"] = body.get("sections")
                     if "pw" in body and (body.get("pw") or "").strip():
-                        over["pw"] = (body.get("pw") or "").strip()
+                        over["pw"] = _hash_pw((body.get("pw") or "").strip())
                     team_save(_emp_row(login, **over))
                     return self._send(200, {"ok": True})
                 elif action == "remove":
@@ -2309,7 +2328,7 @@ class Handler(BaseHTTPRequestHandler):
                     newpw = (body.get("new_pw") or "").strip()
                     if len(newpw) < 4:
                         return self._send(400, {"error": "Пароль минимум 4 символа"})
-                    team_save(_emp_row(login, pw=newpw))   # сохраняет ост. поля (sections и т.д.)
+                    team_save(_emp_row(login, pw=_hash_pw(newpw)))   # храним хешем
                     return self._send(200, {"ok": True})
                 elif action == "set_login":
                     newlogin = (body.get("new_login") or "").strip()
