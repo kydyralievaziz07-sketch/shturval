@@ -5,7 +5,7 @@
 Токен хранится здесь, на сервере, и НЕ попадает в код сайта.
 Запуск: python3 server.py   (или двойной клик по «Запустить-сервер.command»)
 """
-import os, json, time, threading, urllib.request, urllib.error
+import os, json, time, threading, urllib.request, urllib.error, hmac, hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # Часовой пояс — Бишкек (UTC+6). Чтобы «сегодня», время сообщений, явка, касса
@@ -1977,15 +1977,22 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {})
 
     def _user(self):
-        # если пользователи не заданы вовсе — защита выключена (гость видит всё)
+        # БЕЗОПАСНОСТЬ: если пользователи не заданы вовсе — НИКОГО не пускаем (fail-closed).
         if not USERS and not USERS_BY_LOGIN:
-            return {"name": "Гость", "sections": ["all"]}
+            return None
         pw = (self.headers.get("X-Auth") or "").strip()
         login = (self.headers.get("X-Login") or "").strip().lower()
         if login:                                  # вход логин+пароль
             u = USERS_BY_LOGIN.get(login)
-            return u if (u and pw and u.get("pw") == pw) else None
-        return USERS.get(pw)                        # обратная совместимость: только пароль
+            # сравнение пароля в постоянное время (защита от тайминг-атаки)
+            if u and pw and hmac.compare_digest(str(u.get("pw") or ""), pw):
+                return u
+            return None
+        if pw:                                      # обратная совместимость: только пароль
+            for cand in USERS.values():
+                if hmac.compare_digest(str(cand.get("pw") or ""), pw):
+                    return cand
+        return None
 
     def _authed(self):
         return self._user() is not None
@@ -1996,6 +2003,16 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 length = int(self.headers.get("Content-Length", 0))
                 raw = self.rfile.read(length) if length else b""
+            except Exception:
+                raw = b""
+            # БЕЗОПАСНОСТЬ: проверяем подпись Meta (HMAC-SHA256 от сырого тела с IG_APP_SECRET).
+            secret = CFG.get("IG_APP_SECRET", "")
+            if secret:
+                sig = self.headers.get("X-Hub-Signature-256", "")
+                expected = "sha256=" + hmac.new(secret.encode("utf-8"), raw, hashlib.sha256).hexdigest()
+                if not (sig and hmac.compare_digest(expected, sig)):
+                    self.send_response(403); self.end_headers(); return   # поддельный запрос
+            try:
                 evt = json.loads(raw or b"{}")
             except Exception:
                 evt = {}
