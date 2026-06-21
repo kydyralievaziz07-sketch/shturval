@@ -348,7 +348,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.57.0<br>Скорость: индексы CRM (нет тормозов после импорта), пауза автообновления при сворачивании, дебаунс записи, быстрая выгрузка клиентов
+      Штурвал v3.58.0<br>Чистка: реальные данные на дашборде Магазина (итоги 7 дней, топ товаров из 1С), живой колокольчик; окна закрываются по Esc/мимо; «обучение бота» честно сообщает результат
     </div>
   </aside>
 
@@ -366,7 +366,7 @@
           <button class="active" data-period="week">Неделя</button>
           <button data-period="month">Месяц</button>
         </div>
-        <button class="bell" id="bell-btn" onclick="toggleDrawer()" aria-label="Уведомления: 5 новых">🔔<span class="bcount">5</span></button>
+        <button class="bell" id="bell-btn" onclick="toggleDrawer()" aria-label="Уведомления">🔔<span class="bcount" id="bcount" style="display:none">0</span></button>
         <div class="user">Владелец <div class="avatar">Б</div></div>
       </div>
     </div>
@@ -393,45 +393,14 @@
           <div id="dash-bars" class="bars"><span style="color:var(--muted);font-size:13px">Загружаю продажи из 1С…</span></div>
         </div>
         <div class="card">
-          <h3>🎯 Цель месяца</h3>
-          <div class="goal-row"><span>Выручка</span><b>12 / 15 млн сом</b></div>
-          <div class="progress"><div style="width:80%"></div></div>
-          <div class="goal-row" style="margin-top:18px"><span>Новых клиентов</span><b>84 / 120</b></div>
-          <div class="progress amber"><div style="width:70%"></div></div>
-          <div class="note" style="margin-top:16px">До цели по выручке осталось <b>3 млн сом</b> — это ~230 продаж. По темпу успеваешь. 💪</div>
-        </div>
-      </div>
-
-      <div class="grid2b">
-        <div class="card">
-          <h3>🔻 Воронка продаж (рынок)</h3>
-          <div class="funnel">
-            <div class="step"><span class="lbl">Просмотры</span><div class="barf" style="width:100%">8 400</div></div>
-            <div class="step"><span class="lbl">В корзину</span><div class="barf" style="width:62%">2 180</div><span class="conv">26%</span></div>
-            <div class="step"><span class="lbl">Заказы</span><div class="barf" style="width:34%">640</div><span class="conv">29%</span></div>
-            <div class="step"><span class="lbl">Оплачено</span><div class="barf" style="width:24%">312</div><span class="conv">49%</span></div>
-          </div>
-          <div class="note" style="margin-top:14px">Половина заказов не доходит до оплаты — есть что улучшить в оформлении.</div>
-        </div>
-        <div class="card ai">
-          <h3>🤖 ИИ заметил</h3>
-          <div class="insight warn"><b>Срочно пополнить.</b> «Набор кастрюль 6 шт» — хит, осталось 3.</div>
-          <div class="insight good"><b>Точка роста.</b> Текстиль растёт 3 недели — увеличь закуп на 20%.</div>
-          <div class="insight"><b>Цена.</b> «Органайзер» можно поднять на 5% — спрос высокий.</div>
+          <h3>📅 Итоги за 7 дней <span style="font-size:12px;color:var(--muted);font-weight:400">— из 1С</span></h3>
+          <div id="dash-week"><span style="color:var(--muted);font-size:13px">Загружаю…</span></div>
         </div>
       </div>
 
       <div class="card">
-        <h3>Топ товаров</h3>
-        <table>
-          <thead><tr><th>Товар</th><th>Категория</th><th>Продано</th><th>Прибыль</th><th>Остаток</th><th>Статус</th></tr></thead>
-          <tbody>
-            <tr><td>Набор кастрюль 6 шт</td><td>Кухня</td><td>58</td><td>420 000 сом</td><td>3</td><td><span class="badge b-low">Заканчивается</span></td></tr>
-            <tr><td>Комплект постельного белья</td><td>Текстиль</td><td>46</td><td>310 000 сом</td><td>54</td><td><span class="badge b-ok">В наличии</span></td></tr>
-            <tr><td>Органайзер для шкафа</td><td>Хранение</td><td>39</td><td>140 000 сом</td><td>120</td><td><span class="badge b-ok">В наличии</span></td></tr>
-            <tr><td>Сушилка для белья</td><td>Хозтовары</td><td>0</td><td>0 сом</td><td>0</td><td><span class="badge b-out">Нет в наличии</span></td></tr>
-          </tbody>
-        </table>
+        <h3>🔥 Топ товаров <span style="font-size:12px;color:var(--muted);font-weight:400">— по продажам (1С)</span></h3>
+        <div id="dash-top"><span style="color:var(--muted);font-size:13px">Загружаю продажи из 1С…</span></div>
       </div>
     </section>
 
@@ -1009,11 +978,7 @@
   <div class="overlay" id="overlay" onclick="toggleDrawer()"></div>
   <div class="drawer" id="drawer">
     <h3>🔔 Требует внимания <button class="x" onclick="toggleDrawer()" aria-label="Закрыть">✕</button></h3>
-    <div class="notif red"><b>Закончился товар.</b> «Сушилка для белья» — 0 шт. Продажи остановлены.<div class="t">15 минут назад</div></div>
-    <div class="notif warn"><b>Заканчивается.</b> «Набор кастрюль 6 шт» — осталось 3. Пополни склад.<div class="t">1 час назад</div></div>
-    <div class="notif"><b>Цена выше рынка.</b> «Комплект белья» дороже конкурентов на 1 300 сом.<div class="t">2 часа назад</div></div>
-    <div class="notif warn"><b>Возврат.</b> Клиент вернул «Набор полотенец». Проверь причину.<div class="t">3 часа назад</div></div>
-    <div class="notif"><b>Новый VIP-клиент.</b> Айгерим С. сделала 14-ю покупку.<div class="t">сегодня</div></div>
+    <div id="notif-list"><div style="color:var(--muted);font-size:13px">Загрузка…</div></div>
   </div>
 
 <script>
@@ -1124,7 +1089,22 @@
       const dt=document.getElementById('tab-deals'); if(dt&&!dt.classList.contains('hide')&&typeof renderLeft==='function'){ renderLeft(); renderCrmDash(); }
     });
   });
+  function renderNotifs(){
+    const items=[];
+    const waiting=(typeof COCKPIT_CHATS!=='undefined'?COCKPIT_CHATS:[]).filter(c=>c.unread).length;
+    if(waiting>0) items.push({cls:'',html:'<b>Ждут ответа.</b> '+waiting+' клиент(ов) написали и без ответа.'});
+    const low=(window._invData&&window._invData.low)||[];
+    low.slice(0,10).forEach(x=>items.push({cls:(x.qty<=0?'red':'warn'),
+      html:'<b>'+(x.qty<=0?'Закончился товар.':'Заканчивается.')+'</b> «'+esc(x.title||'')+'» — '+(x.qty||0)+' шт.'}));
+    const box=document.getElementById('notif-list');
+    if(box) box.innerHTML=items.length
+      ? items.map(n=>'<div class="notif '+(n.cls||'')+'">'+n.html+'</div>').join('')
+      : '<div style="color:var(--muted);font-size:13px">Сейчас всё в порядке 👍 Срочных дел нет.</div>';
+    const bc=document.getElementById('bcount');
+    if(bc){ if(items.length){ bc.textContent=items.length; bc.style.display=''; } else bc.style.display='none'; }
+  }
   function toggleDrawer(){
+    renderNotifs();
     document.getElementById('drawer').classList.toggle('open');
     document.getElementById('overlay').classList.toggle('open');
   }
@@ -1409,6 +1389,7 @@
     }
   }
   function renderInventory(d){
+    if(typeof renderNotifs==='function') renderNotifs();   // обновить колокольчик (заканчивающиеся товары)
     const st=document.getElementById('prod-status');
     st.style.borderStyle='solid'; st.style.borderColor=d.stale?'#ffb84d':'#39d98a';
     st.innerHTML=d.stale
@@ -2110,8 +2091,30 @@
           renderMoney(); }
         const t=document.getElementById('dash-sales-today');
         if(t) t.textContent='· сегодня '+(d.net_sales||0).toLocaleString('ru-RU')+' сом ('+(d.sales_count||0)+' чек.)';
+        // 🔥 Топ товаров — реальные данные из 1С
+        const topBox=document.getElementById('dash-top');
+        const tp=(d.top_products||[]);
+        if(topBox) topBox.innerHTML=tp.length
+          ? '<table><thead><tr><th>Товар</th><th style="text-align:right">Шт</th><th style="text-align:right">Сумма</th><th style="text-align:right">Прибыль</th></tr></thead><tbody>'+tp.slice(0,10).map(p=>'<tr><td>'+esc(p.name)+'</td><td style="text-align:right">'+p.qty+'</td><td style="text-align:right"><span class="money" data-som="'+p.sum+'">'+fmt(p.sum)+'</span></td><td style="text-align:right;color:var(--muted)"><span class="money" data-som="'+p.profit+'">'+fmt(p.profit)+'</span></td></tr>').join('')+'</tbody></table>'
+          : '<span style="color:var(--muted);font-size:13px">За сегодня продаж пока нет.</span>';
+        renderMoney();
       }
     }catch(e){}
+    // 📅 Итоги за 7 дней — из истории
+    const wk=document.getElementById('dash-week');
+    if(wk){
+      const h=(_salesHist&&_salesHist.length)?_salesHist.slice(-7):[];
+      if(h.length){
+        const sum=h.reduce((a,x)=>a+(+x.sales||0),0), prof=h.reduce((a,x)=>a+(+x.profit||0),0), rec=h.reduce((a,x)=>a+(+x.receipts||0),0);
+        const km=(l,s,c)=>'<div class="card kpi" style="padding:13px"><div class="label">'+l+'</div><div class="value" style="font-size:19px'+(c?';color:'+c:'')+'"><span class="money" data-som="'+(s||0)+'">'+fmt(s||0)+'</span></div></div>';
+        wk.innerHTML='<div class="kpis" style="grid-template-columns:repeat(2,1fr);gap:10px;margin:0">'+
+          km('Выручка',sum)+km('Прибыль',prof)+
+          '<div class="card kpi" style="padding:13px"><div class="label">Чеков</div><div class="value" style="font-size:19px">'+rec.toLocaleString('ru-RU')+'</div></div>'+
+          '<div class="card kpi" style="padding:13px"><div class="label">Средний чек</div><div class="value" style="font-size:19px"><span class="money" data-som="'+(rec?Math.round(sum/rec):0)+'">'+fmt(rec?Math.round(sum/rec):0)+'</span></div></div>'+
+        '</div>';
+        renderMoney();
+      } else { wk.innerHTML='<span style="color:var(--muted);font-size:13px">История копится с 18.06.2026 — итоги появятся за несколько дней.</span>'; }
+    }
   }
   function startSalesAuto(){
     if(salesAutoTimer) return;
@@ -2531,6 +2534,7 @@
     catch(e){ COCKPIT_CHATS=[]; LAST_CHAT_ERR='нет связи с сервером'; }
     autoClassify();
     renderLeft(); renderFunnel(); renderCrmStats(); renderCrmDash(); renderCrmHome();
+    if(typeof renderNotifs==='function') renderNotifs();
   }
   // Авто-воронка: раскладываем чаты по стадиям из подсказки сервера (c.stage).
   // Сделки, которые двигали ВРУЧНУЮ (d.manual===true), не трогаем.
@@ -2852,8 +2856,13 @@
     const pend=BOTFIX.filter(f=>!f.applied);
     if(!pend.length){ alert('Новых исправлений нет — всё уже отправлено боту.'); return; }
     try{
-      await apiFetch('/api/bot-feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fixes:pend})},ONEC_BASE);
-    }catch(e){ /* всё равно помечаем — копия осталась локально */ }
+      const r=await apiFetch('/api/bot-feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fixes:pend})},ONEC_BASE);
+      const d=await r.json().catch(()=>({}));
+      if(d&&d.error) throw new Error(d.error);
+    }catch(e){
+      alert('⚠️ Не удалось отправить боту (сервер мог просыпаться). Исправления сохранены — нажми «Применить» ещё раз через минуту.');
+      return;   // НЕ помечаем применёнными, раз не ушло
+    }
     pend.forEach(f=>f.applied=true); botfixPersist(); renderBotList();
     alert('🚀 Отправлено '+pend.length+' исправлений. Они попадут в базу знаний бота — он будет отвечать так, как ты указал.');
   }
@@ -3677,6 +3686,15 @@
     else { inp.value=txt; alert('⚠️ Сообщение не отправлено.\n\n'+sendErrText(errMsg)); }
   }
 
+  // Закрытие окон по клику мимо (на тёмный фон) и по Esc — удобнее, особенно на телефоне
+  document.addEventListener('click',e=>{ if(e.target&&e.target.classList&&e.target.classList.contains('modal-bg')) e.target.classList.remove('open'); });
+  document.addEventListener('keydown',e=>{
+    if(e.key!=='Escape') return;
+    let closed=false;
+    document.querySelectorAll('.modal-bg.open').forEach(m=>{ m.classList.remove('open'); closed=true; });
+    const dr=document.getElementById('drawer');
+    if(!closed && dr && dr.classList.contains('open')) toggleDrawer();
+  });
   // Экономия: при сворачивании вкладки/браузера гасим авто-обновления (не будим спящий сервер, бережём батарею)
   document.addEventListener('visibilitychange',()=>{
     if(document.hidden){
