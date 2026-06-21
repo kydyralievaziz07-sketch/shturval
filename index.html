@@ -346,7 +346,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.49.0<br>Симулятор «Что если» (ползунки прибыли) · голосовой ввод в ИИ · кнопка «Добавить задачу»
+      Штурвал v3.50.0<br>Расширенная аналитика (топ-категории, ABC, поставщики, динамика, финансы) + выгрузка клиентов/сделок/аналитики в Excel
     </div>
   </aside>
 
@@ -615,7 +615,13 @@
 
     <!-- CLIENTS -->
     <section id="tab-clients" class="hide">
-      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">👥 Данные из нашей CRM (заявки и оплаты). Когда 1С начнёт отдавать продажи — добавятся реальные покупки.</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <div style="font-size:12px;color:var(--muted)">👥 Данные из нашей CRM (заявки и оплаты). Когда 1С начнёт отдавать продажи — добавятся реальные покупки.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn ghost" style="font-size:12px;padding:6px 12px" onclick="exportClients()">⬇️ Клиенты в Excel</button>
+          <button class="btn ghost" style="font-size:12px;padding:6px 12px" onclick="exportDeals()">⬇️ Сделки в Excel</button>
+        </div>
+      </div>
       <div id="clients-kpis" class="kpis"></div>
       <div class="card" style="margin-bottom:16px">
         <h3>📦 Продажи из 1С</h3>
@@ -643,26 +649,27 @@
 
     <!-- ANALYTICS -->
     <section id="tab-analytics" class="hide">
-      <div class="grid2b">
-        <div class="card">
-          <h3>🅰️ ABC-анализ товаров</h3>
-          <table>
-            <thead><tr><th>Группа</th><th>Что это</th><th>Товаров</th><th>Доля прибыли</th></tr></thead>
-            <tbody>
-              <tr><td><span class="badge b-a">A — хиты</span></td><td>приносят основную прибыль</td><td>180</td><td>70%</td></tr>
-              <tr><td><span class="badge b-b">B — середняки</span></td><td>стабильные, но средние</td><td>420</td><td>22%</td></tr>
-              <tr><td><span class="badge b-c">C — балласт</span></td><td>почти не продаются</td><td>684</td><td>8%</td></tr>
-            </tbody>
-          </table>
-          <div class="note" style="margin-top:14px">💡 Группа C (684 товара) занимает склад, но даёт лишь 8% прибыли — кандидаты на распродажу.</div>
-        </div>
-        <div class="card">
-          <h3>📦 Остатки по категориям <span style="font-size:12px;color:var(--muted);font-weight:400">— по количеству на складе</span></h3>
-          <div id="an-cats"><span style="color:var(--muted);font-size:13px">Загрузка…</span></div>
-        </div>
+      <div style="display:flex;justify-content:flex-end;margin-bottom:12px;gap:8px;flex-wrap:wrap">
+        <button class="btn ghost" style="font-size:12px;padding:6px 12px" onclick="exportAnalytics()">⬇️ Выгрузить в Excel</button>
       </div>
-      <div class="card">
-        <div class="note">📈 Раздел глубокой аналитики: прибыльность по категориям, сезонность, прогнозы спроса. Оживёт на реальных данных из 1С.</div>
+      <div id="an-kpis" class="kpis" style="margin-bottom:18px"></div>
+      <div class="grid2b">
+        <div class="card"><h3>🏆 Топ-10 категорий по деньгам <span style="font-size:12px;color:var(--muted);font-weight:400">— склад в рознице</span></h3>
+          <div id="an-topval"><span style="color:var(--muted);font-size:13px">Загрузка…</span></div></div>
+        <div class="card"><h3>📦 Остатки по категориям <span style="font-size:12px;color:var(--muted);font-weight:400">— по количеству</span></h3>
+          <div id="an-cats"><span style="color:var(--muted);font-size:13px">Загрузка…</span></div></div>
+      </div>
+      <div class="grid2b">
+        <div class="card"><h3>🅰️ ABC-анализ <span style="font-size:12px;color:var(--muted);font-weight:400">— по складским деньгам</span></h3>
+          <div id="an-abc"><span style="color:var(--muted);font-size:13px">Загрузка…</span></div></div>
+        <div class="card"><h3>🤝 Поставщики — кому должны больше всего</h3>
+          <div id="an-suppliers"><span style="color:var(--muted);font-size:13px">Загрузка…</span></div></div>
+      </div>
+      <div class="grid2b">
+        <div class="card"><h3>📈 Продажи по дням <span style="font-size:12px;color:var(--muted);font-weight:400">— последние 14 дней</span></h3>
+          <div id="an-days"><span style="color:var(--muted);font-size:13px">Копим историю…</span></div></div>
+        <div class="card"><h3>💰 Финансы за месяц</h3>
+          <div id="an-fin"><span style="color:var(--muted);font-size:13px">Загрузка…</span></div></div>
       </div>
     </section>
 
@@ -1397,12 +1404,128 @@
       '<span style="color:var(--muted)">'+c.units.toLocaleString('ru-RU')+' шт</span></div>'+
       '<div class="progress"><div style="width:'+Math.round(c.units/mx*100)+'%"></div></div></div>').join('')+'</div>';
   }
-  function renderAnalytics(){
-    const box=document.getElementById('an-cats'); if(!box) return;
-    if(window._invData&&!window._invData.error){ drawAnalytics(window._invData); }
-    else { box.innerHTML='<span style="color:var(--muted);font-size:13px">⏳ Загружаю товары из 1С… (если сервер «просыпался» — это до минуты)</span>';
-      loadInventory();   // надёжный загрузчик с повторами; по готовности renderInventory вызовет drawAnalytics
-    }
+  async function renderAnalytics(){
+    drawAnalytics(window._invData||{});            // остатки по штукам (как было)
+    // подтянуть всё нужное, если ещё не загружено
+    const jobs=[];
+    if(!window._invData) jobs.push(loadInventory());
+    if(!_salesHist) jobs.push(loadSalesHistory());
+    if(!_expData) jobs.push(loadExpenses());
+    if(!_suplData) jobs.push(loadSuppliers());
+    if(jobs.length) await Promise.allSettled(jobs);
+    anKpis(); anTopValue(); anAbc(); anSuppliers(); anDays(); anFin();
+    renderMoney();
+  }
+  function anAvg(arr,key){ if(!arr||!arr.length) return 0; return Math.round(arr.reduce((s,x)=>s+(+x[key]||0),0)/arr.length); }
+  function anKpis(){
+    const box=document.getElementById('an-kpis'); if(!box) return;
+    const h=(_salesHist&&_salesHist.length)?_salesHist:[];
+    const rev=h.length?anAvg(h,'sales'):((window._salesData&&+window._salesData.net_sales)||0);
+    const prof=h.length?anAvg(h,'profit'):((window._salesData&&+window._salesData.profit)||0);
+    const rec=h.length?anAvg(h,'receipts'):((window._salesData&&+window._salesData.sales_count)||0);
+    const check=rec?Math.round(rev/rec):((window._salesData&&+window._salesData.avg_check)||0);
+    let expDay=0; const pm=(_expData&&_expData.periods&&_expData.periods.month)||null;
+    if(pm) expDay=Math.round((+pm.expense||0)/30);
+    const km=(l,s,c)=>'<div class="card kpi"><div class="label">'+l+'</div><div class="value"'+(c?' style="color:'+c+'"':'')+'><span class="money" data-som="'+(s||0)+'">'+fmt(s||0)+'</span></div></div>';
+    box.innerHTML=km('💵 Выручка/день',rev)+km('📈 Прибыль/день',prof)+
+      kpiCard('🧾 Чеков/день',rec.toLocaleString('ru-RU'))+km('🛒 Средний чек',check)+
+      km('💸 Расходы/день',expDay,'#ffb84d')+km('✅ Чистая/день',prof-expDay,((prof-expDay)>=0?'#39d98a':'#ff6b6b'));
+  }
+  function anBars(box,items,key,fmtMoney){
+    if(!box) return;
+    if(!items.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет данных</span>'; return; }
+    const mx=Math.max.apply(null,items.map(c=>c[key]).concat([1]));
+    box.innerHTML='<div style="max-height:430px;overflow:auto;padding-right:4px">'+items.map(c=>{
+      const val=fmtMoney?('<span class="money" data-som="'+c[key]+'">'+fmt(c[key])+'</span>'):c[key].toLocaleString('ru-RU');
+      return '<div style="margin-bottom:11px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px">'+
+        '<span>'+esc(c.title)+' <span style="color:var(--muted)">· '+(c.count||0)+' тов.</span></span><span style="color:var(--muted)">'+val+'</span></div>'+
+        '<div class="progress"><div style="width:'+Math.round(c[key]/mx*100)+'%"></div></div></div>';
+    }).join('')+'</div>';
+  }
+  function anTopValue(){
+    const d=window._invData||{}; const cats=(d.all_cats||d.super_cats||[]).slice().filter(c=>c.value>0).sort((a,b)=>b.value-a.value).slice(0,10);
+    anBars(document.getElementById('an-topval'),cats,'value',true);
+  }
+  function anAbc(){
+    const box=document.getElementById('an-abc'); if(!box) return;
+    const cats=(window._invData&&(window._invData.all_cats||window._invData.super_cats)||[]).slice().filter(c=>c.value>0).sort((a,b)=>b.value-a.value);
+    if(!cats.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет данных</span>'; return; }
+    const total=cats.reduce((s,c)=>s+c.value,0); let acc=0;
+    const g={A:{cats:0,count:0,val:0},B:{cats:0,count:0,val:0},C:{cats:0,count:0,val:0}};
+    cats.forEach(c=>{ const grp=acc/total<0.7?'A':acc/total<0.9?'B':'C'; acc+=c.value; g[grp].cats++; g[grp].count+=(c.count||0); g[grp].val+=c.value; });
+    const row=(b,name,desc,o)=>'<tr><td><span class="badge '+b+'">'+name+'</span></td><td style="font-size:12px;color:var(--muted)">'+desc+'</td><td>'+o.cats+'</td><td>'+o.count.toLocaleString('ru-RU')+'</td><td>'+(total?Math.round(o.val/total*100):0)+'%</td></tr>';
+    box.innerHTML='<table><thead><tr><th>Группа</th><th>Что это</th><th>Катег.</th><th>Товаров</th><th>Доля денег</th></tr></thead><tbody>'+
+      row('b-a','A — хиты','дают ~70% денег склада',g.A)+
+      row('b-b','B — середняки','следующие ~20%',g.B)+
+      row('b-c','C — балласт','лежат, мало денег',g.C)+
+      '</tbody></table><div class="note" style="margin-top:12px">💡 Категории группы <b>C</b> занимают склад, но дают мало денег — кандидаты на распродажу/сокращение закупа.</div>';
+  }
+  function anSuppliers(){
+    const box=document.getElementById('an-suppliers'); if(!box) return;
+    const sup=((_suplData&&_suplData.suppliers)||[]).filter(s=>(+s.debt||0)>0).sort((a,b)=>b.debt-a.debt).slice(0,10);
+    const total=((_suplData&&_suplData.suppliers)||[]).reduce((s,x)=>s+(+x.debt||0),0);
+    if(!sup.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Долгов перед поставщиками нет 🎉</span>'; return; }
+    box.innerHTML='<div style="font-size:13px;color:var(--muted);margin-bottom:10px">Общий долг: <b style="color:var(--text)"><span class="money" data-som="'+total+'">'+fmt(total)+'</span></b></div>'+
+      '<table><tbody>'+sup.map((s,i)=>'<tr><td>'+(i===0?'🔴 ':'')+esc(s.name)+'</td><td style="text-align:right;white-space:nowrap"><b><span class="money" data-som="'+s.debt+'">'+fmt(s.debt)+'</span></b></td></tr>').join('')+'</tbody></table>';
+  }
+  function anDays(){
+    const box=document.getElementById('an-days'); if(!box) return;
+    const h=(_salesHist&&_salesHist.length)?_salesHist.slice(-14):[];
+    if(!h.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">История копится с 18.06.2026 — графики появятся за несколько дней.</span>'; return; }
+    box.innerHTML='<table><thead><tr><th>Дата</th><th style="text-align:right">Выручка</th><th style="text-align:right">Прибыль</th><th style="text-align:right">Чеков</th></tr></thead><tbody>'+
+      h.slice().reverse().map(x=>{const dt=new Date(x.date+'T00:00:00');const lbl=isNaN(dt)?esc(x.date):(dt.getDate()+'.'+(dt.getMonth()+1));
+        return '<tr><td>'+lbl+'</td><td style="text-align:right"><span class="money" data-som="'+x.sales+'">'+fmt(x.sales)+'</span></td><td style="text-align:right;color:var(--muted)"><span class="money" data-som="'+x.profit+'">'+fmt(x.profit)+'</span></td><td style="text-align:right">'+x.receipts+'</td></tr>';}).join('')+'</tbody></table>';
+  }
+  function anFin(){
+    const box=document.getElementById('an-fin'); if(!box) return;
+    const p=(_expData&&_expData.periods&&_expData.periods.month)||null;
+    if(!p){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет данных по финансам</span>'; return; }
+    const km=(l,s,c)=>'<div class="card kpi" style="padding:14px"><div class="label">'+l+'</div><div class="value" style="font-size:20px'+(c?';color:'+c:'')+'"><span class="money" data-som="'+(s||0)+'">'+fmt(s||0)+'</span></div></div>';
+    box.innerHTML='<div class="kpis" style="grid-template-columns:repeat(2,1fr);gap:12px;margin:0">'+
+      km('Выручка',p.sales)+km('Прибыль с товара',p.profit)+
+      km('Расходы',p.expense,'#ffb84d')+km('Чистая прибыль',p.net,((p.net||0)>=0?'#39d98a':'#ff6b6b'))+'</div>';
+    const cats=(_expData.by_category||[]).slice().sort((a,b)=>b.amount-a.amount).slice(0,6);
+    if(cats.length){ box.innerHTML+='<div style="font-size:12px;color:var(--muted);margin:14px 0 8px">Расходы по статьям:</div><table><tbody>'+
+      cats.map(c=>'<tr><td>'+esc(c.category||c.name||'—')+'</td><td style="text-align:right"><span class="money" data-som="'+c.amount+'">'+fmt(c.amount)+'</span></td></tr>').join('')+'</tbody></table>'; }
+  }
+  // ===== Выгрузка в Excel (CSV с BOM — открывается в Excel с кириллицей) =====
+  function csvCell(v){ v=(v==null?'':String(v)); if(/[";\n\r]/.test(v)) v='"'+v.replace(/"/g,'""')+'"'; return v; }
+  function downloadCSV(name,rows){
+    const csv='﻿'+rows.map(r=>(r||[]).map(csvCell).join(';')).join('\r\n');
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name;
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(a.href); },120);
+  }
+  function exportClients(){
+    const PAID=['Оплачено','Отгружено','Закрыто'];
+    const rows=[['Имя','Телефон','Источник','Создан','Сделок','Оплачено','Сумма оплат (сом)','Последняя стадия']];
+    (CRM.clients||[]).forEach(c=>{
+      const deals=(CRM.deals||[]).filter(d=>d.client_id===c.id);
+      const paid=deals.filter(d=>PAID.indexOf(d.status)>=0);
+      const sum=paid.reduce((s,d)=>s+dealAmount(d),0);
+      const last=deals.length?deals[deals.length-1].status:'';
+      rows.push([c.name||'',c.phone||'',c.source||'',c.created_at?fmtDT(c.created_at):'',deals.length,paid.length,sum,last]);
+    });
+    if(rows.length<=1){ alert('Пока нет клиентов для выгрузки. Они появятся из переписок и заказов.'); return; }
+    downloadCSV('Клиенты_Бизмарт.csv',rows);
+  }
+  function exportDeals(){
+    const rows=[['Клиент','Стадия','Сумма (сом)','Создана','Оплачена','Менеджер','Причина отказа']];
+    (CRM.deals||[]).forEach(d=>{ const cl=getClient(d.client_id);
+      rows.push([(cl&&cl.name)||'',d.status||'',dealAmount(d),d.created_at?fmtDT(d.created_at):'',d.paid_at?fmtDT(d.paid_at):'',d.owner||'',d.reject_reason||'']); });
+    if(rows.length<=1){ alert('Пока нет сделок для выгрузки.'); return; }
+    downloadCSV('Сделки_Бизмарт.csv',rows);
+  }
+  function exportAnalytics(){
+    const d=window._invData||{}; const cats=(d.all_cats||d.super_cats||[]).slice().sort((a,b)=>b.value-a.value);
+    const rows=[['Категория','Товаров','Штук на складе','Сумма в рознице (сом)']];
+    cats.forEach(c=>rows.push([c.title,c.count,c.units,c.value]));
+    rows.push([]); rows.push(['Продажи по дням','','','']); rows.push(['Дата','Выручка','Прибыль','Чеков']);
+    (_salesHist||[]).forEach(x=>rows.push([x.date,x.sales,x.profit,x.receipts]));
+    rows.push([]); rows.push(['Поставщики — долги','','','']); rows.push(['Поставщик','Долг (сом)','','']);
+    ((_suplData&&_suplData.suppliers)||[]).filter(s=>(+s.debt||0)>0).sort((a,b)=>b.debt-a.debt).forEach(s=>rows.push([s.name,s.debt,'','']));
+    downloadCSV('Аналитика_Бизмарт.csv',rows);
   }
   // Финансы (1С): склад в деньгах + продажи/прибыль (реальные данные)
   function drawFinance(d){
