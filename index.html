@@ -346,7 +346,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.53.0<br>CRM в облаке (общие данные на всех устройствах) + импорт из amoCRM (контакты/сделки) · плавные ползунки симулятора
+      Штурвал v3.54.0<br>Рассылка в Instagram (тем, кто писал за 24ч, с предпросмотром числа получателей)
     </div>
   </aside>
 
@@ -927,6 +927,21 @@
         <button class="btn" id="tpl-save-btn" onclick="tplSave()">Сохранить шаблон</button>
         <button class="btn ghost" onclick="closeTpl()">Закрыть</button>
       </div>
+    </div>
+  </div></div>
+
+  <!-- ОКНО: Рассылка -->
+  <div class="modal-bg" id="bcbg"><div class="modal" style="width:480px">
+    <h3>📣 Рассылка в Instagram</h3>
+    <div class="note" style="margin:6px 0 12px">⚠️ Instagram разрешает писать первым только тем, кто писал вам <b>за последние 24 часа</b>. Остальным сообщение не уйдёт. Не злоупотребляйте — за спам Instagram может ограничить аккаунт.</div>
+    <label>С какого аккаунта</label>
+    <select id="bc-account" onchange="bcRefreshCount()"></select>
+    <label>Текст сообщения</label>
+    <textarea id="bc-text" placeholder="Например: 🔥 Только сегодня скидка 20% на всё! Успейте заказать." style="width:100%;min-height:90px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--text);font-family:inherit;font-size:14px;resize:vertical"></textarea>
+    <div id="bc-count" style="font-size:13px;color:var(--muted);margin-top:10px">Считаю получателей…</div>
+    <div class="modal-foot">
+      <button class="btn" id="bc-send-btn" onclick="bcSend()">Отправить рассылку</button>
+      <button class="btn ghost" onclick="closeBc()">Отмена</button>
     </div>
   </div></div>
 
@@ -1611,6 +1626,39 @@
     });
     return {nc,nd};
   }
+  // ===== Рассылка в Instagram (только тем, кто писал за 24ч) =====
+  function openBroadcast(){
+    const sel=document.getElementById('bc-account');
+    const accs=[...new Set((COCKPIT_CHATS||[]).map(c=>c.account).filter(Boolean))];
+    sel.innerHTML='<option value="all">Все аккаунты</option>'+accs.map(a=>'<option value="'+esc(a)+'">📷 '+esc(a)+'</option>').join('');
+    document.getElementById('bc-text').value='';
+    document.getElementById('bcbg').classList.add('open');
+    bcRefreshCount();
+  }
+  function closeBc(){ document.getElementById('bcbg').classList.remove('open'); }
+  async function bcRefreshCount(){
+    const acc=document.getElementById('bc-account').value||'all';
+    const box=document.getElementById('bc-count'); box.textContent='Считаю получателей…';
+    try{
+      const r=await apiFetch('/api/ig/broadcast?account='+encodeURIComponent(acc)+'&_='+Date.now(),{},ONEC_BASE);
+      const d=await r.json();
+      box.innerHTML='👥 Сообщение получат примерно <b style="color:var(--text)">'+(d.eligible||0)+'</b> клиентов (писали за последние 24 часа).';
+    }catch(_){ box.textContent='Не удалось посчитать получателей (сервер мог просыпаться).'; }
+  }
+  async function bcSend(){
+    const acc=document.getElementById('bc-account').value||'all';
+    const text=(document.getElementById('bc-text').value||'').trim();
+    if(!text){ alert('Впиши текст рассылки'); return; }
+    if(!confirm('Отправить это сообщение всем клиентам, писавшим за 24 часа?\n\n«'+text.slice(0,120)+(text.length>120?'…':'')+'»')) return;
+    const btn=document.getElementById('bc-send-btn'); btn.disabled=true; btn.textContent='⏳ Отправляю…';
+    try{
+      const r=await apiFetch('/api/ig/broadcast',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text,account:acc})},ONEC_BASE);
+      const d=await r.json(); if(d.error) throw new Error(d.error);
+      alert('Готово! Отправлено: '+(d.sent||0)+(d.failed?(' · не доставлено: '+d.failed+' (вне 24-часового окна)'):'')+'.');
+      closeBc();
+    }catch(e){ alert('Не удалось отправить: '+(e.message||e)); }
+    finally{ btn.disabled=false; btn.textContent='Отправить рассылку'; }
+  }
   // Финансы (1С): склад в деньгах + продажи/прибыль (реальные данные)
   function drawFinance(d){
     const box=document.getElementById('fin-stock'); if(!box||!d||d.error) return;
@@ -2279,8 +2327,11 @@
     const chats=(COCKPIT_CHATS||[]).length; const waiting=(COCKPIT_CHATS||[]).filter(c=>c.unread).length;
     const kpi=(l,v)=>'<div class="card kpi"><div class="label">'+l+'</div><div class="value">'+v+'</div></div>';
     let html='';
-    if(isOwner()||canSee('crm')||canSee('deals')){
-      html+='<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button class="btn ghost" id="amo-imp-btn" style="font-size:12px;padding:6px 12px" onclick="importFromAmo()">⬇️ Импорт из amoCRM</button></div>';
+    if(isOwner()||canSee('crm')||canSee('deals')||canSee('chats')){
+      html+='<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px;flex-wrap:wrap">'+
+        ((isOwner()||canSee('chats'))?'<button class="btn ghost" style="font-size:12px;padding:6px 12px" onclick="openBroadcast()">📣 Рассылка</button>':'')+
+        ((isOwner()||canSee('crm')||canSee('deals'))?'<button class="btn ghost" id="amo-imp-btn" style="font-size:12px;padding:6px 12px" onclick="importFromAmo()">⬇️ Импорт из amoCRM</button>':'')+
+      '</div>';
     }
     html+='<div class="kpis" style="margin-bottom:18px">'+
       kpi('🆕 Новых заявок',newLeads)+

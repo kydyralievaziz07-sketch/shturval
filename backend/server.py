@@ -170,6 +170,7 @@ SECTION_OF = [
     ("/api/bot-feedback", "chats"),
     ("/api/ig/conversations", "chats"), ("/api/ig/thread", "chats"),
     ("/api/ig/reply", "chats"), ("/api/ig/accounts", "chats"),
+    ("/api/ig/broadcast", "chats"),
     ("/api/assistant", "ai"),
 ]
 
@@ -759,6 +760,39 @@ def ig_reply(account_id, customer_id, text):
                "ts": int(time.time() * 1000), "direction": "out", "raw": {}})
     except Exception:
         pass
+
+def _ig_eligible_targets(account=None, max_age_hours=24):
+    """Диалоги в пределах 24-часового окна Instagram (можно писать первым)."""
+    now = time.time(); cutoff = now - max_age_hours * 3600
+    out = []
+    for c in ig_conversations():
+        ts = c.get("last_ts") or 0
+        ts_sec = ts / 1000.0 if ts > 1e12 else ts
+        if ts_sec < cutoff:
+            continue
+        if account and account not in ("all", "") and c.get("account") != account:
+            continue
+        out.append(c)
+    return out
+
+def ig_broadcast_count(account=None):
+    targets = _ig_eligible_targets(account)
+    per = {}
+    for c in targets:
+        per[c["account"]] = per.get(c["account"], 0) + 1
+    return {"eligible": len(targets), "per_account": per}
+
+def ig_broadcast(text, account=None, max_age_hours=24, limit=500):
+    targets = _ig_eligible_targets(account, max_age_hours)[:limit]
+    sent = 0; failed = 0
+    for c in targets:
+        try:
+            ig_reply(c["account_id"], c["customer_id"], text)
+            sent += 1
+            time.sleep(0.5)               # бережно к лимитам Instagram
+        except Exception:
+            failed += 1
+    return {"eligible": len(targets), "sent": sent, "failed": failed}
 
 # --- 1С (Yaros DataGate): товары, остатки, цены ---
 import base64
@@ -2008,6 +2042,20 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send(200, {"ok": False, "error": "Instagram: " + str(e)})
             return self._send(200, {"ok": True})
+        if self.path.startswith("/api/ig/broadcast"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            text = (body.get("text") or "").strip()
+            account = (body.get("account") or "all")
+            if not text:
+                return self._send(400, {"error": "Введите текст рассылки"})
+            try:
+                return self._send(200, ig_broadcast(text, account))
+            except Exception as e:
+                return self._send(500, {"error": "Рассылка не удалась: %s" % e})
         if self.path.startswith("/api/add-product"):
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -2443,6 +2491,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, ig_thread(acc, cust))
             except Exception as e:
                 return self._send(200, {"msgs": [], "error": str(e)})
+        if self.path.startswith("/api/ig/broadcast"):
+            p = _parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            account = (p.get("account") or ["all"])[0]
+            try:
+                return self._send(200, ig_broadcast_count(account))
+            except Exception as e:
+                return self._send(200, {"eligible": 0, "error": str(e)})
         if self.path.startswith("/api/ig/accounts"):
             return self._send(200, {"accounts": [{"username": a.get("username"), "ig_id": a.get("ig_id")}
                                                  for a in ig_accounts()]})
