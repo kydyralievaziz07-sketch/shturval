@@ -348,7 +348,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.56.0<br>Безопасность: подпись вебхука Instagram, защита паролей, fail-closed; вход устойчив к сбоям (нет ложного выхода), очистка чужих данных при выходе
+      Штурвал v3.57.0<br>Скорость: индексы CRM (нет тормозов после импорта), пауза автообновления при сворачивании, дебаунс записи, быстрая выгрузка клиентов
     </div>
   </aside>
 
@@ -1551,9 +1551,11 @@
   }
   function exportClients(){
     const PAID=['Оплачено','Отгружено','Закрыто'];
+    const byClient=new Map();                       // один проход вместо перебора по каждому клиенту
+    (CRM.deals||[]).forEach(d=>{ const a=byClient.get(d.client_id)||[]; a.push(d); byClient.set(d.client_id,a); });
     const rows=[['Имя','Телефон','Источник','Создан','Сделок','Оплачено','Сумма оплат (сом)','Последняя стадия']];
     (CRM.clients||[]).forEach(c=>{
-      const deals=(CRM.deals||[]).filter(d=>d.client_id===c.id);
+      const deals=byClient.get(c.id)||[];
       const paid=deals.filter(d=>PAID.indexOf(d.status)>=0);
       const sum=paid.reduce((s,d)=>s+dealAmount(d),0);
       const last=deals.length?deals[deals.length-1].status:'';
@@ -2303,10 +2305,20 @@
   const REJECT_REASONS=['Дорого','Передумал','Нет в наличии','Не отвечает','Купил у конкурента','Другое'];
   let CRM={clients:[],deals:[],tasks:[],activity:[]};
   try{ const s=JSON.parse(localStorage.getItem('shturval_crm')); if(s) CRM=Object.assign(CRM,s); }catch(e){}
-  let _crmCloudTimer=null, _crmCloudReady=false;
+  // индексы для быстрого поиска (иначе перебор по тысячам сделок тормозит после импорта)
+  let _cById=new Map(), _cByName=new Map(), _dById=new Map(), _dByClient=new Map();
+  function rebuildCrmIndex(){
+    _cById=new Map(); _cByName=new Map(); _dById=new Map(); _dByClient=new Map();
+    (CRM.clients||[]).forEach(c=>{ _cById.set(c.id,c); if(c.name) _cByName.set(c.name.toLowerCase(),c); });
+    (CRM.deals||[]).forEach(d=>{ _dById.set(d.id,d); if(!_dByClient.has(d.client_id)) _dByClient.set(d.client_id,d); });
+  }
+  rebuildCrmIndex();
+  let _crmCloudTimer=null, _crmCloudReady=false, _crmSaveLocalTimer=null;
   function crmPersist(){
     if(CRM.activity&&CRM.activity.length>800) CRM.activity=CRM.activity.slice(0,800);   // не раздувать журнал
-    try{ localStorage.setItem('shturval_crm',JSON.stringify(CRM)); }catch(e){}
+    rebuildCrmIndex();
+    clearTimeout(_crmSaveLocalTimer);                      // запись в localStorage — с задержкой (большой JSON)
+    _crmSaveLocalTimer=setTimeout(()=>{ try{ localStorage.setItem('shturval_crm',JSON.stringify(CRM)); }catch(e){} },400);
     saveCrmCloud();   // + в облако (с задержкой, чтобы не дёргать на каждый клик)
   }
   function saveCrmCloud(){
@@ -2325,6 +2337,7 @@
       const localHas=(CRM.deals&&CRM.deals.length)||(CRM.clients&&CRM.clients.length);
       if(cloudHas){
         CRM={clients:cloud.clients||[],deals:cloud.deals||[],tasks:cloud.tasks||[],activity:cloud.activity||[]};
+        rebuildCrmIndex();
         try{ localStorage.setItem('shturval_crm',JSON.stringify(CRM)); }catch(_){}
         _crmCloudReady=true;
         if(typeof renderCrmHome==='function') renderCrmHome();
@@ -2338,8 +2351,8 @@
     }catch(_){ _crmCloudReady=true; }   // нет связи — работаем локально, синхронизируемся позже
   }
   function uid(){ return 'd'+Date.now().toString(36)+Math.floor(Math.random()*1e6).toString(36); }
-  function getClient(id){ return CRM.clients.find(c=>c.id===id)||{}; }
-  function getDeal(id){ return CRM.deals.find(d=>d.id===id)||null; }
+  function getClient(id){ return _cById.get(id)||CRM.clients.find(c=>c.id===id)||{}; }
+  function getDeal(id){ return _dById.get(id)||CRM.deals.find(d=>d.id===id)||null; }
   function clientName(id){ return getClient(id).name||'Без имени'; }
   function dealTasks(id){ return CRM.tasks.filter(t=>t.deal_id===id); }
   function dealAmount(d){ if(d&&d.amount>0) return d.amount; return (d.items||[]).reduce((s,i)=>s+(i.price*i.qty),0); }
@@ -2588,8 +2601,8 @@
     if(it.chatId){ openConvo({id:it.chatId,name:it.name}); }
     else { ckCurId=null; ckCurName=it.name; ckHead(); const b=document.getElementById('ck-msgs'); if(b) b.innerHTML='<div style="color:var(--muted);padding:10px">Переписка в Instagram не найдена для «'+esc(it.name)+'». Нажми на имя сверху — откроется карточка заказа.</div>'; }
   }
-  function findClient(name){ return name?CRM.clients.find(x=>x.name&&x.name.toLowerCase()===name.toLowerCase()):null; }
-  function findDealByName(name){ const c=findClient(name); return c?CRM.deals.find(d=>d.client_id===c.id)||null:null; }
+  function findClient(name){ return name?(_cByName.get(name.toLowerCase())||null):null; }
+  function findDealByName(name){ const c=findClient(name); return c?(_dByClient.get(c.id)||null):null; }
   function ensureClient(name){ let c=findClient(name); if(!c){ c={id:uid(),name:name,phone:'',source:'instagram',created_at:new Date().toISOString()}; CRM.clients.push(c); } return c; }
   function ensureDeal(name,status){ const c=ensureClient(name); let d=CRM.deals.find(x=>x.client_id===c.id); if(!d){ d={id:uid(),client_id:c.id,status:status||'Новая заявка',items:[],owner:(USER.name||''),created_at:new Date().toISOString(),comment:''}; CRM.deals.push(d); logActivity(c.id,d.id,'системное','Заказ создан из чата'); } return d; }
   // достаём ник Instagram из имени клиента ("@stimul218" → "stimul218"); для имён с пробелами/кириллицей — пусто
@@ -2728,7 +2741,7 @@
     if(convoAutoTimer) return;
     convoAutoTimer=setInterval(()=>{
       const dt=document.getElementById('tab-deals');
-      if(!dt||dt.classList.contains('hide')||!ckCurId) return;
+      if(!dt||dt.classList.contains('hide')||!ckCurId){ clearInterval(convoAutoTimer); convoAutoTimer=null; return; }
       loadConvoMsgs(ckCurId, true);
     }, 5000);
   }
@@ -3663,6 +3676,16 @@
     if(ok){ logActivity(d.client_id,d.id,'сообщение','Ответ: '+txt); crmPersist(); setTimeout(loadDealChat,1300); }
     else { inp.value=txt; alert('⚠️ Сообщение не отправлено.\n\n'+sendErrText(errMsg)); }
   }
+
+  // Экономия: при сворачивании вкладки/браузера гасим авто-обновления (не будим спящий сервер, бережём батарею)
+  document.addEventListener('visibilitychange',()=>{
+    if(document.hidden){
+      [prodAutoTimer,salesAutoTimer,dealsAutoTimer,convoAutoTimer].forEach(t=>{ if(t) clearInterval(t); });
+      prodAutoTimer=salesAutoTimer=dealsAutoTimer=convoAutoTimer=null;
+    } else {
+      if(typeof curTab!=='undefined' && curTab && typeof dispatchTab==='function') dispatchTab(curTab); // вернулись — обновить
+    }
+  });
 </script>
 </body>
 </html>
