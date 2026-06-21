@@ -221,6 +221,94 @@ def amo_get(path):
     except Exception as e:
         return {"_error": str(e)}
 
+# --- Импорт из amoCRM в CRM Штурвала ---
+# сопоставление этапов amoCRM → стадии Штурвала (CRM_STATUSES). Отказ проверяем ДО «закрыто».
+AMO_STATUS_MAP = [
+    (("отказ", "не реализ", "неудач", "спам", "закрыто/не"), "Отказ"),
+    (("неразобр", "новая", "входящ", "первичн"), "Новая заявка"),
+    (("обработ", "думает", "связал", "перезвон", "квалифи", "переговор"), "Связались"),
+    (("счет", "счёт", "ожидание оплат", "выставл"), "Выставили счёт"),
+    (("оплач", "готов к отправ", "предоплат"), "Оплачено"),
+    (("пути", "отправл", "доставк", "отгруж"), "Отгружено"),
+    (("получил", "успешно", "реализова", "закрыт", "выполн", "завершён"), "Закрыто"),
+]
+
+def _amo_map_status(name):
+    n = (name or "").lower()
+    for kws, st in AMO_STATUS_MAP:
+        for kw in kws:
+            if kw in n:
+                return st
+    return "Новая заявка"
+
+def _amo_iso(ts):
+    try:
+        return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ts)) if ts else ""
+    except Exception:
+        return ""
+
+def _amo_contacts_index(max_pages=12):
+    """id контакта -> {name, phone} (тянем постранично, по 250)."""
+    idx = {}
+    for n in range(1, max_pages + 1):
+        r = amo_get("/contacts?limit=250&page=%d" % n)
+        cs = r.get("_embedded", {}).get("contacts", [])
+        if not cs:
+            break
+        for c in cs:
+            phone = ""
+            for f in (c.get("custom_fields_values") or []):
+                if f.get("field_code") == "PHONE":
+                    vals = f.get("values") or []
+                    if vals:
+                        phone = vals[0].get("value", "")
+                    break
+            idx[c.get("id")] = {"name": c.get("name") or "", "phone": phone}
+        if len(cs) < 250:
+            break
+    return idx
+
+def amo_import():
+    """Выгрузить из amoCRM контакты + сделки и привести к формату CRM Штурвала."""
+    pipes = amo_get("/leads/pipelines")
+    status_name = {}
+    for p in pipes.get("_embedded", {}).get("pipelines", []):
+        for s in p.get("_embedded", {}).get("statuses", []):
+            status_name[s["id"]] = s["name"]
+    contacts = _amo_contacts_index()
+    leads = []
+    for n in range(1, 13):                       # до 3000 сделок
+        r = amo_get("/leads?limit=250&with=contacts&order[created_at]=desc&page=%d" % n)
+        ls = r.get("_embedded", {}).get("leads", [])
+        if not ls:
+            break
+        leads.extend(ls)
+        if len(ls) < 250:
+            break
+    clients = {}
+    deals = []
+    for l in leads:
+        cid = None
+        for c in (l.get("_embedded", {}).get("contacts") or []):
+            cid = c.get("id")
+            if c.get("is_main"):
+                break
+        cinfo = contacts.get(cid, {}) if cid else {}
+        cname = cinfo.get("name") or l.get("name") or "Без имени"
+        ckey = "amo_c_%s" % (cid if cid else ("lead_%s" % l.get("id")))
+        if ckey not in clients:
+            clients[ckey] = {"amo_id": ckey, "name": cname,
+                             "phone": cinfo.get("phone", ""), "source": "amocrm",
+                             "created_at": _amo_iso(l.get("created_at"))}
+        deals.append({"amo_id": "amo_l_%s" % l.get("id"), "client_key": ckey,
+                      "name": l.get("name") or cname,
+                      "status": _amo_map_status(status_name.get(l.get("status_id"))),
+                      "amount": l.get("price") or 0,
+                      "created_at": _amo_iso(l.get("created_at"))})
+    return {"clients": list(clients.values()), "deals": deals,
+            "count_clients": len(clients), "count_deals": len(deals),
+            "account": CFG.get("AMO_SUBDOMAIN")}
+
 def build_overview():
     # 1) воронки и этапы: status_id -> название
     pipes = amo_get("/leads/pipelines")
@@ -2113,6 +2201,23 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(400, {"error": "неизвестное действие"})
             except Exception as e:
                 return self._send(500, {"error": "Не удалось сохранить: %s" % e})
+        if self.path.startswith("/api/crm-data"):
+            u = self._user()
+            if not u:
+                return self._send(401, {"error": "вход"})
+            secs = u.get("sections", [])
+            if not ("all" in secs or "crm" in secs or "deals" in secs or "chats" in secs or "dash" in secs):
+                return self._send(403, {"error": "Нет доступа к CRM"})
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            data = body.get("data")
+            if data is None:
+                return self._send(400, {"error": "нет данных"})
+            kv_save("crm_" + COMPANY_ID, data)
+            return self._send(200, {"ok": True})
         if self.path.startswith("/api/suppliers"):
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -2238,6 +2343,22 @@ class Handler(BaseHTTPRequestHandler):
             if not (u and ("all" in secs or "hr" in secs)):   # планы отделов — владелец и HR
                 return self._send(403, {"error": "Только владелец или HR"})
             return self._send(200, {"departments": dept_plan_all()})
+        if self.path.startswith("/api/crm-data"):
+            u = self._user()
+            if not u:
+                return self._send(401, {"error": "вход"})
+            secs = u.get("sections", [])
+            if not ("all" in secs or "crm" in secs or "deals" in secs or "chats" in secs or "dash" in secs):
+                return self._send(403, {"error": "Нет доступа к CRM"})
+            return self._send(200, {"data": kv_load("crm_" + COMPANY_ID)})
+        if self.path.startswith("/api/amo-import"):
+            u = self._user(); secs = u.get("sections", []) if u else []
+            if not (u and ("all" in secs or "crm" in secs or "deals" in secs)):
+                return self._send(403, {"error": "Импорт может делать владелец или менеджер CRM"})
+            try:
+                return self._send(200, amo_import())
+            except Exception as e:
+                return self._send(500, {"error": "Импорт не удался: %s" % e})
         if self.path.startswith("/api/staff"):
             u = self._user()
             if not (u and "all" in u.get("sections", [])):

@@ -346,7 +346,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.52.0<br>Отчёты на CRM-дашборде: конверсия воронки + по менеджерам (сделок/оплат/сумма) + выгрузка в Excel
+      Штурвал v3.53.0<br>CRM в облаке (общие данные на всех устройствах) + импорт из amoCRM (контакты/сделки) · плавные ползунки симулятора
     </div>
   </aside>
 
@@ -1144,6 +1144,7 @@
           role:(d&&d.role)||'', department:(d&&d.department)||'', plan_day:(d&&d.plan_day)||0};
     if(d&&d.ok) setCachedUser(d);   // запомним профиль, чтобы войти даже когда сервер спит
     applyAccess();
+    loadCrmCloud();                 // подтянуть CRM из облака (общие данные на всех устройствах)
   }
   function applyAccess(){
     // первый доступный модуль и его первая вкладка
@@ -1574,6 +1575,41 @@
     if(ed){ const t=TEMPLATES.find(x=>x.id===ed); if(t){ t.title=title; t.text=text; } btn.dataset.edit=''; }
     else { TEMPLATES.push({id:'t'+Date.now().toString(36),title:title,text:text}); }
     tplPersist(); ti.value=''; tx.value=''; renderTplList();
+  }
+  // ===== Импорт из amoCRM =====
+  let _amoImporting=false;
+  async function importFromAmo(){
+    if(_amoImporting) return;
+    if(!confirm('Загрузить контакты и сделки из amoCRM в Штурвал?\n\nМожет занять до минуты. Повторный импорт НЕ создаёт дубликаты.')) return;
+    _amoImporting=true;
+    const btn=document.getElementById('amo-imp-btn'); if(btn){ btn.disabled=true; btn.textContent='⏳ Импортирую…'; }
+    try{
+      const r=await apiFetch('/api/amo-import',{},ONEC_BASE); const d=await r.json();
+      if(d.error) throw new Error(d.error);
+      const res=mergeAmo(d); crmPersist();
+      alert('Готово! Из amoCRM ('+(d.account||'')+'):\n• клиентов добавлено: '+res.nc+' (всего '+CRM.clients.length+')\n• сделок добавлено: '+res.nd+' (всего '+CRM.deals.length+')');
+      renderCrmHome(); if(curTab==='deals'&&typeof renderBoard==='function') renderBoard(); if(curTab==='clients') renderClients(); if(typeof fetchChats==='function') fetchChats();
+    }catch(e){ alert('Не удалось импортировать: '+(e.message||e)+'\n\nСервер мог «просыпаться» — попробуй ещё раз через минуту.'); }
+    finally{ _amoImporting=false; if(btn){ btn.disabled=false; btn.textContent='⬇️ Импорт из amoCRM'; } }
+  }
+  function mergeAmo(d){
+    const PAID=['Оплачено','Отгружено','Закрыто'];
+    const haveC={}, haveD={}; const keyToId={}; let nc=0,nd=0;
+    CRM.clients.forEach(c=>{ if(c.amo_id) haveC[c.amo_id]=c; });
+    CRM.deals.forEach(x=>{ if(x.amo_id) haveD[x.amo_id]=true; });
+    (d.clients||[]).forEach(c=>{
+      let local=haveC[c.amo_id];
+      if(!local){ local={id:uid(),name:c.name||'Без имени',phone:c.phone||'',source:c.source||'amocrm',created_at:c.created_at||new Date().toISOString(),amo_id:c.amo_id}; CRM.clients.push(local); haveC[c.amo_id]=local; nc++; }
+      keyToId[c.amo_id]=local.id;
+    });
+    (d.deals||[]).forEach(dl=>{
+      if(haveD[dl.amo_id]) return;
+      const cidLocal=keyToId[dl.client_key]; if(!cidLocal) return;
+      const paid=PAID.indexOf(dl.status)>=0;
+      CRM.deals.push({id:uid(),client_id:cidLocal,status:dl.status||'Новая заявка',amount:dl.amount||0,items:[],name:dl.name||'',owner:'amoCRM',created_at:dl.created_at||new Date().toISOString(),amo_id:dl.amo_id,paid_at:(paid?(dl.created_at||new Date().toISOString()):'')});
+      haveD[dl.amo_id]=true; nd++;
+    });
+    return {nc,nd};
   }
   // Финансы (1С): склад в деньгах + продажи/прибыль (реальные данные)
   function drawFinance(d){
@@ -2179,7 +2215,40 @@
   const REJECT_REASONS=['Дорого','Передумал','Нет в наличии','Не отвечает','Купил у конкурента','Другое'];
   let CRM={clients:[],deals:[],tasks:[],activity:[]};
   try{ const s=JSON.parse(localStorage.getItem('shturval_crm')); if(s) CRM=Object.assign(CRM,s); }catch(e){}
-  function crmPersist(){ try{ localStorage.setItem('shturval_crm',JSON.stringify(CRM)); }catch(e){} }
+  let _crmCloudTimer=null, _crmCloudReady=false;
+  function crmPersist(){
+    if(CRM.activity&&CRM.activity.length>800) CRM.activity=CRM.activity.slice(0,800);   // не раздувать журнал
+    try{ localStorage.setItem('shturval_crm',JSON.stringify(CRM)); }catch(e){}
+    saveCrmCloud();   // + в облако (с задержкой, чтобы не дёргать на каждый клик)
+  }
+  function saveCrmCloud(){
+    if(!_crmCloudReady) return;        // не перезаписывать облако, пока не загрузили его
+    clearTimeout(_crmCloudTimer);
+    _crmCloudTimer=setTimeout(async()=>{
+      try{ await apiFetch('/api/crm-data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data:CRM})},ONEC_BASE); }catch(_){}
+    },1500);
+  }
+  async function loadCrmCloud(){
+    if(!(isOwner()||canSee('crm')||canSee('deals')||canSee('chats')||canSee('dash'))) return;
+    try{
+      const r=await apiFetch('/api/crm-data',{},ONEC_BASE); const d=await r.json();
+      const cloud=d&&d.data;
+      const cloudHas=cloud&&((cloud.deals&&cloud.deals.length)||(cloud.clients&&cloud.clients.length));
+      const localHas=(CRM.deals&&CRM.deals.length)||(CRM.clients&&CRM.clients.length);
+      if(cloudHas){
+        CRM={clients:cloud.clients||[],deals:cloud.deals||[],tasks:cloud.tasks||[],activity:cloud.activity||[]};
+        try{ localStorage.setItem('shturval_crm',JSON.stringify(CRM)); }catch(_){}
+        _crmCloudReady=true;
+        if(typeof renderCrmHome==='function') renderCrmHome();
+        if(typeof renderBoard==='function' && curTab==='deals') renderBoard();
+        if(typeof renderTasks==='function' && curTab==='tasks') renderTasks();
+        if(typeof fetchChats==='function') fetchChats();
+      } else {
+        _crmCloudReady=true;
+        if(localHas) saveCrmCloud();   // в облаке пусто — зальём то, что есть локально
+      }
+    }catch(_){ _crmCloudReady=true; }   // нет связи — работаем локально, синхронизируемся позже
+  }
   function uid(){ return 'd'+Date.now().toString(36)+Math.floor(Math.random()*1e6).toString(36); }
   function getClient(id){ return CRM.clients.find(c=>c.id===id)||{}; }
   function getDeal(id){ return CRM.deals.find(d=>d.id===id)||null; }
@@ -2209,7 +2278,11 @@
     const sumToday=paid.filter(d=>d.paid_at&&new Date(d.paid_at).getTime()>=start.getTime()).reduce((s,d)=>s+dealAmount(d),0);
     const chats=(COCKPIT_CHATS||[]).length; const waiting=(COCKPIT_CHATS||[]).filter(c=>c.unread).length;
     const kpi=(l,v)=>'<div class="card kpi"><div class="label">'+l+'</div><div class="value">'+v+'</div></div>';
-    let html='<div class="kpis" style="margin-bottom:18px">'+
+    let html='';
+    if(isOwner()||canSee('crm')||canSee('deals')){
+      html+='<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button class="btn ghost" id="amo-imp-btn" style="font-size:12px;padding:6px 12px" onclick="importFromAmo()">⬇️ Импорт из amoCRM</button></div>';
+    }
+    html+='<div class="kpis" style="margin-bottom:18px">'+
       kpi('🆕 Новых заявок',newLeads)+
       kpi('🤝 Сделок в работе',inWork)+
       kpi('✅ Сумма успешных','<span class="money" data-som="'+sumOk+'">'+fmt(sumOk)+'</span>')+
@@ -2401,6 +2474,8 @@
     }
     // свежие — наверх; ждущие ответа (синяя точка) — ещё выше
     items.sort((a,b)=>(b.unread-a.unread)||(b.ts-a.ts));
+    const CAP=300; let moreCount=0;          // не рисуем тысячи строк сразу (после импорта из amoCRM)
+    if(items.length>CAP){ moreCount=items.length-CAP; items=items.slice(0,CAP); }
     if(!items.length){
       if(ckSearch){
         box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">По запросу «'+esc(ckSearch)+'» клиентов не найдено</div>';
@@ -2412,6 +2487,7 @@
       return;
     }
     box.innerHTML=items.map((it,i)=>'<div class="chatitem'+(it.chatId&&it.chatId===ckCurId?' active':'')+'" draggable="true" data-i="'+i+'"><div class="ci-name">'+(it.unread?'<span title="Клиент написал — без ответа" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2f80ed;margin-right:6px;vertical-align:middle"></span>':'')+esc(it.name)+(it.account?' <span style="font-size:11px;color:var(--accent);font-weight:400">📷 '+esc(it.account)+'</span>':'')+'</div><div class="ci-last">'+esc(it.sub)+'</div></div>').join('');
+    if(moreCount){ box.innerHTML+='<div style="padding:12px;color:var(--muted);font-size:12px;text-align:center">…и ещё '+moreCount+'. Воспользуйся поиском, чтобы найти нужного клиента.</div>'; }
     box.querySelectorAll('.chatitem').forEach(el=>{ const it=items[+el.dataset.i];
       el.addEventListener('click',()=>openItem(it));
       el.addEventListener('dragstart',e=>{ dragChat={name:it.name,id:it.chatId}; e.dataTransfer.effectAllowed='move'; });
@@ -2897,7 +2973,7 @@
     return '<div class="sim-lever">'+
       '<div class="sl-top"><div><div class="sl-name">'+icon+' '+name+'</div><div class="sl-sub">'+sub+'</div></div>'+
         '<div class="sl-val" id="slv-'+key+'">'+(v>0?'+':'')+v+'%</div></div>'+
-      '<input type="range" class="simrange" min="-50" max="50" step="5" value="'+v+'" oninput="simChange(\''+key+'\',this.value)">'+
+      '<input type="range" class="simrange" min="-50" max="50" step="1" value="'+v+'" oninput="simChange(\''+key+'\',this.value)">'+
       '<div class="sim-mark"><span>−50%</span><span>сейчас</span><span>+50%</span></div>'+
     '</div>';
   }
