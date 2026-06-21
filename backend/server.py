@@ -2288,6 +2288,43 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "нет данных"})
             kv_save("crm_" + COMPANY_ID, data)
             return self._send(200, {"ok": True})
+        if self.path.startswith("/api/account"):
+            u = self._user()
+            if not u:
+                return self._send(401, {"error": "вход"})
+            if not supa_on():
+                return self._send(503, {"error": "База не настроена"})
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            login = (u.get("login") or "").strip()
+            if not login:
+                return self._send(400, {"error": "У вашего аккаунта нет логина — обратитесь к владельцу"})
+            action = body.get("action")
+            try:
+                if action == "set_password":
+                    newpw = (body.get("new_pw") or "").strip()
+                    if len(newpw) < 4:
+                        return self._send(400, {"error": "Пароль минимум 4 символа"})
+                    team_save(_emp_row(login, pw=newpw))   # сохраняет ост. поля (sections и т.д.)
+                    return self._send(200, {"ok": True})
+                elif action == "set_login":
+                    newlogin = (body.get("new_login") or "").strip()
+                    if not _re.match(r"^[A-Za-z0-9_]{2,}$", newlogin):
+                        return self._send(400, {"error": "Логин: латиница, цифры, _ (от 2 символов)"})
+                    if newlogin.lower() != login.lower() and newlogin.lower() in USERS_BY_LOGIN:
+                        return self._send(400, {"error": "Логин «%s» уже занят" % newlogin})
+                    row = _emp_row(login); row["login"] = newlogin
+                    team_save(row)                          # новая запись с новым логином (поля скопированы)
+                    if newlogin.lower() != login.lower():
+                        team_save(_emp_row(login, active=False))   # спрятать старый логин
+                    return self._send(200, {"ok": True, "login": newlogin})
+                else:
+                    return self._send(400, {"error": "неизвестное действие"})
+            except Exception as e:
+                return self._send(500, {"error": "Не удалось сохранить: %s" % e})
         if self.path.startswith("/api/suppliers"):
             try:
                 length = int(self.headers.get("Content-Length", 0))
