@@ -346,7 +346,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.51.0<br>Шаблоны ответов в переписке (чат и карточка заказа) + управление своими шаблонами
+      Штурвал v3.52.0<br>Отчёты на CRM-дашборде: конверсия воронки + по менеджерам (сделок/оплат/сумма) + выгрузка в Excel
     </div>
   </aside>
 
@@ -2220,7 +2220,25 @@
       const col=st==='Отказ'?'#ff6b6b':(PAID.indexOf(st)>=0?'var(--green)':'var(--accent)');
       return '<div style="margin:9px 0"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px"><span>'+esc(st)+'</span><b>'+n+'</b></div><div style="height:10px;background:var(--panel2);border-radius:6px;overflow:hidden"><div style="height:100%;width:'+w+'%;background:'+col+'"></div></div></div>';
     }).join('')+'</div>';
-    html+='<div class="kpis" style="grid-template-columns:repeat(2,1fr)">'+kpi('📷 Instagram-диалогов',chats)+kpi('🔵 Ждут ответа',waiting)+'</div>';
+    html+='<div class="kpis" style="grid-template-columns:repeat(2,1fr);margin-bottom:16px">'+kpi('📷 Instagram-диалогов',chats)+kpi('🔵 Ждут ответа',waiting)+'</div>';
+    // ===== ОТЧЁТЫ =====
+    const totalDeals=deals.length;
+    const conv=totalDeals?Math.round(paid.length/totalDeals*100):0;
+    const lost=deals.filter(d=>d.status==='Отказ').length;
+    const avgCheck=paid.length?Math.round(sumOk/paid.length):0;
+    html+='<div class="card" style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">📊 Конверсия воронки</h3>'+
+      '<div style="display:flex;gap:8px"><button class="btn ghost" style="font-size:12px;padding:5px 10px" onclick="exportDeals()">⬇️ Сделки в Excel</button><button class="btn ghost" style="font-size:12px;padding:5px 10px" onclick="exportClients()">⬇️ Клиенты в Excel</button></div></div>'+
+      '<div class="kpis" style="grid-template-columns:repeat(4,1fr);gap:12px;margin-top:14px">'+
+        kpi('Всего сделок',totalDeals)+kpi('Дошли до оплаты',paid.length)+
+        kpi('Конверсия',conv+'%')+kpi('Отказов',lost)+'</div>'+
+      '<div class="note" style="margin-top:12px">Из <b>'+totalDeals+'</b> сделок оплатили <b>'+paid.length+'</b> ('+conv+'%). Средний чек: <b><span class="money" data-som="'+avgCheck+'">'+fmt(avgCheck)+'</span></b>.</div></div>';
+    // отчёт по менеджерам
+    const byMgr={}; deals.forEach(d=>{ const m=d.owner||'—'; const o=byMgr[m]=byMgr[m]||{count:0,paid:0,sum:0}; o.count++; if(PAID.indexOf(d.status)>=0){ o.paid++; o.sum+=dealAmount(d); } });
+    const mgrs=Object.keys(byMgr).map(m=>({name:m,...byMgr[m]})).sort((a,b)=>b.sum-a.sum);
+    if(mgrs.length){
+      html+='<div class="card"><h3>🧑‍💼 Отчёт по менеджерам</h3><table><thead><tr><th>Менеджер</th><th style="text-align:right">Сделок</th><th style="text-align:right">Оплат</th><th style="text-align:right">Конверсия</th><th style="text-align:right">Сумма</th></tr></thead><tbody>'+
+        mgrs.map((m,i)=>'<tr><td>'+(i===0&&m.sum>0?'🏆 ':'')+esc(m.name)+'</td><td style="text-align:right">'+m.count+'</td><td style="text-align:right">'+m.paid+'</td><td style="text-align:right;color:var(--muted)">'+(m.count?Math.round(m.paid/m.count*100):0)+'%</td><td style="text-align:right"><b><span class="money" data-som="'+m.sum+'">'+fmt(m.sum)+'</span></b></td></tr>').join('')+'</tbody></table></div>';
+    }
     box.innerHTML=html; renderMoney&&renderMoney();
   }
   function renderCrmStats(){
