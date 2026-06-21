@@ -17,7 +17,9 @@
   }
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    background:var(--bg);color:var(--text);display:flex;flex-direction:column;min-height:100vh}
+    background:var(--bg);color:var(--text);display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  /* меню (верх + слева) зафиксированы, прокручивается только содержимое справа */
+  .sidebar{overflow-y:auto}
 
   /* TOP NAV (модули сверху) */
   .topnav{display:flex;align-items:center;gap:8px;background:var(--panel);border-bottom:1px solid var(--line);
@@ -346,7 +348,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.54.0<br>Рассылка в Instagram (тем, кто писал за 24ч, с предпросмотром числа получателей)
+      Штурвал v3.55.0<br>Закреплённое меню (слева/сверху всегда видно) + в рассылке видно и можно выбрать число получателей
     </div>
   </aside>
 
@@ -939,6 +941,12 @@
     <label>Текст сообщения</label>
     <textarea id="bc-text" placeholder="Например: 🔥 Только сегодня скидка 20% на всё! Успейте заказать." style="width:100%;min-height:90px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--text);font-family:inherit;font-size:14px;resize:vertical"></textarea>
     <div id="bc-count" style="font-size:13px;color:var(--muted);margin-top:10px">Считаю получателей…</div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">
+      <label style="margin:0;font-size:13px">Отправить максимум:</label>
+      <input type="number" id="bc-limit" min="1" value="" style="width:100px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--text);font-size:14px">
+      <button class="btn ghost" style="font-size:12px;padding:6px 10px" onclick="bcToggleList()">👁 Кому отправится</button>
+    </div>
+    <div id="bc-list" style="display:none;max-height:200px;overflow:auto;margin-top:10px;border:1px solid var(--line);border-radius:10px"></div>
     <div class="modal-foot">
       <button class="btn" id="bc-send-btn" onclick="bcSend()">Отправить рассылку</button>
       <button class="btn ghost" onclick="closeBc()">Отмена</button>
@@ -1636,23 +1644,42 @@
     bcRefreshCount();
   }
   function closeBc(){ document.getElementById('bcbg').classList.remove('open'); }
+  function bcEligibleList(){
+    const acc=document.getElementById('bc-account').value||'all';
+    const cutoff=Date.now()/1000-86400;
+    return (COCKPIT_CHATS||[]).filter(c=>(c.ts||0)>=cutoff && (acc==='all'||c.account===acc))
+      .sort((a,b)=>(b.ts||0)-(a.ts||0));
+  }
+  function bcToggleList(){
+    const box=document.getElementById('bc-list');
+    if(box.style.display!=='none'){ box.style.display='none'; return; }
+    const list=bcEligibleList();
+    box.innerHTML=list.length?list.map(c=>'<div style="padding:8px 12px;border-bottom:1px solid var(--line);font-size:13px;display:flex;justify-content:space-between;gap:8px"><span>'+esc(c.name||c.customer_id)+'</span><span style="color:var(--muted);font-size:11px">📷 '+esc(c.account||'')+'</span></div>').join(''):'<div style="padding:12px;color:var(--muted);font-size:13px">Нет клиентов в окне 24 часа.</div>';
+    box.style.display='';
+  }
   async function bcRefreshCount(){
     const acc=document.getElementById('bc-account').value||'all';
     const box=document.getElementById('bc-count'); box.textContent='Считаю получателей…';
+    const lim=document.getElementById('bc-limit'); const localN=bcEligibleList().length;
+    if(lim && !lim.value) lim.value=localN;            // по умолчанию — всем
+    const lb=document.getElementById('bc-list'); if(lb&&lb.style.display!=='none') bcToggleList(), bcToggleList();
     try{
       const r=await apiFetch('/api/ig/broadcast?account='+encodeURIComponent(acc)+'&_='+Date.now(),{},ONEC_BASE);
       const d=await r.json();
-      box.innerHTML='👥 Сообщение получат примерно <b style="color:var(--text)">'+(d.eligible||0)+'</b> клиентов (писали за последние 24 часа).';
-    }catch(_){ box.textContent='Не удалось посчитать получателей (сервер мог просыпаться).'; }
+      box.innerHTML='👥 В окне 24 часа: <b style="color:var(--text)">'+(d.eligible||localN)+'</b> клиентов. Можешь ограничить число ниже.';
+      if(lim && (!lim.value||+lim.value>(d.eligible||localN))) lim.value=(d.eligible||localN);
+    }catch(_){ box.innerHTML='👥 В окне 24 часа: <b style="color:var(--text)">'+localN+'</b> клиентов (по данным переписки).'; }
   }
   async function bcSend(){
     const acc=document.getElementById('bc-account').value||'all';
     const text=(document.getElementById('bc-text').value||'').trim();
     if(!text){ alert('Впиши текст рассылки'); return; }
-    if(!confirm('Отправить это сообщение всем клиентам, писавшим за 24 часа?\n\n«'+text.slice(0,120)+(text.length>120?'…':'')+'»')) return;
+    const limV=parseInt(document.getElementById('bc-limit').value||'0',10);
+    const limit=(limV>0)?limV:9999;
+    if(!confirm('Отправить сообщение '+(limV>0?('максимум '+limV):'всем')+' клиентам, писавшим за 24 часа?\n\n«'+text.slice(0,120)+(text.length>120?'…':'')+'»')) return;
     const btn=document.getElementById('bc-send-btn'); btn.disabled=true; btn.textContent='⏳ Отправляю…';
     try{
-      const r=await apiFetch('/api/ig/broadcast',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text,account:acc})},ONEC_BASE);
+      const r=await apiFetch('/api/ig/broadcast',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text,account:acc,limit:limit})},ONEC_BASE);
       const d=await r.json(); if(d.error) throw new Error(d.error);
       alert('Готово! Отправлено: '+(d.sent||0)+(d.failed?(' · не доставлено: '+d.failed+' (вне 24-часового окна)'):'')+'.');
       closeBc();

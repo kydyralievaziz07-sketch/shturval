@@ -2050,10 +2050,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "плохой запрос"})
             text = (body.get("text") or "").strip()
             account = (body.get("account") or "all")
+            try:
+                limit = int(body.get("limit") or 500)
+            except Exception:
+                limit = 500
+            limit = max(1, min(limit, 500))
             if not text:
                 return self._send(400, {"error": "Введите текст рассылки"})
             try:
-                return self._send(200, ig_broadcast(text, account))
+                return self._send(200, ig_broadcast(text, account, limit=limit))
             except Exception as e:
                 return self._send(500, {"error": "Рассылка не удалась: %s" % e})
         if self.path.startswith("/api/add-product"):
