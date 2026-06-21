@@ -348,7 +348,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.61.0<br>Безопасность: новые пароли хранятся в зашифрованном виде (хеш); старые входы работают как прежде
+      Штурвал v3.62.0<br>Мобилографы: зарплата по числу снятых видео (видео × ставка). Ввод «видео сегодня» вместо явки; ставка за видео в карточке (по умолч. оклад÷30)
     </div>
   </aside>
 
@@ -906,6 +906,8 @@
     </div>
     <label>Зарплата в месяц, сом</label>
     <input type="number" id="emp-salary" placeholder="0">
+    <label style="margin-top:8px">📹 Ставка за видео, сом <span style="color:var(--muted);font-weight:400;font-size:11px">— только для мобилографов (зарплата = видео × ставка). Пусто = оклад÷30</span></label>
+    <input type="number" id="emp-video-rate" placeholder="напр. 1000">
     <div id="emp-login-block">
       <div style="font-size:12px;color:var(--muted);margin:12px 0 4px">Вход в систему (необязательно — если сотруднику нужен свой кабинет):</div>
       <div class="row">
@@ -3492,6 +3494,15 @@
       if(d&&d.view){ const i=HR_LIST.findIndex(x=>(x.login||'')===login); if(i>=0) HR_LIST[i]=d.view; renderHR(); }
     }catch(e){ alert('Не удалось сохранить (сервер мог просыпаться). Попробуй ещё раз.'); }
   }
+  // мобилографы: число видео за день
+  async function hSetVideos(login,date,valStr){
+    const n=parseInt((valStr||'0').toString().replace(/\D/g,''),10)||0;
+    try{
+      const r=await apiFetch('/api/payroll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_videos',login:login,date:date,videos:n})},ONEC_BASE);
+      const d=await r.json(); if(d&&d.error) throw new Error(d.error);
+      if(d&&d.view){ const i=HR_LIST.findIndex(x=>(x.login||'')===login); if(i>=0) HR_LIST[i]=d.view; renderHR(); }
+    }catch(e){ alert('Не удалось сохранить (сервер мог просыпаться). Попробуй ещё раз.'); }
+  }
   // --- Планы по отделам ---
   async function dpPost(body){
     try{ const r=await apiFetch('/api/deptplan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},ONEC_BASE);
@@ -3559,6 +3570,7 @@
     document.getElementById('emp-dept').value=dept||'';
     document.getElementById('emp-role').value='';
     document.getElementById('emp-salary').value='';
+    document.getElementById('emp-video-rate').value='';
     document.getElementById('emp-login').value='';
     document.getElementById('emp-pw').value='';
     document.getElementById('emp-login-block').style.display='';
@@ -3577,6 +3589,7 @@
     document.getElementById('emp-dept').value=v.department||'';
     document.getElementById('emp-role').value=v.role||'';
     document.getElementById('emp-salary').value=v.salary_month||'';
+    document.getElementById('emp-video-rate').value=v.video_rate||'';
     document.getElementById('emp-login-block').style.display='none';   // логин при правке не трогаем
     document.getElementById('emp-err').textContent='';
     renderEmpSecs((v.sections||[]).filter(s=>s!=='all'));
@@ -3596,8 +3609,9 @@
     const err=document.getElementById('emp-err');
     if(!name){ err.textContent='Впишите имя'; return; }
     const sal=parseFloat((document.getElementById('emp-salary').value||'').replace(/\s/g,'').replace(',','.'))||0;
+    const vrate=parseFloat((document.getElementById('emp-video-rate').value||'').replace(/\s/g,'').replace(',','.'))||0;
     const body={name:name, department:(document.getElementById('emp-dept').value||'').trim(),
-      role:(document.getElementById('emp-role').value||'').trim(), salary_month:sal};
+      role:(document.getElementById('emp-role').value||'').trim(), salary_month:sal, video_rate:vrate};
     const btn=document.getElementById('emp-save-btn'); btn.disabled=true; btn.textContent='Сохраняю…';
     try{
       const secs=readEmpSecs();
@@ -3663,19 +3677,31 @@
     const todayH=(v.hours&&v.hours[td])||'';
     const inpH='padding:5px 8px;width:62px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:14px;text-align:center';
     const hourlyRate=v.hourly_rate||0;
-    // ОСНОВНОЕ: пришёл / не пришёл (целый день)
-    const presentBtn=v.marked_today
-      ? '<button class="btn" style="padding:5px 10px;font-size:12px;background:var(--green);color:#06121f" onclick="hrMark(\''+lg+'\',\'unpresent\')">✓ был</button>'
-      : '<button class="btn" style="padding:5px 10px;font-size:12px" onclick="hrMark(\''+lg+'\',\'present\')">Пришёл</button>';
-    const absentBtn=v.marked_absent_today
-      ? '<button class="btn" style="padding:5px 10px;font-size:12px;background:var(--red);color:#fff" onclick="hrMark(\''+lg+'\',\'unpresent\')">✗ не пришёл</button>'
-      : '<button class="btn ghost" style="padding:5px 10px;font-size:12px" onclick="hrMark(\''+lg+'\',\'absent\')">Не пришёл</button>';
-    // ДОПОЛНИТЕЛЬНО: если отработал не весь день — вписать часы (тогда день считается по часам)
-    const hoursCtrl='<div style="display:flex;align-items:center;gap:5px" title="Если не весь день. Цена часа: '+fmt(hourlyRate)+' сом">'+
-        '<span style="font-size:12px;color:var(--muted)">или часов:</span>'+
-        '<input type="number" inputmode="decimal" step="0.5" min="0" value="'+todayH+'" placeholder="—" onchange="hSetHours(\''+lg+'\',\''+td+'\',this.value)" style="'+inpH+'"><span style="font-size:12px;color:var(--muted)">ч</span>'+
+    let mainCtrl, subMonth;
+    if(v.is_video){
+      // МОБИЛОГРАФ: оплата по числу отснятых видео
+      const todayV=(v.videos&&v.videos[td])||'';
+      mainCtrl='<div style="display:flex;align-items:center;gap:6px" title="Цена за видео: '+fmt(v.video_rate||0)+' сом">'+
+        '<span style="font-size:13px">📹 видео сегодня:</span>'+
+        '<input type="number" inputmode="numeric" min="0" step="1" value="'+todayV+'" placeholder="0" onchange="hSetVideos(\''+lg+'\',\''+td+'\',this.value)" style="'+inpH+'">'+
+        '<span style="font-size:12px;color:var(--muted)">× '+fmt(v.video_rate||0)+'</span>'+
       '</div>';
-    const subMonth='· '+(v.present_days||0)+' дн'+((v.partial_days>0)?(' · '+v.hours_month+' ч частично'):'');
+      subMonth='· '+(v.videos_month||0)+' видео за месяц';
+    } else {
+      // ОСНОВНОЕ: пришёл / не пришёл (целый день)
+      const presentBtn=v.marked_today
+        ? '<button class="btn" style="padding:5px 10px;font-size:12px;background:var(--green);color:#06121f" onclick="hrMark(\''+lg+'\',\'unpresent\')">✓ был</button>'
+        : '<button class="btn" style="padding:5px 10px;font-size:12px" onclick="hrMark(\''+lg+'\',\'present\')">Пришёл</button>';
+      const absentBtn=v.marked_absent_today
+        ? '<button class="btn" style="padding:5px 10px;font-size:12px;background:var(--red);color:#fff" onclick="hrMark(\''+lg+'\',\'unpresent\')">✗ не пришёл</button>'
+        : '<button class="btn ghost" style="padding:5px 10px;font-size:12px" onclick="hrMark(\''+lg+'\',\'absent\')">Не пришёл</button>';
+      const hoursCtrl='<div style="display:flex;align-items:center;gap:5px" title="Если не весь день. Цена часа: '+fmt(hourlyRate)+' сом">'+
+          '<span style="font-size:12px;color:var(--muted)">или часов:</span>'+
+          '<input type="number" inputmode="decimal" step="0.5" min="0" value="'+todayH+'" placeholder="—" onchange="hSetHours(\''+lg+'\',\''+td+'\',this.value)" style="'+inpH+'"><span style="font-size:12px;color:var(--muted)">ч</span>'+
+        '</div>';
+      mainCtrl=presentBtn+absentBtn+hoursCtrl;
+      subMonth='· '+(v.present_days||0)+' дн'+((v.partial_days>0)?(' · '+v.hours_month+' ч частично'):'');
+    }
     const payInfo=v.salary_month
       ? '<div style="font-size:12px;color:var(--muted)">К выплате <b style="color:var(--text)"><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span></b>'+
           ((v.advance||v.bonus)?(' <span style="opacity:.7">(ав '+fmt(v.advance)+' · пр '+fmt(v.bonus)+')</span>'):'')+'</div>'
@@ -3684,10 +3710,10 @@
       '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">'+
         '<div style="min-width:150px"><b>'+esc(v.name)+'</b> <span style="color:var(--muted);font-size:12px">'+subMonth+'</span></div>'+
         payInfo+
-        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+presentBtn+absentBtn+hoursCtrl+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+mainCtrl+
           '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHra(\''+lg+'\',\'advance\')" title="Аванс">💸 Аванс</button>'+
           '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHra(\''+lg+'\',\'bonus\')" title="Премия">🎁 Премия</button>'+
-          '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHrCal(\''+lg+'\')" title="Календарь явки">📅 Календарь</button>'+
+          (v.is_video?'':'<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHrCal(\''+lg+'\')" title="Календарь явки">📅 Календарь</button>')+
           (canManageTeam()?(
             '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openEmpEdit(\''+lg+'\')" title="Изменить имя/отдел/зарплату">✏️ Изменить</button>'+
             '<button class="btn ghost" style="padding:5px 9px;font-size:12px;color:var(--red)" onclick="teamRemove(\''+lg+'\',\''+jsn(v.name)+'\')" title="Убрать сотрудника">🗑</button>'

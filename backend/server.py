@@ -136,7 +136,8 @@ def load_users():
                   "plan_day": u.get("plan_day", 0),
                   "salary_month": u.get("salary_month", 0),
                   "daily_rate": u.get("daily_rate", 0),
-                  "bonus_month": u.get("bonus_month", 0)},
+                  "bonus_month": u.get("bonus_month", 0),
+                  "video_rate": u.get("video_rate", 0)},
                  login)
     except Exception:
         pass
@@ -1683,6 +1684,7 @@ def _emp_row(login, **f):
             "daily_rate": f.get("daily_rate", cur.get("daily_rate", 0) or 0),
             "bonus_month": f.get("bonus_month", cur.get("bonus_month", 0) or 0),
             "plan_day": f.get("plan_day", cur.get("plan_day", 0) or 0),
+            "video_rate": f.get("video_rate", cur.get("video_rate", 0) or 0),
             "active": f.get("active", True)}
 
 def team_save(row):
@@ -1695,14 +1697,39 @@ def _present_in_month(days, m):
 
 SHIFT_HOURS = 10.5                          # часов в смене (цена часа = ставка/день ÷ это)
 
+def _is_video_dept(dep):
+    return "мобилограф" in (dep or "").lower()
+
 def payroll_view(user, rec=None):
     name = user.get("name", "")
     key = _pkey(user)                       # зарплата ведётся по логину (уникален)
     r = rec if rec is not None else payroll_rec(key)
     days = r.get("days") or {}
     hrs = r.get("hours") or {}
+    vids = r.get("videos") or {}
     m = _cur_month(); today = _today_str()
     sal = float(user.get("salary_month") or 0)
+    dep = user.get("department", "")
+    is_video = _is_video_dept(dep)
+    # --- МОБИЛОГРАФЫ: зарплата по числу отснятых видео ---
+    if is_video:
+        vrate = float(user.get("video_rate") or 0)
+        if vrate <= 0 and sal > 0:
+            vrate = round(sal / 30.0)       # по умолчанию 30 видео = полный оклад
+        videos_month = sum(int(c or 0) for d, c in vids.items() if isinstance(d, str) and d[:7] == m)
+        accrued = round(videos_month * vrate)
+        bonus = float(r.get("bonus") or 0); adv = float(r.get("advance") or 0)
+        return {"name": name, "login": user.get("login", ""),
+                "role": user.get("role", ""), "department": dep,
+                "sections": user.get("sections", []),
+                "salary_month": sal, "bonus_month": float(user.get("bonus_month") or 0),
+                "is_video": True, "video_rate": round(vrate),
+                "videos_month": videos_month, "videos_today": int(vids.get(today) or 0),
+                "videos": vids,
+                "present_days": 0, "partial_days": 0, "hours_month": 0, "hours_today": 0, "hours": {},
+                "accrued": accrued, "bonus": bonus, "advance": adv,
+                "to_receive": round(accrued + bonus - adv), "days": days,
+                "marked_today": False, "marked_absent_today": False}
     rate = float(user.get("daily_rate") or 0)
     if rate <= 0 and sal > 0:
         rate = round(sal / 30.0)            # оклад ÷ 30 (магазин работает каждый день)
@@ -1730,6 +1757,7 @@ def payroll_view(user, rec=None):
             "hourly_rate": hourly_rate, "shift_hours": SHIFT_HOURS,
             "hours_month": hours_month, "hours_today": float(hrs.get(today) or 0),
             "hours": hrs,
+            "is_video": False, "video_rate": 0, "videos_month": 0, "videos_today": 0,
             "advance": adv, "to_receive": round(accrued + bonus - adv), "days": days,
             "marked_today": days.get(today) == "p", "marked_absent_today": days.get(today) == "a"}
 
@@ -1819,7 +1847,7 @@ def dept_plan_all():
         except Exception:
             recs = None
     for dep in _dept_list():
-        if dep == "Администраторы":      # админы не продают — плана нет
+        if dep == "Администраторы" or _is_video_dept(dep):   # админы и мобилографы не продают — плана нет
             continue
         if recs is not None:
             r = recs.get(dep) or {"plan_day": DEFAULT_DEPT_PLAN, "facts": {}}
@@ -2167,6 +2195,7 @@ class Handler(BaseHTTPRequestHandler):
             r = payroll_rec(_pkey(tu))
             days = r.get("days") or {}
             hrs = r.get("hours") or {}
+            vids = r.get("videos") or {}
             today = _today_str()
             # дата отметки: можно отметить любой день месяца (для календаря); по умолчанию сегодня
             day = (body.get("date") or "").strip()
@@ -2194,10 +2223,18 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     hrs[day] = round(h, 2)
                 r["hours"] = hrs
+            elif action == "set_videos":       # ЗАДАТЬ число видео за день (мобилографы)
+                n = int(float(body.get("videos") or 0))
+                if n <= 0:
+                    vids.pop(day, None)
+                else:
+                    vids[day] = n
+                r["videos"] = vids
             else:
                 return self._send(400, {"error": "неизвестное действие"})
             r["days"] = days
             r["hours"] = hrs
+            r["videos"] = vids
             r["present_days"] = _present_in_month(days, _cur_month())
             r["last_present"] = today if days.get(today) == "p" else r.get("last_present", "")
             payroll_upsert(r)
@@ -2254,6 +2291,7 @@ class Handler(BaseHTTPRequestHandler):
                                    department=(body.get("department") or "").strip(),
                                    pw=(_hash_pw(_newpw) if _newpw else ""),
                                    sections=secs_in,
+                                   video_rate=round(float(body.get("video_rate") or 0)),
                                    salary_month=round(float(body.get("salary_month") or 0)))
                     team_save(row)
                     return self._send(200, {"ok": True, "login": login})
@@ -2278,6 +2316,8 @@ class Handler(BaseHTTPRequestHandler):
                             over[k] = (body.get(k) or "").strip()
                     if "salary_month" in body:
                         over["salary_month"] = round(float(body.get("salary_month") or 0))
+                    if "video_rate" in body:
+                        over["video_rate"] = round(float(body.get("video_rate") or 0))
                     if "sections" in body and body.get("sections"):
                         over["sections"] = body.get("sections")
                     if "pw" in body and (body.get("pw") or "").strip():
