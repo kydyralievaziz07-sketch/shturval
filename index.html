@@ -251,14 +251,48 @@
   }
   @media(max-width:1000px){.kpis{grid-template-columns:repeat(2,1fr)}.grid2,.grid2b{grid-template-columns:1fr}}
   @media(max-width:760px){
+    /* стоп горизонтальному растягиванию страницы */
+    html,body{overflow-x:hidden;max-width:100%}
     body{flex-direction:column}
-    .sidebar{width:100%;flex-direction:row;flex-wrap:wrap;align-items:center;padding:12px 14px}
-    .sidebar .nav{flex-direction:row;flex-wrap:wrap;margin-top:0;gap:6px;width:100%}
-    .nav a{padding:8px 10px;font-size:13px}
+
+    /* верхнее меню модулей — компактнее, не переносится, прокручивается вбок */
+    .topnav{padding:8px 12px;gap:6px;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch}
+    .topnav::-webkit-scrollbar{display:none}
+    .tn-logo{font-size:15px;margin-right:4px;flex-shrink:0}
+    .tn-mods{flex-wrap:nowrap;flex:none;gap:5px}
+    .tn-mods a{padding:7px 11px;font-size:13px;white-space:nowrap}
+    .tn-set{flex-shrink:0;padding:7px 10px;font-size:0;gap:0}
+    .tn-set span{font-size:16px}
+
+    /* подпункты — горизонтальная лента сверху, страница и меню в столбик */
+    .appbody{flex-direction:column;min-height:0}
+    .sidebar{width:100%;flex-direction:row;flex-wrap:nowrap;align-items:center;padding:8px 10px;gap:6px;
+      overflow-x:auto;-webkit-overflow-scrolling:touch;border-right:none;border-bottom:1px solid var(--line)}
+    .sidebar::-webkit-scrollbar{display:none}
+    .sidebar .nav{flex-direction:row;flex-wrap:nowrap;margin-top:0;gap:6px;width:auto}
+    .nav a{padding:8px 12px;font-size:13px;white-space:nowrap}
     .side-foot{display:none}
-    .main{padding:18px 16px}
+
+    /* контент */
+    .main{padding:14px 12px;overflow-x:hidden}
+    .topbar{margin-bottom:16px;gap:10px}
+    .topbar h1{font-size:18px}
+    .top-right{gap:8px}
+    .period button{padding:7px 11px;font-size:12px}
+
+    /* KPI — всегда 2 в ряд, даже если в инлайне стоит 3/4 */
+    .kpis{grid-template-columns:repeat(2,1fr)!important;gap:10px}
+    .kpi .value{font-size:20px}
+
+    /* карточки прокручивают широкие таблицы вместо растягивания страницы */
+    .card{padding:14px;overflow-x:auto}
+    table{font-size:12px}
+    th,td{padding:8px 6px}
+
     .drawer{width:88%}
-    .funnel .lbl{width:88px}
+    .funnel .lbl{width:80px}
+    .funnelbar{overflow-x:auto;-webkit-overflow-scrolling:touch}
+    .cockpit{grid-template-columns:1fr;height:auto}
     .inbox{grid-template-columns:1fr;height:auto}
     .chatlist{max-height:240px}
     .msgs{min-height:300px}
@@ -293,7 +327,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.46.0<br>Два дашборда: CRM (онлайн-магазин, воронка) и Магазин (1С: продажи/выручка); Аналитика — в Магазине
+      Штурвал v3.47.0<br>Мобильная версия: меню и таблицы адаптированы под телефон
     </div>
   </aside>
 
