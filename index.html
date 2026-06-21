@@ -327,7 +327,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.47.0<br>Мобильная версия: меню и таблицы адаптированы под телефон
+      Штурвал v3.48.0<br>Кадры: руководитель сам добавляет/убирает консультантов и меняет зарплату по отделам
     </div>
   </aside>
 
@@ -841,6 +841,32 @@
     <div id="hrcal-body"></div>
     <div class="modal-foot">
       <button class="btn ghost" onclick="closeHrCal()">Закрыть</button>
+    </div>
+  </div></div>
+
+  <!-- ОКНО: Сотрудник (добавить / изменить) -->
+  <div class="modal-bg" id="empbg"><div class="modal" style="width:440px">
+    <h3 id="emp-title">➕ Новый сотрудник</h3>
+    <div id="emp-sub" style="font-size:12px;color:var(--muted);margin-bottom:6px"></div>
+    <label>Имя</label>
+    <input type="text" id="emp-name" placeholder="Например: Бексултан">
+    <div class="row">
+      <div><label>Отдел</label><input type="text" id="emp-dept" placeholder="Например: Обувь" list="emp-depts"><datalist id="emp-depts"></datalist></div>
+      <div><label>Должность</label><input type="text" id="emp-role" placeholder="Например: Консультант"></div>
+    </div>
+    <label>Зарплата в месяц, сом</label>
+    <input type="number" id="emp-salary" placeholder="0">
+    <div id="emp-login-block">
+      <div style="font-size:12px;color:var(--muted);margin:12px 0 4px">Вход в систему (необязательно — если сотруднику нужен свой кабинет):</div>
+      <div class="row">
+        <div><label>Логин</label><input type="text" id="emp-login" placeholder="латиницей, авто"></div>
+        <div><label>Пароль</label><input type="text" id="emp-pw" placeholder="оставьте пустым = без входа"></div>
+      </div>
+    </div>
+    <div id="emp-err" style="color:var(--red);font-size:12px;margin-top:8px;min-height:14px"></div>
+    <div class="modal-foot">
+      <button class="btn" id="emp-save-btn" onclick="empSave()">Сохранить</button>
+      <button class="btn ghost" onclick="closeEmp()">Отмена</button>
     </div>
   </div></div>
 
@@ -2838,6 +2864,78 @@
   }
   function jsn(s){ return (s||'').replace(/'/g,''); }
   const DEPT_ORDER=['Администраторы','Детский','1 этаж','Касса','Склад','Мужской','Женский','Онлайн','Маркетплейс','Обувь','Мобилограф'];
+  // ===== управление командой: добавить / изменить / убрать сотрудника =====
+  function canManageTeam(){ return isOwner()||((USER.sections||[]).indexOf('hr')>=0); }
+  let empEditLogin=null;   // null = режим добавления
+  function _deptOptions(){
+    const set=new Set(); (HR_LIST||[]).forEach(v=>{ if(v.department) set.add(v.department); });
+    DEPT_ORDER.forEach(d=>set.add(d));
+    document.getElementById('emp-depts').innerHTML=[...set].map(d=>'<option value="'+esc(d)+'">').join('');
+  }
+  function openEmpAdd(dept){
+    empEditLogin=null;
+    document.getElementById('emp-title').textContent='➕ Новый сотрудник';
+    document.getElementById('emp-sub').textContent=dept?('Отдел: '+dept):'Заполните данные сотрудника';
+    document.getElementById('emp-name').value='';
+    document.getElementById('emp-dept').value=dept||'';
+    document.getElementById('emp-role').value='';
+    document.getElementById('emp-salary').value='';
+    document.getElementById('emp-login').value='';
+    document.getElementById('emp-pw').value='';
+    document.getElementById('emp-login-block').style.display='';
+    document.getElementById('emp-err').textContent='';
+    _deptOptions();
+    document.getElementById('empbg').classList.add('open');
+    setTimeout(()=>document.getElementById('emp-name').focus(),60);
+  }
+  function openEmpEdit(login){
+    const v=(HR_LIST||[]).find(x=>(x.login||x.name)===login); if(!v) return;
+    empEditLogin=login;
+    document.getElementById('emp-title').textContent='✏️ '+v.name;
+    document.getElementById('emp-sub').textContent='Измените данные и сохраните';
+    document.getElementById('emp-name').value=v.name||'';
+    document.getElementById('emp-dept').value=v.department||'';
+    document.getElementById('emp-role').value=v.role||'';
+    document.getElementById('emp-salary').value=v.salary_month||'';
+    document.getElementById('emp-login-block').style.display='none';   // логин при правке не трогаем
+    document.getElementById('emp-err').textContent='';
+    _deptOptions();
+    document.getElementById('empbg').classList.add('open');
+    setTimeout(()=>document.getElementById('emp-name').focus(),60);
+  }
+  function closeEmp(){ document.getElementById('empbg').classList.remove('open'); }
+  async function teamPost(body){
+    try{
+      const r=await apiFetch('/api/team',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},ONEC_BASE);
+      const d=await r.json(); if(d&&d.error) throw new Error(d.error); return d;
+    }catch(e){ throw new Error(e.message==='forbidden'?'Нет прав на это действие':e.message); }
+  }
+  async function empSave(){
+    const name=(document.getElementById('emp-name').value||'').trim();
+    const err=document.getElementById('emp-err');
+    if(!name){ err.textContent='Впишите имя'; return; }
+    const sal=parseFloat((document.getElementById('emp-salary').value||'').replace(/\s/g,'').replace(',','.'))||0;
+    const body={name:name, department:(document.getElementById('emp-dept').value||'').trim(),
+      role:(document.getElementById('emp-role').value||'').trim(), salary_month:sal};
+    const btn=document.getElementById('emp-save-btn'); btn.disabled=true; btn.textContent='Сохраняю…';
+    try{
+      if(empEditLogin){ body.action='update'; body.login=empEditLogin; }
+      else{
+        body.action='add';
+        const lg=(document.getElementById('emp-login').value||'').trim();
+        const pw=(document.getElementById('emp-pw').value||'').trim();
+        if(lg) body.login=lg;
+        if(pw){ body.pw=pw; body.sections=['myday']; }
+      }
+      await teamPost(body); closeEmp(); await loadHR();
+    }catch(e){ err.textContent=e.message; }
+    finally{ btn.disabled=false; btn.textContent='Сохранить'; }
+  }
+  async function teamRemove(login,nm){
+    if(!confirm('Убрать сотрудника «'+nm+'» из команды?\n\nОн пропадёт из списка и не сможет войти. История зарплаты сохранится.')) return;
+    try{ await teamPost({action:'remove',login:login}); await loadHR(); }
+    catch(e){ alert('Не удалось: '+e.message); }
+  }
   function hrToggle(id){ const el=document.getElementById(id); if(!el) return; el.style.display=el.style.display==='none'?'':'none'; }
   function hrDept(dep){ if(hrClosed.has(dep)) hrClosed.delete(dep); else hrClosed.add(dep); renderHR(); }
   function hrAllDepts(open){ hrClosed=new Set(); if(!open){ HR_LIST.forEach(v=>hrClosed.add(v.department||'Без отдела')); } renderHR(); }
@@ -2855,7 +2953,8 @@
         kpiCard('🏬 Отделов',order.length)+
         kpiCard('💰 Итого к выплате','<span class="money" data-som="'+totalPay+'">'+fmt(totalPay)+'</span>')+
       '</div>'+
-      '<div style="display:flex;gap:8px;margin-bottom:12px">'+
+      '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">'+
+        (canManageTeam()?'<button class="btn" style="font-size:12px;padding:5px 12px" onclick="openEmpAdd(\'\')">➕ Добавить сотрудника</button>':'')+
         '<button class="btn ghost" style="font-size:12px;padding:5px 10px" onclick="hrAllDepts(true)">▼ раскрыть все</button>'+
         '<button class="btn ghost" style="font-size:12px;padding:5px 10px" onclick="hrAllDepts(false)">▶ свернуть все</button>'+
       '</div>';
@@ -2865,9 +2964,10 @@
       const _td=salesTodayStr();
       const here=arr.filter(v=>((v.hours&&v.hours[_td])||v.hours_today||v.marked_today)).length;
       html+='<div class="card" style="margin-bottom:12px;padding:0;overflow:hidden">'+
-        '<div onclick="hrDept(\''+jsn(d)+'\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:13px 16px;background:var(--panel2)">'+
-          '<div><b style="font-size:15px">🏬 '+esc(d)+'</b> <span style="color:var(--muted);font-size:13px">· '+arr.length+' чел. · сегодня ✓'+here+'</span></div>'+
-          '<div style="font-size:13px;color:var(--muted);white-space:nowrap">к выплате <b style="color:var(--text)"><span class="money" data-som="'+dpay+'">'+fmt(dpay)+'</span></b> <span style="margin-left:6px">'+(closed?'▶':'▼')+'</span></div>'+
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:13px 16px;background:var(--panel2)">'+
+          '<div onclick="hrDept(\''+jsn(d)+'\')" style="cursor:pointer;flex:1"><b style="font-size:15px">🏬 '+esc(d)+'</b> <span style="color:var(--muted);font-size:13px">· '+arr.length+' чел. · сегодня ✓'+here+'</span></div>'+
+          (canManageTeam()?'<button class="btn ghost" style="font-size:12px;padding:4px 9px;white-space:nowrap" onclick="event.stopPropagation();openEmpAdd(\''+jsn(d)+'\')" title="Добавить в отдел «'+esc(d)+'»">➕ консультант</button>':'')+
+          '<div onclick="hrDept(\''+jsn(d)+'\')" style="cursor:pointer;font-size:13px;color:var(--muted);white-space:nowrap">к выплате <b style="color:var(--text)"><span class="money" data-som="'+dpay+'">'+fmt(dpay)+'</span></b> <span style="margin-left:6px">'+(closed?'▶':'▼')+'</span></div>'+
         '</div>'+
         '<div'+(closed?' style="display:none"':'')+'>'+arr.map((v,i)=>hrRow(v,'cal-'+di+'-'+i)).join('')+'</div>'+
       '</div>';
@@ -2905,6 +3005,10 @@
           '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHra(\''+lg+'\',\'advance\')" title="Аванс">💸 Аванс</button>'+
           '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHra(\''+lg+'\',\'bonus\')" title="Премия">🎁 Премия</button>'+
           '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHrCal(\''+lg+'\')" title="Календарь явки">📅 Календарь</button>'+
+          (canManageTeam()?(
+            '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openEmpEdit(\''+lg+'\')" title="Изменить имя/отдел/зарплату">✏️ Изменить</button>'+
+            '<button class="btn ghost" style="padding:5px 9px;font-size:12px;color:var(--red)" onclick="teamRemove(\''+lg+'\',\''+jsn(v.name)+'\')" title="Убрать сотрудника">🗑</button>'
+          ):'')+
         '</div>'+
       '</div>'+
     '</div>';

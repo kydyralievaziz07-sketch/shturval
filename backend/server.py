@@ -106,6 +106,40 @@ def load_users():
                      (u.get("login") or "").strip())
         except Exception:
             pass
+    # --- сотрудники, заведённые руководителем из интерфейса (таблица employees) ---
+    # Перекрывают/дополняют записи из env. active=false → сотрудник «убран» (скрыт).
+    try:
+        rows = _supa("GET", "employees",
+                     "?company_id=eq.%s&select=*" % _q(COMPANY_ID))
+        for u in (rows or []):
+            login = (u.get("login") or "").strip()
+            if not login:
+                continue
+            ll = login.lower()
+            old = by_login.get(ll)
+            if not u.get("active", True):                 # «убрали» — спрятать
+                if old:
+                    by_login.pop(ll, None)
+                    if old.get("pw"):
+                        users.pop(old["pw"], None)
+                continue
+            secs = u.get("sections")
+            if isinstance(secs, str):
+                secs = [s.strip() for s in secs.split(",") if s.strip()]
+            if not secs:
+                secs = ["myday"]
+            if old and old.get("pw"):                      # убрать старую парольную запись
+                users.pop(old["pw"], None)
+            _add((u.get("pw") or "").strip(),
+                 {"name": u.get("name", "Сотрудник"), "sections": secs,
+                  "role": u.get("role", ""), "department": u.get("department", ""),
+                  "plan_day": u.get("plan_day", 0),
+                  "salary_month": u.get("salary_month", 0),
+                  "daily_rate": u.get("daily_rate", 0),
+                  "bonus_month": u.get("bonus_month", 0)},
+                 login)
+    except Exception:
+        pass
     return users, by_login
 
 USERS, USERS_BY_LOGIN = load_users()
@@ -1462,10 +1496,58 @@ def payroll_rec(name):
     return r
 
 def user_by_name(name):
-    for v in USERS.values():
+    for v in all_users():
         if v.get("name") == name:
             return v
     return None
+
+def reload_users():
+    """Перечитать пользователей (env + таблица employees) в память."""
+    global USERS, USERS_BY_LOGIN
+    USERS, USERS_BY_LOGIN = load_users()
+
+_TRANSLIT = {
+    "а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ё":"e","ж":"zh","з":"z",
+    "и":"i","й":"y","к":"k","л":"l","м":"m","н":"n","о":"o","п":"p","р":"r",
+    "с":"s","т":"t","у":"u","ф":"f","х":"h","ц":"c","ч":"ch","ш":"sh","щ":"sch",
+    "ъ":"","ы":"y","ь":"","э":"e","ю":"yu","я":"ya"}
+
+def _slug_login(name):
+    """Логин из имени: транслит, латиница/цифры, нижний регистр."""
+    s = (name or "").strip().lower()
+    out = "".join(_TRANSLIT.get(ch, ch) for ch in s)
+    out = _re.sub(r"[^a-z0-9]+", "", out)
+    return out or "user"
+
+def _unique_login(base):
+    base = base or "user"
+    cand = base; i = 1
+    while cand.lower() in USERS_BY_LOGIN:
+        i += 1; cand = "%s%d" % (base, i)
+    return cand
+
+def _emp_row(login, **f):
+    """Полная строка для таблицы employees (берём текущие поля юзера + изменения)."""
+    cur = USERS_BY_LOGIN.get(login.lower()) or {}
+    secs = f.get("sections", cur.get("sections") or ["myday"])
+    if isinstance(secs, (list, tuple)):
+        secs = ",".join(secs)
+    return {"company_id": COMPANY_ID, "login": login,
+            "pw": f.get("pw", cur.get("pw", "") or ""),
+            "name": f.get("name", cur.get("name", "")),
+            "role": f.get("role", cur.get("role", "") or ""),
+            "department": f.get("department", cur.get("department", "") or ""),
+            "sections": secs or "myday",
+            "salary_month": f.get("salary_month", cur.get("salary_month", 0) or 0),
+            "daily_rate": f.get("daily_rate", cur.get("daily_rate", 0) or 0),
+            "bonus_month": f.get("bonus_month", cur.get("bonus_month", 0) or 0),
+            "plan_day": f.get("plan_day", cur.get("plan_day", 0) or 0),
+            "active": f.get("active", True)}
+
+def team_save(row):
+    """Записать/обновить сотрудника в Supabase и перечитать в память."""
+    _supa("POST", "employees", "?on_conflict=company_id,login", row)
+    reload_users()
 
 def _present_in_month(days, m):
     return sum(1 for d, st in (days or {}).items() if isinstance(d, str) and d[:7] == m and st == "p")
@@ -1966,6 +2048,71 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "неизвестное действие"})
             dept_plan_upsert(r)
             return self._send(200, {"ok": True, "departments": dept_plan_all()})
+        if self.path.startswith("/api/team"):
+            u = self._user(); secs = u.get("sections", []) if u else []
+            if not (u and ("all" in secs or "hr" in secs)):   # команду ведёт владелец/HR
+                return self._send(403, {"error": "Управлять командой может только владелец или HR"})
+            if not supa_on():
+                return self._send(503, {"error": "База не настроена — добавление недоступно"})
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            action = body.get("action")
+            try:
+                if action == "add":
+                    name = (body.get("name") or "").strip()
+                    if not name:
+                        return self._send(400, {"error": "Впишите имя сотрудника"})
+                    login = (body.get("login") or "").strip() or _unique_login(_slug_login(name))
+                    if login.lower() in USERS_BY_LOGIN:
+                        return self._send(400, {"error": "Логин «%s» уже занят — укажите другой" % login})
+                    secs_in = body.get("sections")
+                    if not secs_in:
+                        secs_in = ["myday"]
+                    row = _emp_row(login, name=name,
+                                   role=(body.get("role") or "").strip(),
+                                   department=(body.get("department") or "").strip(),
+                                   pw=(body.get("pw") or "").strip(),
+                                   sections=secs_in,
+                                   salary_month=round(float(body.get("salary_month") or 0)))
+                    team_save(row)
+                    return self._send(200, {"ok": True, "login": login})
+                # для остальных действий нужен существующий сотрудник
+                login = (body.get("login") or "").strip()
+                tu = USERS_BY_LOGIN.get(login.lower()) if login else None
+                if not tu and (body.get("name") or "").strip():
+                    tu = user_by_name((body.get("name") or "").strip())
+                    login = tu.get("login", "") if tu else ""
+                if not tu or not login:
+                    return self._send(400, {"error": "Сотрудник не найден"})
+                if "all" in tu.get("sections", []):
+                    return self._send(400, {"error": "Владельца нельзя менять отсюда"})
+                if action == "set_salary":
+                    team_save(_emp_row(login,
+                                       salary_month=round(float(body.get("salary_month") or 0))))
+                    return self._send(200, {"ok": True})
+                elif action == "update":
+                    over = {}
+                    for k in ("name", "role", "department"):
+                        if k in body:
+                            over[k] = (body.get(k) or "").strip()
+                    if "salary_month" in body:
+                        over["salary_month"] = round(float(body.get("salary_month") or 0))
+                    if "sections" in body and body.get("sections"):
+                        over["sections"] = body.get("sections")
+                    if "pw" in body and (body.get("pw") or "").strip():
+                        over["pw"] = (body.get("pw") or "").strip()
+                    team_save(_emp_row(login, **over))
+                    return self._send(200, {"ok": True})
+                elif action == "remove":
+                    team_save(_emp_row(login, active=False))
+                    return self._send(200, {"ok": True})
+                else:
+                    return self._send(400, {"error": "неизвестное действие"})
+            except Exception as e:
+                return self._send(500, {"error": "Не удалось сохранить: %s" % e})
         if self.path.startswith("/api/suppliers"):
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -2210,6 +2357,7 @@ if __name__ == "__main__":
     print("  Адрес: http://localhost:{}".format(PORT))
     print("  Чтобы остановить — закрой это окно или нажми Ctrl+C")
     print("=" * 48)
+    reload_users()   # подхватить сотрудников из базы (таблица employees)
     # фоновый прогрев каталога 1С и сводки amoCRM (чтобы запросы отвечали мгновенно)
     if CFG.get("YAROS_URL") or CFG.get("AMO_TOKEN"):
         threading.Thread(target=_warmer, daemon=True).start()
