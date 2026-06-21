@@ -1704,6 +1704,7 @@ def payroll_view(user, rec=None):
     bonus = float(r.get("bonus") or 0); adv = float(r.get("advance") or 0)
     return {"name": name, "login": user.get("login", ""),
             "role": user.get("role", ""), "department": user.get("department", ""),
+            "sections": user.get("sections", []),
             "salary_month": sal, "daily_rate": rate, "bonus_month": float(user.get("bonus_month") or 0),
             "present_days": present_days, "partial_days": partial_days,
             "accrued": accrued, "bonus": bonus,

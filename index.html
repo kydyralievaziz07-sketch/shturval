@@ -348,7 +348,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.59.0<br>Настройки: профиль, аватар (смайлик/фото), смена логина и пароля прямо в приложении
+      Штурвал v3.60.0<br>Кадры: выдача разделов сотруднику (Сделки/переписка, Товары и т.д.) галочками — теперь продавцу можно открыть чаты
     </div>
   </aside>
 
@@ -913,6 +913,8 @@
         <div><label>Пароль</label><input type="text" id="emp-pw" placeholder="оставьте пустым = без входа"></div>
       </div>
     </div>
+    <div style="font-size:12px;color:var(--muted);margin:12px 0 4px">Какие разделы видит (Мой день виден всегда):</div>
+    <div id="emp-secs" style="display:flex;flex-wrap:wrap;gap:8px 14px"></div>
     <div id="emp-err" style="color:var(--red);font-size:12px;margin-top:8px;min-height:14px"></div>
     <div class="modal-foot">
       <button class="btn" id="emp-save-btn" onclick="empSave()">Сохранить</button>
@@ -3537,6 +3539,18 @@
     DEPT_ORDER.forEach(d=>set.add(d));
     document.getElementById('emp-depts').innerHTML=[...set].map(d=>'<option value="'+esc(d)+'">').join('');
   }
+  const EMP_SECS=[['deals','Сделки и переписка'],['crmdash','CRM рабочий стол'],['prod','Товары'],['sales','Продажи'],['clients','Клиенты'],['analytics','Аналитика'],['fin','Финансы'],['supl','Поставщики'],['hr','Кадры'],['ai','ИИ-помощник'],['dash','Дашборд Магазина']];
+  function renderEmpSecs(active){
+    const set=new Set(active||[]);
+    document.getElementById('emp-secs').innerHTML=EMP_SECS.map(([k,l])=>'<label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" value="'+k+'"'+(set.has(k)?' checked':'')+'> '+esc(l)+'</label>').join('');
+  }
+  function readEmpSecs(){
+    const s=[...document.querySelectorAll('#emp-secs input:checked')].map(i=>i.value);
+    const out=['myday'].concat(s);
+    // для «Сделки/переписка» и CRM-дашборда нужен доступ к чатам Instagram
+    if((out.indexOf('deals')>=0||out.indexOf('crmdash')>=0)&&out.indexOf('chats')<0) out.push('chats');
+    return out;
+  }
   function openEmpAdd(dept){
     empEditLogin=null;
     document.getElementById('emp-title').textContent='➕ Новый сотрудник';
@@ -3549,6 +3563,7 @@
     document.getElementById('emp-pw').value='';
     document.getElementById('emp-login-block').style.display='';
     document.getElementById('emp-err').textContent='';
+    renderEmpSecs([]);
     _deptOptions();
     document.getElementById('empbg').classList.add('open');
     setTimeout(()=>document.getElementById('emp-name').focus(),60);
@@ -3564,6 +3579,7 @@
     document.getElementById('emp-salary').value=v.salary_month||'';
     document.getElementById('emp-login-block').style.display='none';   // логин при правке не трогаем
     document.getElementById('emp-err').textContent='';
+    renderEmpSecs((v.sections||[]).filter(s=>s!=='all'));
     _deptOptions();
     document.getElementById('empbg').classList.add('open');
     setTimeout(()=>document.getElementById('emp-name').focus(),60);
@@ -3584,13 +3600,15 @@
       role:(document.getElementById('emp-role').value||'').trim(), salary_month:sal};
     const btn=document.getElementById('emp-save-btn'); btn.disabled=true; btn.textContent='Сохраняю…';
     try{
-      if(empEditLogin){ body.action='update'; body.login=empEditLogin; }
+      const secs=readEmpSecs();
+      if(empEditLogin){ body.action='update'; body.login=empEditLogin; body.sections=secs; }
       else{
         body.action='add';
         const lg=(document.getElementById('emp-login').value||'').trim();
         const pw=(document.getElementById('emp-pw').value||'').trim();
         if(lg) body.login=lg;
-        if(pw){ body.pw=pw; body.sections=['myday']; }
+        if(pw) body.pw=pw;
+        body.sections=secs;
       }
       await teamPost(body); closeEmp(); await loadHR();
     }catch(e){ err.textContent=e.message; }
