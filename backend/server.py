@@ -949,11 +949,29 @@ def _load_catalog_backup():
     except Exception:
         return None
 
+_finalize_state = {"date": ""}
+
+def _finalize_recent_days():
+    """Раз в день дотягивает прошлые дни ПОЛНОСТЬЮ из 1С (фильтр from/to) и
+    перезаписывает их. Чинит занижение: дневной снимок сохранялся ВО ВРЕМЯ дня
+    (частичный), а потом день «застывал» неполным. Теперь каждый завершённый день
+    добирается начисто. Срабатывает один раз в сутки и только при удачной выгрузке."""
+    today = _today_str()
+    if _finalize_state["date"] == today:
+        return
+    try:
+        res = backfill_sales(8, overwrite=True)   # последние 8 завершённых дней — начисто
+        if not res.get("failed"):                 # дотянули без ошибок — на сегодня готово
+            _finalize_state["date"] = today
+    except Exception:
+        pass
+
 def _warm_sales():
     try:
         if CFG.get("YAROS_URL"):
             s = cached("sales", 30, build_sales)
             _save_sales_daily(s)
+            _finalize_recent_days()               # раз в день дочинить прошлые дни начисто
     except Exception:
         pass
 
