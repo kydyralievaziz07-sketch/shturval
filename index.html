@@ -890,6 +890,7 @@
     <div id="hrcal-sub" style="font-size:12px;color:var(--muted);margin-bottom:14px"></div>
     <div id="hrcal-body"></div>
     <div class="modal-foot">
+      <button class="btn" id="hrcal-save-btn" onclick="hrCalSave()">Сохранить</button>
       <button class="btn ghost" onclick="closeHrCal()">Закрыть</button>
     </div>
   </div></div>
@@ -977,14 +978,28 @@
 
   <!-- ОКНО: Новый поставщик -->
   <div class="modal-bg" id="suplbg"><div class="modal" style="width:420px">
-    <h3>➕ Новый поставщик</h3>
+    <h3 id="sup-modal-title">➕ Новый поставщик</h3>
     <label>Название (имя/компания)</label>
     <input id="sup-name" placeholder="Например: ОсОО Альфа" onkeydown="if(event.key==='Enter')saveSupplier()">
-    <label>Заметка (необязательно)</label>
-    <input id="sup-note" placeholder="телефон, что поставляет…">
+    <label>Телефон / заметка</label>
+    <input id="sup-note" placeholder="напр. +996 700 123 456, посуда" onkeydown="if(event.key==='Enter')saveSupplier()">
     <div class="modal-foot">
       <button class="btn" onclick="saveSupplier()">Сохранить</button>
       <button class="btn ghost" onclick="closeM('suplbg')">Отмена</button>
+    </div>
+  </div></div>
+
+  <!-- ОКНО: Исправить операцию (сумму/комментарий) -->
+  <div class="modal-bg" id="suptxneditbg"><div class="modal" style="width:420px">
+    <h3>✏️ Исправить операцию</h3>
+    <div id="suptxnedit-sub" style="font-size:13px;color:var(--muted);margin-bottom:6px"></div>
+    <label>Сумма, сом</label>
+    <input type="number" id="suptxnedit-amt" inputmode="decimal" placeholder="0" onkeydown="if(event.key==='Enter')saveTxnEdit()">
+    <label>Что именно / комментарий</label>
+    <input id="suptxnedit-note" placeholder="например: посуда, партия №3">
+    <div class="modal-foot">
+      <button class="btn" onclick="saveTxnEdit()">Сохранить</button>
+      <button class="btn ghost" onclick="closeM('suptxneditbg')">Отмена</button>
     </div>
   </div></div>
 
@@ -1887,9 +1902,9 @@
                                  : (b.debt-a.debt));
     if(all.length && !sups.length){ box.innerHTML='<div class="card"><span style="color:var(--muted);font-size:13px">По запросу «'+esc(q)+'» поставщиков не найдено.</span></div>'; return; }
     box.innerHTML=sups.length?sups.map(s=>{
-      const txns=(s.txns||[]).slice(0,8).map(t=>'<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc((t.date||'').slice(5))+'</td><td>'+(t.type==='debt'?'📦 взял':'💸 отдал')+(t.note?' <span style="color:var(--muted);font-size:12px">· '+esc(t.note)+'</span>':'')+(t.qty?' <span style="color:var(--muted);font-size:12px">('+t.qty+' шт)</span>':'')+(t.receipt_url?' <a href="'+esc(t.receipt_url)+'" target="_blank" rel="noopener" style="font-size:12px;color:var(--accent,#5b8cff);text-decoration:none" title="Открыть чек">📎 чек</a>':'')+(t.created_by?' <span style="color:var(--muted);font-size:11px">👤 '+esc(t.created_by)+'</span>':'')+'</td><td style="text-align:right;white-space:nowrap;color:'+(t.type==='debt'?'#ff6b6b':'#39d98a')+'">'+(t.type==='debt'?'+':'−')+fmt(t.amount)+'</td></tr>').join('');
+      const txns=(s.txns||[]).slice(0,8).map(t=>'<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc((t.date||'').slice(5))+'</td><td>'+(t.type==='debt'?'📦 взял':'💸 отдал')+(t.note?' <span style="color:var(--muted);font-size:12px">· '+esc(t.note)+'</span>':'')+(t.qty?' <span style="color:var(--muted);font-size:12px">('+t.qty+' шт)</span>':'')+(t.receipt_url?' <a href="'+esc(t.receipt_url)+'" target="_blank" rel="noopener" style="font-size:12px;color:var(--accent,#5b8cff);text-decoration:none" title="Открыть чек">📎 чек</a>':'')+(t.created_by?' <span style="color:var(--muted);font-size:11px">👤 '+esc(t.created_by)+'</span>':'')+'</td><td style="text-align:right;white-space:nowrap;color:'+(t.type==='debt'?'#ff6b6b':'#39d98a')+'">'+(t.type==='debt'?'+':'−')+fmt(t.amount)+'</td><td style="text-align:right"><span onclick="openTxnEdit('+s.id+','+t.id+')" style="cursor:pointer;font-size:13px" title="Исправить сумму операции">✏️</span></td></tr>').join('');
       return '<div class="card" style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">'+
-        '<div><div style="font-weight:700;font-size:16px">'+esc(s.name)+'</div>'+(s.note?'<div style="font-size:12px;color:var(--muted)">'+esc(s.note)+'</div>':'')+'</div>'+
+        '<div><div style="font-weight:700;font-size:16px">'+esc(s.name)+' <span onclick="openSupEdit('+s.id+')" style="cursor:pointer;font-size:13px;font-weight:400" title="Изменить имя/телефон">✏️</span></div>'+(s.note?'<div style="font-size:12px;color:var(--muted)">'+esc(s.note)+'</div>':'')+'</div>'+
         '<div style="text-align:right"><div style="font-size:12px;color:var(--muted)">Текущий долг</div><div style="font-size:22px;font-weight:700;color:'+(s.debt>0?'#ff6b6b':'#39d98a')+'"><span class="money" data-som="'+s.debt+'">'+fmt(s.debt)+'</span></div></div></div>'+
         '<div style="display:flex;gap:8px;margin:12px 0;flex-wrap:wrap">'+
         '<button class="btn" onclick="openSupTxn('+s.id+',\'debt\')">📦 Взял товар (+долг)</button>'+
@@ -1900,15 +1915,47 @@
     }).join(''):'<div class="card"><span style="color:var(--muted);font-size:13px">Поставщиков пока нет. Нажми «➕ Добавить поставщика».</span></div>';
     renderMoney();
   }
-  function openSupplier(){ ['sup-name','sup-note'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';}); openM('suplbg'); }
+  let supEditId=null;
+  function openSupplier(){ supEditId=null;
+    document.getElementById('sup-modal-title').textContent='➕ Новый поставщик';
+    ['sup-name','sup-note'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';}); openM('suplbg'); }
+  function openSupEdit(id){ const s=((_suplData&&_suplData.suppliers)||[]).find(x=>x.id===id); if(!s) return;
+    supEditId=id;
+    document.getElementById('sup-modal-title').textContent='✏️ Изменить поставщика';
+    document.getElementById('sup-name').value=s.name||'';
+    document.getElementById('sup-note').value=s.note||'';
+    openM('suplbg'); }
   async function saveSupplier(){
     if(_saving) return;
     const name=document.getElementById('sup-name').value.trim(); if(!name){ alert('Введите название'); return; }
     const note=document.getElementById('sup-note').value.trim();
+    const body=supEditId?{action:'edit_supplier',id:supEditId,name:name,note:note}
+                        :{action:'add_supplier',name:name,note:note};
     _saving=true; closeM('suplbg');
-    try{ const r=await apiFetch('/api/suppliers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'add_supplier',name:name,note:note})},ONEC_BASE); const d=await r.json();
+    try{ const r=await apiFetch('/api/suppliers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},ONEC_BASE); const d=await r.json();
       if(d.ok){ _suplData=d.data; renderSuppliers(); } else alert('Не сохранилось: '+(d.error||'')); }
-    catch(e){ alert('Нет связи — поставщик не добавлен, попробуй ещё раз'); }
+    catch(e){ alert('Нет связи — изменения не сохранены, попробуй ещё раз'); }
+    finally{ _saving=false; }
+  }
+  let txnEditId=null;
+  function openTxnEdit(sid,txnId){
+    const s=((_suplData&&_suplData.suppliers)||[]).find(x=>x.id===sid); if(!s) return;
+    const t=(s.txns||[]).find(x=>x.id===txnId); if(!t) return;
+    txnEditId=txnId;
+    document.getElementById('suptxnedit-sub').textContent=(t.type==='debt'?'📦 Взял товар (долг +)':'💸 Отдал деньги (долг −)')+' · '+(s.name||'');
+    document.getElementById('suptxnedit-amt').value=(+t.amount||0);
+    document.getElementById('suptxnedit-note').value=t.note||'';
+    openM('suptxneditbg');
+  }
+  async function saveTxnEdit(){
+    if(_saving||!txnEditId) return;
+    const amt=parseFloat((document.getElementById('suptxnedit-amt').value||'').toString().replace(/\s/g,'').replace(',','.'));
+    if(isNaN(amt)||amt<0){ alert('Введите сумму числом'); return; }
+    const note=document.getElementById('suptxnedit-note').value.trim();
+    _saving=true; closeM('suptxneditbg');
+    try{ const r=await apiFetch('/api/suppliers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'edit_txn',id:txnEditId,amount:amt,note:note})},ONEC_BASE); const d=await r.json();
+      if(d.ok){ _suplData=d.data; renderSuppliers(); } else alert('Не сохранилось: '+(d.error||'')); }
+    catch(e){ alert('Нет связи — изменение не сохранено, попробуй ещё раз'); }
     finally{ _saving=false; }
   }
   function openSupTxn(sid,type){ supTxnCtx={sid:sid,type:type};
@@ -3451,29 +3498,43 @@
   }
   // --- окно «Календарь явки» (отдельное, по центру; клик по дню — пришёл/не пришёл/снять) ---
   let hrCalLogin=null;
+  let hrCalDays={}, hrCalDirty=false;
   function openHrCal(login){
     const v=HR_LIST[hrFind(login)]; if(!v) return;
     hrCalLogin=login;
+    hrCalDays=JSON.parse(JSON.stringify(v.days||{}));   // рабочая копия — правим её, базу не трогаем до «Сохранить»
+    hrCalDirty=false;
     document.getElementById('hrcal-title').textContent='📅 Календарь — '+v.name;
     const mName=new Date().toLocaleDateString('ru-RU',{month:'long',year:'numeric'});
-    document.getElementById('hrcal-sub').textContent=mName+' · нажми на день: 1-й клик — пришёл 🟩, 2-й — не пришёл 🟥, 3-й — снять';
-    hrCalBody(v);
+    document.getElementById('hrcal-sub').textContent=mName+' · нажми: 1-й клик — пришёл 🟩, 2-й — не пришёл 🟥, 3-й — снять. В конце нажми «Сохранить».';
+    hrCalRender();
     document.getElementById('hrcalbg').classList.add('open');
   }
-  function hrCalBody(v){ const b=document.getElementById('hrcal-body'); if(b) b.innerHTML=hrCalendar(v.days||{}, true); }
-  function closeHrCal(){ document.getElementById('hrcalbg').classList.remove('open'); hrCalLogin=null; }
-  async function hrCalMark(ds){
-    if(!hrCalLogin) return;
-    const i=hrFind(hrCalLogin); const v=HR_LIST[i]; if(!v) return;
-    v.days=v.days||{};
-    const cur=v.days[ds];
-    const action= cur==='p'?'absent' : cur==='a'?'unpresent' : 'present';
-    // оптимистично — мгновенно перекрасить день
-    if(action==='present') v.days[ds]='p'; else if(action==='absent') v.days[ds]='a'; else delete v.days[ds];
-    hrCalBody(v);
-    const d=await hrPost({action:action,login:hrCalLogin,date:ds});
-    if(!d){ alert('Не сохранилось — попробуй ещё раз.'); return loadHR(); }
-    if(d.view){ HR_LIST[i]=d.view; hrCalBody(d.view); renderHR(); }
+  function hrCalRender(){ const b=document.getElementById('hrcal-body'); if(b) b.innerHTML=hrCalendar(hrCalDays, true);
+    const sb=document.getElementById('hrcal-save-btn'); if(sb){ sb.textContent=hrCalDirty?'Сохранить ✱':'Сохранить'; sb.disabled=false; } }
+  function closeHrCal(){
+    if(hrCalDirty && !confirm('Есть несохранённые отметки. Закрыть без сохранения?')) return;
+    document.getElementById('hrcalbg').classList.remove('open'); hrCalLogin=null; hrCalDirty=false;
+  }
+  // клик по дню — МГНОВЕННО (только локально, без обращения к серверу)
+  function hrCalMark(ds){
+    const cur=hrCalDays[ds];
+    if(cur==='p') hrCalDays[ds]='a'; else if(cur==='a') delete hrCalDays[ds]; else hrCalDays[ds]='p';
+    hrCalDirty=true;
+    hrCalRender();
+  }
+  // сохранить все отметки разом — ОДИН запрос по кнопке
+  async function hrCalSave(){
+    if(!hrCalLogin){ closeHrCal(); return; }
+    if(!hrCalDirty){ document.getElementById('hrcalbg').classList.remove('open'); hrCalLogin=null; return; }
+    const sb=document.getElementById('hrcal-save-btn'); if(sb){ sb.disabled=true; sb.textContent='Сохраняю…'; }
+    const i=hrFind(hrCalLogin);
+    const d=await hrPost({action:'set_days',login:hrCalLogin,days:hrCalDays});
+    if(!d){ if(sb){ sb.disabled=false; sb.textContent='Сохранить ✱'; } alert('Не сохранилось — попробуй ещё раз.'); return; }
+    if(d.view && i>=0){ HR_LIST[i]=d.view; }
+    hrCalDirty=false;
+    document.getElementById('hrcalbg').classList.remove('open'); hrCalLogin=null;
+    renderHR();
   }
   // ===== Кабинет «Кадры» (HR-менеджер) =====
   let DEPT_PLANS=[], HR_LIST=[], hrClosed=new Set();

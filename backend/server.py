@@ -2315,6 +2315,13 @@ class Handler(BaseHTTPRequestHandler):
                 days[day] = "a"
             elif action == "unpresent":        # снять отметку за день
                 days.pop(day, None)
+            elif action == "set_days":         # массово сохранить календарь (правки копятся на фронте, шлются разом)
+                nd = body.get("days")
+                if not isinstance(nd, dict):
+                    return self._send(400, {"error": "нужен список дней"})
+                days = {k: ("p" if vv == "p" else "a")
+                        for k, vv in nd.items()
+                        if isinstance(k, str) and len(k) == 10 and k[4] == "-" and vv in ("p", "a")}
             elif action == "advance":          # ДОБАВИТЬ к авансу
                 r["advance"] = round(float(r.get("advance") or 0) + amt)
             elif action == "bonus":            # ДОБАВИТЬ к премии
@@ -2537,6 +2544,22 @@ class Handler(BaseHTTPRequestHandler):
                            "amount": round(_num(body.get("amount"))), "qty": _num(body.get("qty")),
                            "note": (body.get("note") or "").strip(), "date": day,
                            "receipt_url": receipt_url, "created_by": who})
+                elif action == "edit_supplier":      # исправить имя/телефон поставщика
+                    sid = body.get("id")
+                    name = (body.get("name") or "").strip()
+                    if not sid or not name:
+                        return self._send(400, {"error": "нужны поставщик и название"})
+                    _supa("PATCH", "suppliers",
+                          "?id=eq.%s&company_id=eq.%s" % (sid, _q(COMPANY_ID)),
+                          {"name": name, "note": (body.get("note") or "").strip()})
+                elif action == "edit_txn":           # исправить сумму/комментарий операции (опечатка в долге)
+                    tid = body.get("id")
+                    if not tid:
+                        return self._send(400, {"error": "нужна операция"})
+                    _supa("PATCH", "supplier_txns",
+                          "?id=eq.%s&company_id=eq.%s" % (tid, _q(COMPANY_ID)),
+                          {"amount": round(_num(body.get("amount"))),
+                           "note": (body.get("note") or "").strip()})
                 elif action in ("del_txn", "del_supplier"):
                     # удаление истории поставщиков отключено по решению владельца —
                     # записи защищены, удалять нельзя ни через интерфейс, ни напрямую
