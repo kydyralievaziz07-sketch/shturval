@@ -844,8 +844,10 @@ def _price_by_type(item, type_name):
     return 0.0
 
 # каталог тяжёлый (~20 МБ, ~50 сек на загрузку) — держим в памяти, обновляем фоном
-_goods = {"t": 0.0, "goods": None, "cats": None, "cats_t": 0.0, "refreshing": False}
+_goods = {"t": 0.0, "goods": None, "cats": None, "cats_t": 0.0, "refreshing": False,
+          "next_try": 0.0, "fail_n": 0}
 _goods_lock = threading.Lock()
+CATALOG_TTL = 1800          # каталог меняется редко — обновляем не чаще раза в 30 мин (бережём 1С)
 
 def _fetch_goods():
     return yaros_get("/goods").get("goods", [])
@@ -854,25 +856,36 @@ def _fetch_cats():
     data = yaros_get("/categories")
     return {c.get("ID"): (c.get("TITLE") or "").strip() for c in data.get("categories", [])}
 
-def _refresh_catalog():
+def _refresh_catalog(force=False):
     """Качает свежий каталог и АТОМАРНО заменяет кэш. НЕ держит общую блокировку —
-    поэтому пользовательские запросы во время обновления отвечают мгновенно из старого кэша."""
+    поэтому пользовательские запросы во время обновления отвечают мгновенно из старого кэша.
+    САМ СЕБЯ ТРОТТЛИТ: успешную загрузку повторяет не чаще раза в 30 мин, а при сбоях
+    1С отступает всё дольше (5→30 мин). Это резко снижает нагрузку на хрупкую 1С —
+    раньше тянули 20 МБ каждые ~2 мин и сами её роняли по памяти."""
     if _goods["refreshing"]:
         return
+    now = time.time()
+    if not force and now < _goods.get("next_try", 0):
+        return                           # ещё рано — не долбим 1С
     _goods["refreshing"] = True
     try:
         goods = _fetch_goods()           # ~50 сек, но в фоне
         _goods["goods"] = goods          # подменяем разом
-        _goods["t"] = time.time()
+        _goods["t"] = now
         _goods["from_backup"] = False    # данные снова живые из 1С
+        _goods["fail_n"] = 0
+        _goods["next_try"] = now + CATALOG_TTL
         try:
             _goods["cats"] = _fetch_cats()
-            _goods["cats_t"] = time.time()
+            _goods["cats_t"] = now
         except Exception:
             pass
         _save_catalog_backup(_goods["goods"], _goods["cats"])   # резервная копия в базу
     except Exception:
-        pass
+        # 1С не отдала каталог (обычно нехватка памяти на /goods) — отступаем всё дальше,
+        # чтобы не добивать сервер: 5, 10, 20, 30 мин (максимум).
+        _goods["fail_n"] = _goods.get("fail_n", 0) + 1
+        _goods["next_try"] = now + min(CATALOG_TTL, 300 * (2 ** min(_goods["fail_n"] - 1, 3)))
     finally:
         _goods["refreshing"] = False
 
@@ -880,7 +893,7 @@ def get_goods():
     """Мгновенно отдаёт каталог из памяти. Если устарел — обновляет ФОНОМ, не задерживая ответ.
     Ждать (~50 сек) приходится только при самой первой загрузке, когда кэша ещё нет."""
     if _goods["goods"] is not None:
-        if time.time() - _goods["t"] > 120 and not _goods["refreshing"]:
+        if time.time() >= _goods.get("next_try", 0) and not _goods["refreshing"]:
             threading.Thread(target=_refresh_catalog, daemon=True).start()
         return _goods["goods"]
     with _goods_lock:                    # самый первый раз — приходится дождаться
