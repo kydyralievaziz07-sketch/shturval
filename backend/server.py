@@ -1213,9 +1213,10 @@ def _recv_ts(v):
                 pass
     return 0
 
-def build_sales(from_ts=None, to_ts=None):
+def build_sales(from_ts=None, to_ts=None, date_label=None):
     """Сводка продаж из чеков 1С. По умолчанию — за сегодня. Если переданы from_ts/to_ts
-    (Unix-секунды) — за период (когда 1С включит поддержку параметров; см. док /receipts/v2).
+    (Unix-секунды) — за период: 1С поддерживает фильтр дат с 24.06.2026 (ТОЛЬКО unix-секунды,
+    параметры from/to). date_label — какой датой пометить результат (для докачки истории).
     Возвраты идут с минусом (qty/сумма/прибыль), поэтому чистая выручка = простая сумма receiptTotal."""
     path = "/receipts/v2"
     if from_ts:
@@ -1263,7 +1264,7 @@ def build_sales(from_ts=None, to_ts=None):
     top = [{"name": k, "qty": int(v["qty"]), "sum": round(v["sum"]), "profit": round(v["profit"])}
            for k, v in sorted(by_product.items(), key=lambda i: -i[1]["sum"])][:20]
     return {
-        "date": _today_str(),
+        "date": date_label or _today_str(),
         "sales_count": sales_count, "net_sales": round(net), "gross_sales": round(gross),
         "profit": round(profit), "avg_check": round(gross / sales_count) if sales_count else 0,
         "returns_count": returns_count, "returns_sum": round(returns_sum),
@@ -1345,6 +1346,46 @@ def sales_history(days=14):
         return {"days": out}
     except Exception as e:
         return {"days": [], "error": str(e)}
+
+def _day_bounds(date_str):
+    """Unix-границы бишкекского дня 'ГГГГ-ММ-ДД' (TZ сервера = Asia/Bishkek)."""
+    t0 = int(time.mktime(time.strptime(date_str + " 00:00:00", "%Y-%m-%d %H:%M:%S")))
+    return t0, t0 + 86400 - 1
+
+def backfill_sales(days=30, overwrite=False):
+    """Докачать историю продаж за прошлые дни из 1С (фильтр from/to, unix-секунды) в
+    Supabase sales_daily. Уже сохранённые дни пропускает (если overwrite=False).
+    Сегодняшний день не трогает (он копится сам). Возвращает отчёт."""
+    if not supa_on():
+        return {"error": "База не настроена"}
+    have = set()
+    if not overwrite:
+        try:
+            rows = _supa("GET", "sales_daily",
+                         "?company_id=eq.%s&select=date&order=date.desc&limit=400" % _q(COMPANY_ID))
+            have = {r.get("date") for r in (rows or [])}
+        except Exception:
+            pass
+    saved = []; skipped = []; failed = []
+    today = _today_str()
+    for i in range(1, int(days) + 1):
+        d = time.strftime("%Y-%m-%d", time.localtime(time.time() - i * 86400))
+        if d >= today:
+            continue
+        if d in have and not overwrite:
+            skipped.append(d); continue
+        try:
+            f, t = _day_bounds(d)
+            s = build_sales(f, t, date_label=d)
+            if s.get("total_receipts", 0) > 0:
+                _save_sales_daily(s)
+                saved.append(d)
+            else:
+                skipped.append(d)        # день без чеков — не сохраняем
+        except Exception as e:
+            failed.append({"date": d, "error": str(e)[:120]})
+    return {"saved_count": len(saved), "saved": saved,
+            "skipped": skipped, "failed": failed}
 
 
 # ====== ИИ-ПОМОЩНИК МАГАЗИНА (Anthropic Claude) ======
