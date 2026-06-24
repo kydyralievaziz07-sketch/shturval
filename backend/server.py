@@ -133,6 +133,7 @@ def load_users():
             _add((u.get("pw") or "").strip(),
                  {"name": u.get("name", "Сотрудник"), "sections": secs,
                   "role": u.get("role", ""), "department": u.get("department", ""),
+                  "phone": u.get("phone", "") or "",
                   "plan_day": u.get("plan_day", 0),
                   "salary_month": u.get("salary_month", 0),
                   "daily_rate": u.get("daily_rate", 0),
@@ -1741,6 +1742,7 @@ def _emp_row(login, **f):
             "name": f.get("name", cur.get("name", "")),
             "role": f.get("role", cur.get("role", "") or ""),
             "department": f.get("department", cur.get("department", "") or ""),
+            "phone": f.get("phone", cur.get("phone", "") or ""),
             "sections": secs or "myday",
             "salary_month": f.get("salary_month", cur.get("salary_month", 0) or 0),
             "daily_rate": f.get("daily_rate", cur.get("daily_rate", 0) or 0),
@@ -1783,6 +1785,7 @@ def payroll_view(user, rec=None):
         bonus = float(r.get("bonus") or 0); adv = float(r.get("advance") or 0)
         return {"name": name, "login": user.get("login", ""),
                 "role": user.get("role", ""), "department": dep,
+                "phone": user.get("phone", "") or "",
                 "sections": user.get("sections", []),
                 "salary_month": sal, "bonus_month": float(user.get("bonus_month") or 0),
                 "is_video": True, "video_rate": round(vrate),
@@ -1812,6 +1815,7 @@ def payroll_view(user, rec=None):
     bonus = float(r.get("bonus") or 0); adv = float(r.get("advance") or 0)
     return {"name": name, "login": user.get("login", ""),
             "role": user.get("role", ""), "department": user.get("department", ""),
+            "phone": user.get("phone", "") or "",
             "sections": user.get("sections", []),
             "salary_month": sal, "daily_rate": rate, "bonus_month": float(user.get("bonus_month") or 0),
             "present_days": present_days, "partial_days": partial_days,
@@ -2351,6 +2355,7 @@ class Handler(BaseHTTPRequestHandler):
                     row = _emp_row(login, name=name,
                                    role=(body.get("role") or "").strip(),
                                    department=(body.get("department") or "").strip(),
+                                   phone=(body.get("phone") or "").strip(),
                                    pw=(_hash_pw(_newpw) if _newpw else ""),
                                    sections=secs_in,
                                    video_rate=round(float(body.get("video_rate") or 0)),
@@ -2373,7 +2378,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, {"ok": True})
                 elif action == "update":
                     over = {}
-                    for k in ("name", "role", "department"):
+                    for k in ("name", "role", "department", "phone"):
                         if k in body:
                             over[k] = (body.get(k) or "").strip()
                     if "salary_month" in body:

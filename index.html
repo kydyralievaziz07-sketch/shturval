@@ -898,8 +898,10 @@
   <div class="modal-bg" id="empbg"><div class="modal" style="width:440px">
     <h3 id="emp-title">➕ Новый сотрудник</h3>
     <div id="emp-sub" style="font-size:12px;color:var(--muted);margin-bottom:6px"></div>
-    <label>Имя</label>
-    <input type="text" id="emp-name" placeholder="Например: Бексултан">
+    <div class="row">
+      <div><label>Имя</label><input type="text" id="emp-name" placeholder="Например: Бексултан"></div>
+      <div><label>Телефон</label><input type="tel" id="emp-phone" placeholder="напр. +996 700 123 456"></div>
+    </div>
     <div class="row">
       <div><label>Отдел</label><input type="text" id="emp-dept" placeholder="Например: Обувь" list="emp-depts"><datalist id="emp-depts"></datalist></div>
       <div><label>Должность</label><input type="text" id="emp-role" placeholder="Например: Консультант"></div>
@@ -2208,7 +2210,9 @@
           km('Средний чек',d.avg_check);
           renderMoney(); }
         const t=document.getElementById('dash-sales-today');
-        if(t) t.textContent='· сегодня '+(d.net_sales||0).toLocaleString('ru-RU')+' сом ('+(d.sales_count||0)+' чек.)';
+        if(t) t.innerHTML='· сегодня '+(d.net_sales||0).toLocaleString('ru-RU')+' сом ('+(d.sales_count||0)+' чек.) · '+
+          (d.stale?'<span style="color:#ffb84d">🟠 1С недоступна · данные на '+esc(d.updated||'')+'</span>'
+                  :'<span style="color:var(--muted)">🟢 обновлено '+esc(d.updated||'')+'</span>');
         // 🔥 Топ товаров — реальные данные из 1С
         const topBox=document.getElementById('dash-top');
         const tp=(d.top_products||[]);
@@ -3567,6 +3571,7 @@
     document.getElementById('emp-title').textContent='➕ Новый сотрудник';
     document.getElementById('emp-sub').textContent=dept?('Отдел: '+dept):'Заполните данные сотрудника';
     document.getElementById('emp-name').value='';
+    document.getElementById('emp-phone').value='';
     document.getElementById('emp-dept').value=dept||'';
     document.getElementById('emp-role').value='';
     document.getElementById('emp-salary').value='';
@@ -3586,6 +3591,7 @@
     document.getElementById('emp-title').textContent='✏️ '+v.name;
     document.getElementById('emp-sub').textContent='Измените данные и сохраните';
     document.getElementById('emp-name').value=v.name||'';
+    document.getElementById('emp-phone').value=v.phone||'';
     document.getElementById('emp-dept').value=v.department||'';
     document.getElementById('emp-role').value=v.role||'';
     document.getElementById('emp-salary').value=v.salary_month||'';
@@ -3610,7 +3616,8 @@
     if(!name){ err.textContent='Впишите имя'; return; }
     const sal=parseFloat((document.getElementById('emp-salary').value||'').replace(/\s/g,'').replace(',','.'))||0;
     const vrate=parseFloat((document.getElementById('emp-video-rate').value||'').replace(/\s/g,'').replace(',','.'))||0;
-    const body={name:name, department:(document.getElementById('emp-dept').value||'').trim(),
+    const body={name:name, phone:(document.getElementById('emp-phone').value||'').trim(),
+      department:(document.getElementById('emp-dept').value||'').trim(),
       role:(document.getElementById('emp-role').value||'').trim(), salary_month:sal, video_rate:vrate};
     const btn=document.getElementById('emp-save-btn'); btn.disabled=true; btn.textContent='Сохраняю…';
     try{
@@ -3708,14 +3715,15 @@
       : '<div style="font-size:12px;color:var(--muted)">оклад не задан</div>';
     return '<div style="border-top:1px solid var(--line);padding:10px 14px">'+
       '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">'+
-        '<div style="min-width:150px"><b>'+esc(v.name)+'</b> <span style="color:var(--muted);font-size:12px">'+subMonth+'</span></div>'+
+        '<div style="min-width:150px"><b>'+esc(v.name)+'</b> <span style="color:var(--muted);font-size:12px">'+subMonth+'</span>'+
+          (v.phone?'<div style="font-size:12px;margin-top:2px"><a href="tel:'+esc(v.phone.replace(/[^0-9+]/g,''))+'" style="color:var(--muted);text-decoration:none">📞 '+esc(v.phone)+'</a></div>':'')+'</div>'+
         payInfo+
         '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+mainCtrl+
           '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHra(\''+lg+'\',\'advance\')" title="Аванс">💸 Аванс</button>'+
           '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHra(\''+lg+'\',\'bonus\')" title="Премия">🎁 Премия</button>'+
           (v.is_video?'':'<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHrCal(\''+lg+'\')" title="Календарь явки">📅 Календарь</button>')+
           (canManageTeam()?(
-            '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openEmpEdit(\''+lg+'\')" title="Изменить имя/отдел/зарплату">✏️ Изменить</button>'+
+            '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openEmpEdit(\''+lg+'\')" title="Изменить имя/телефон/отдел/зарплату">✏️ Изменить</button>'+
             '<button class="btn ghost" style="padding:5px 9px;font-size:12px;color:var(--red)" onclick="teamRemove(\''+lg+'\',\''+jsn(v.name)+'\')" title="Убрать сотрудника">🗑</button>'
           ):'')+
         '</div>'+
