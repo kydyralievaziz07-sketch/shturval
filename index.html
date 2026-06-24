@@ -3922,6 +3922,18 @@
     const dr=document.getElementById('drawer');
     if(!closed && dr && dr.classList.contains('open')) toggleDrawer();
   });
+  // Enter в любом окне = нажать главную кнопку «Сохранить» (удобно с клавиатуры/телефона).
+  // В многострочных полях Enter оставляем как перенос строки. У некоторых полей есть
+  // свой onkeydown (он закрывает окно раньше) — двойного сохранения не будет.
+  document.addEventListener('keydown',e=>{
+    if(e.key!=='Enter' || e.shiftKey) return;
+    const t=e.target;
+    if(!t || t.tagName==='TEXTAREA' || (t.tagName!=='INPUT' && t.tagName!=='SELECT')) return;
+    const modal=t.closest && t.closest('.modal-bg.open');
+    if(!modal) return;
+    const btn=modal.querySelector('.modal-foot .btn:not(.ghost)') || modal.querySelector('.btn:not(.ghost)');
+    if(btn && !btn.disabled){ e.preventDefault(); btn.click(); }
+  });
   // Экономия: при сворачивании вкладки/браузера гасим авто-обновления (не будим спящий сервер, бережём батарею)
   document.addEventListener('visibilitychange',()=>{
     if(document.hidden){
