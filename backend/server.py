@@ -5,7 +5,7 @@
 Токен хранится здесь, на сервере, и НЕ попадает в код сайта.
 Запуск: python3 server.py   (или двойной клик по «Запустить-сервер.command»)
 """
-import os, json, time, threading, urllib.request, urllib.error, hmac, hashlib
+import os, json, time, threading, urllib.request, urllib.error, hmac, hashlib, gzip
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # Часовой пояс — Бишкек (UTC+6). Чтобы «сегодня», время сообщений, явка, касса
@@ -863,11 +863,13 @@ def _refresh_catalog():
         goods = _fetch_goods()           # ~50 сек, но в фоне
         _goods["goods"] = goods          # подменяем разом
         _goods["t"] = time.time()
+        _goods["from_backup"] = False    # данные снова живые из 1С
         try:
             _goods["cats"] = _fetch_cats()
             _goods["cats_t"] = time.time()
         except Exception:
             pass
+        _save_catalog_backup(_goods["goods"], _goods["cats"])   # резервная копия в базу
     except Exception:
         pass
     finally:
@@ -883,8 +885,20 @@ def get_goods():
     with _goods_lock:                    # самый первый раз — приходится дождаться
         if _goods["goods"] is not None:
             return _goods["goods"]
-        _goods["goods"] = _fetch_goods()
-        _goods["t"] = time.time()
+        try:
+            _goods["goods"] = _fetch_goods()
+            _goods["t"] = time.time()
+        except Exception:
+            b = _load_catalog_backup()   # 1С недоступна на холодном старте — отдаём копию из базы
+            if b and b.get("goods"):
+                _goods["goods"] = b["goods"]
+                _goods["t"] = b.get("t", 0)        # старая метка → фоновый рефреш обновит, когда 1С ответит
+                _goods["from_backup"] = True       # пометка «данные из резервной копии»
+                if _goods["cats"] is None and b.get("cats"):
+                    _goods["cats"] = b["cats"]
+                threading.Thread(target=_refresh_catalog, daemon=True).start()
+                return _goods["goods"]
+            raise
         return _goods["goods"]
 
 def get_categories():
@@ -893,8 +907,46 @@ def get_categories():
             _goods["cats"] = _fetch_cats()
             _goods["cats_t"] = time.time()
         except Exception:
-            _goods["cats"] = {}
+            b = _load_catalog_backup()        # 1С молчит — берём категории из резервной копии
+            _goods["cats"] = (b or {}).get("cats") or {}
     return _goods["cats"]
+
+# ---- Резервная копия каталога в базе (переживает сон сервера и сбой 1С) ----
+# Полный каталог (20 МБ) хранится только в памяти и теряется при перезапуске Render.
+# Поэтому после каждой удачной загрузки сохраняем СЖАТУЮ копию нужных полей в Supabase
+# (kv_cache, ключ catalog_v1). При холодном старте/сбое 1С отдаём её — без «1С недоступна».
+_CAT_FIELDS = ("TITLE", "CATEGORY_ID", "PRICE", "QUANTITY", "PRICES")
+_catalog_backup_t = {"t": 0.0}
+
+def _save_catalog_backup(goods, cats):
+    """Сжать каталог (только нужные поля) и положить в базу. Не чаще раза в 30 мин —
+    чтобы не гонять мегабайты при каждом фоновом обновлении (каждые ~2 мин)."""
+    if not supa_on() or not goods:
+        return
+    if time.time() - _catalog_backup_t["t"] < 1800:
+        return
+    try:
+        slim = [{k: g.get(k) for k in _CAT_FIELDS} for g in goods]
+        payload = json.dumps({"goods": slim, "cats": cats or {}}, ensure_ascii=False).encode("utf-8")
+        packed = base64.b64encode(gzip.compress(payload, 6)).decode("ascii")
+        kv_save("catalog_v1", {"z": packed, "n": len(slim), "t": int(time.time())})
+        _catalog_backup_t["t"] = time.time()
+    except Exception:
+        pass
+
+def _load_catalog_backup():
+    """Достать каталог из резервной копии в базе → {'goods':[...], 'cats':{...}, 't':unix}.
+    None, если копии нет."""
+    try:
+        v = kv_load("catalog_v1")
+        if not v or not v.get("z"):
+            return None
+        raw = gzip.decompress(base64.b64decode(v["z"])).decode("utf-8")
+        d = json.loads(raw)
+        d["t"] = v.get("t", 0)
+        return d
+    except Exception:
+        return None
 
 def _warm_sales():
     try:
@@ -1062,7 +1114,12 @@ def build_inventory():
         "low": low_out,
         "updated": time.strftime("%H:%M:%S"),
     }
-    kv_save("inventory", _inv_res)     # запоминаем последний удачный снимок склада
+    if _goods.get("from_backup"):      # каталог взят из резервной копии (1С недоступна)
+        _inv_res["stale"] = True
+        if _goods.get("t"):
+            _inv_res["updated"] = time.strftime("%d.%m %H:%M", time.localtime(_goods["t"]))
+    else:
+        kv_save("inventory", _inv_res)     # запоминаем последний удачный снимок склада
     return _inv_res
 
 def get_inventory():
@@ -1130,7 +1187,12 @@ def search_products(q, page, per=50, cat=None, in_stock=False, scat=None):
             "cost": _price_by_type(x, "Закупочная"),
             "qty": int(_num(x.get("QUANTITY"))),
         })
-    return {"total": total, "page": page, "per": per, "items": out}
+    res = {"total": total, "page": page, "per": per, "items": out}
+    if _goods.get("from_backup"):      # каталог из резервной копии — честно помечаем
+        res["stale"] = True
+        if _goods.get("t"):
+            res["updated"] = time.strftime("%d.%m %H:%M", time.localtime(_goods["t"]))
+    return res
 
 
 # ====== ПРОДАЖИ (чеки из 1С, /receipts/v2) ======
