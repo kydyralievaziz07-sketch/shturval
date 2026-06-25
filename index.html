@@ -2288,6 +2288,7 @@
       drawSalesBars(document.getElementById('dash-bars'),_salesHist.slice(-30));
       fillSalesDates();
       if(typeof dashSalesRender==='function') dashSalesRender();   // пересчитать KPI периода, когда история подгрузилась
+      if(typeof renderMydayCharts==='function') renderMydayCharts();   // графики на рабочем столе
     }catch(e){}
   }
   function fillSalesDates(){
@@ -3139,7 +3140,61 @@
     return (d.items||[]).some(i=>(((i.cat||'')+' '+(i.title||'')).toLowerCase()).indexOf(dep)>=0);
   }
   function isMineDeal(d){ const n=USER.name||''; return !n||!d.owner||d.owner===n; }
+  // --- агрегация продаж 1С по дню/неделе/месяцу (для графиков на рабочем столе) ---
+  function salesAgg(gran){
+    const h=_salesHist||[];
+    if(!h.length) return [];
+    if(gran==='day') return h.slice(-14).map(x=>({lbl:(x.date||'').slice(5),sum:+x.sales||0}));
+    if(gran==='week'){
+      const m=new Map();
+      h.forEach(x=>{ const d=new Date(x.date+'T00:00:00'); if(isNaN(d))return; const off=(d.getDay()+6)%7; const mon=new Date(d); mon.setDate(d.getDate()-off);
+        const k=mon.getFullYear()+'-'+String(mon.getMonth()+1).padStart(2,'0')+'-'+String(mon.getDate()).padStart(2,'0'); m.set(k,(m.get(k)||0)+(+x.sales||0)); });
+      return [...m.entries()].slice(-8).map(([k,v])=>({lbl:k.slice(5),sum:v}));
+    }
+    const m=new Map();
+    h.forEach(x=>{ const k=(x.date||'').slice(0,7); if(k) m.set(k,(m.get(k)||0)+(+x.sales||0)); });
+    const mn=['','01','02','03','04','05','06','07','08','09','10','11','12'];
+    const nm={ '01':'янв','02':'фев','03':'мар','04':'апр','05':'май','06':'июн','07':'июл','08':'авг','09':'сен','10':'окт','11':'ноя','12':'дек'};
+    return [...m.entries()].slice(-6).map(([k,v])=>({lbl:(nm[k.slice(5,7)]||k.slice(5,7))+' '+k.slice(2,4),sum:v}));
+  }
+  // линейный график (SVG) с горизонтальной линией среднего
+  function lineChartSvg(points){
+    if(!points.length) return '<span style="color:var(--muted);font-size:13px">Нет данных — продажи ещё не загрузились.</span>';
+    const W=620,H=170,pad=30,n=points.length;
+    const mx=Math.max(1,...points.map(p=>p.sum));
+    const X=i=>pad+(n<=1?(W-2*pad)/2:i*(W-2*pad)/(n-1));
+    const Y=v=>H-pad-(v/mx*(H-2*pad));
+    const path=points.map((p,i)=>(i?'L':'M')+X(i).toFixed(1)+' '+Y(p.sum).toFixed(1)).join(' ');
+    const area=path+' L'+X(n-1).toFixed(1)+' '+(H-pad)+' L'+X(0).toFixed(1)+' '+(H-pad)+' Z';
+    const dots=points.map((p,i)=>'<circle cx="'+X(i).toFixed(1)+'" cy="'+Y(p.sum).toFixed(1)+'" r="3.2" fill="#39d98a"><title>'+esc(p.lbl)+': '+Math.round(p.sum).toLocaleString('ru-RU')+' сом</title></circle>').join('');
+    const labels=points.map((p,i)=>'<text x="'+X(i).toFixed(1)+'" y="'+(H-9)+'" font-size="10" fill="#8a93a6" text-anchor="middle">'+esc(p.lbl)+'</text>').join('');
+    const avg=points.reduce((s,p)=>s+p.sum,0)/n, ay=Y(avg);
+    return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:175px" preserveAspectRatio="none">'+
+      '<path d="'+area+'" fill="rgba(57,217,138,.10)" stroke="none"/>'+
+      '<line x1="'+pad+'" y1="'+ay.toFixed(1)+'" x2="'+(W-pad)+'" y2="'+ay.toFixed(1)+'" stroke="#4f8cff" stroke-dasharray="5 4" stroke-width="1"/>'+
+      '<text x="'+(W-pad)+'" y="'+(ay-5).toFixed(1)+'" font-size="10" fill="#4f8cff" text-anchor="end">среднее '+Math.round(avg).toLocaleString('ru-RU')+'</text>'+
+      '<path d="'+path+'" fill="none" stroke="#39d98a" stroke-width="2.2"/>'+dots+labels+'</svg>';
+  }
+  let _mydayGran='day';
+  function setMydayGran(g){ _mydayGran=g; document.querySelectorAll('#myday-trend-sw button').forEach(b=>b.classList.toggle('active',b.dataset.g===g)); renderMydayTrend(); }
+  function renderMydayTrend(){
+    const box=document.getElementById('myday-trend'); if(!box) return;
+    box.innerHTML=lineChartSvg(salesAgg(_mydayGran));
+  }
+  function renderMyday7(){
+    const box=document.getElementById('myday-bars7'); if(!box) return;
+    const days=salesAgg('day').slice(-7);
+    if(!days.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Продажи ещё не загрузились…</span>'; return; }
+    const mx=Math.max(1,...days.map(x=>x.sum));
+    box.innerHTML='<div style="display:flex;align-items:flex-end;gap:10px;height:150px;padding-top:10px">'+
+      days.map((x,i)=>'<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end" title="'+esc(x.lbl)+': '+Math.round(x.sum).toLocaleString('ru-RU')+' сом">'+
+        '<div style="font-size:11px;color:var(--muted)">'+(x.sum?Math.round(x.sum/1000)+'к':'')+'</div>'+
+        '<div style="width:100%;background:'+(i===days.length-1?'#39d98a':'#4f8cff')+';border-radius:6px 6px 0 0;height:'+Math.max(3,Math.round(x.sum/mx*110))+'px"></div>'+
+        '<div style="font-size:11px;color:var(--muted)">'+esc(x.lbl)+'</div></div>').join('')+'</div>';
+  }
+  function renderMydayCharts(){ renderMyday7(); renderMydayTrend(); }
   function renderMyDay(){
+    if(!_salesHist) loadSalesHistory();         // подтянуть продажи 1С для графиков
     const box=document.getElementById('myday-body'); if(!box) return;
     // HR-менеджер и администраторы не продают — показываем только зарплату/дни
     const isHR=(USER.role==='hr')||((USER.sections||[]).indexOf('hr')>=0 && !isOwner());
@@ -3165,17 +3220,6 @@
     // активные заявки в работе
     const active=CRM.deals.filter(d=>['Закрыто','Отказ'].indexOf(d.status)<0 && pick(d));
     const myTasks=CRM.tasks.filter(t=>!t.done);
-    // 7-дневный тренд продаж
-    const days=[]; for(let i=6;i>=0;i--){ const s=new Date(); s.setHours(0,0,0,0); s.setDate(s.getDate()-i); days.push(s); }
-    const buckets=days.map(s=>{ const a=s.getTime(),b=a+86400000;
-      const sum=focusPaid.filter(d=>{const t=d.paid_at?new Date(d.paid_at).getTime():0;return t>=a&&t<b;}).reduce((x,d)=>x+dealAmount(d),0);
-      return {lbl:s.toLocaleDateString('ru-RU',{weekday:'short'}),sum:sum}; });
-    const mx=Math.max(1,...buckets.map(x=>x.sum));
-    const bars='<div style="display:flex;align-items:flex-end;gap:10px;height:150px;padding-top:10px">'+
-      buckets.map((x,i)=>'<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end">'+
-        '<div style="font-size:11px;color:var(--muted)">'+(x.sum?Math.round(x.sum/1000)+'к':'')+'</div>'+
-        '<div style="width:100%;background:'+(i===6?'#39d98a':'#4f8cff')+';border-radius:6px 6px 0 0;height:'+Math.max(3,Math.round(x.sum/mx*110))+'px"></div>'+
-        '<div style="font-size:11px;color:var(--muted)">'+esc(x.lbl)+'</div></div>').join('')+'</div>';
     const who=dep?('Отдел: <b>'+esc(dep)+'</b>'):(owner?'<b>Владелец</b> — общая картина':'Личные продажи');
     const planBlock=plan>0?
       '<div class="card" style="margin-bottom:16px"><h3>🎯 План на сегодня</h3>'+
@@ -3202,15 +3246,24 @@
       '</div>'+
       '<div id="myday-salary"></div>'+
       '<div class="grid2b">'+
-        '<div class="card"><h3>📈 Продажи за 7 дней</h3>'+bars+'</div>'+
+        '<div class="card"><h3>📊 Продажи по дням <span style="font-size:12px;color:var(--muted);font-weight:400">— 1С, последние 7</span></h3><div id="myday-bars7"><span style="color:var(--muted);font-size:13px">Загружаю продажи…</span></div></div>'+
         '<div class="card"><h3>⚙️ Мои заявки в работе</h3>'+
           (active.length?'<div style="max-height:230px;overflow:auto"><table><tbody>'+
             active.slice(0,30).map(d=>{const c=getClient(d.client_id);return '<tr><td>'+esc((c&&c.name)||'Без имени')+'</td><td style="text-align:right"><span class="badge b-low">'+esc(d.status)+'</span></td></tr>';}).join('')+
             '</tbody></table></div>':'<div style="color:var(--muted);font-size:13px">Нет активных заявок 👍</div>')+
         '</div>'+
       '</div>'+
+      '<div class="card" style="margin-top:16px"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">'+
+        '<h3 style="margin:0">📈 Динамика продаж <span style="font-size:12px;color:var(--muted);font-weight:400">— из 1С</span></h3>'+
+        '<div class="period" id="myday-trend-sw">'+
+          '<button class="active" data-g="day" onclick="setMydayGran(\'day\')">Дни</button>'+
+          '<button data-g="week" onclick="setMydayGran(\'week\')">Недели</button>'+
+          '<button data-g="month" onclick="setMydayGran(\'month\')">Месяцы</button>'+
+        '</div></div>'+
+        '<div id="myday-trend"><span style="color:var(--muted);font-size:13px">Загружаю продажи…</span></div></div>'+
       (myTasks.length?'<div class="card" style="margin-top:16px"><h3>📋 Задачи</h3>'+myTasks.slice(0,20).map(t=>'<div style="padding:6px 0;border-bottom:1px solid var(--line);font-size:13px">'+esc(t.title)+(t.due_at?' <span style="color:var(--muted)">· '+fmtDT(t.due_at)+'</span>':'')+'</div>').join('')+'</div>':'');
     renderMoney();
+    renderMydayCharts();          // столбики + линия динамики (из 1С)
     loadMyPayroll();
   }
   // шкала «прогресс»: подпись, текущее/цель, цвет
@@ -3606,10 +3659,18 @@
     const action=(mode==='set')
       ? (hraKind==='advance'?'set_advance':'set_bonus')
       : (hraKind==='advance'?'advance':'bonus');
-    const d=await hrPost({action:action,login:hraLogin,amount:amt});
-    if(!d){ alert('Не сохранилось — подожди минуту и попробуй ещё раз.'); return loadHR(); }
-    const i=hrFind(hraLogin); if(d.view && i>=0){ HR_LIST[i]=d.view; renderHR(); }
+    const i=hrFind(hraLogin), v=i>=0?HR_LIST[i]:null, login=hraLogin;
+    // оптимистично: сразу обновляем экран и закрываем окно, запись идёт в фоне
+    if(v){
+      const isAdv=hraKind==='advance', field=isAdv?'advance':'bonus', old=+v[field]||0;
+      const nv=(mode==='set')?amt:(old+amt);
+      v[field]=nv; v.to_receive=(+v.to_receive||0)+(isAdv?-(nv-old):(nv-old));
+      renderHR();
+    }
     closeHra();
+    const d=await hrPost({action:action,login:login,amount:amt});
+    if(!d){ alert('Не сохранилось — обновлю данные.'); return loadHR(); }
+    if(d.view && i>=0){ HR_LIST[i]=d.view; renderHR(); }   // точные цифры с сервера
   }
   // --- окно «Календарь явки» (отдельное, по центру; клик по дню — пришёл/не пришёл/снять) ---
   let hrCalLogin=null;
