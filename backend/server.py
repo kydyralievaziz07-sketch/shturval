@@ -2716,7 +2716,7 @@ class Handler(BaseHTTPRequestHandler):
                 days = int(parse_qs(urlparse(self.path).query).get("days", ["14"])[0])
             except ValueError:
                 days = 14
-            return self._send(200, sales_history(max(1, min(days, 90))))
+            return self._send(200, sales_history(max(1, min(days, 400))))
         if self.path.startswith("/api/sales"):
             from urllib.parse import urlparse, parse_qs
             date = (parse_qs(urlparse(self.path).query).get("date", [""])[0] or "").strip()

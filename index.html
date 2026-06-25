@@ -2274,10 +2274,10 @@
   let _salesHist=null;
   async function loadSalesHistory(){
     try{
-      const r=await apiFetch('/api/sales-history?days=30',{},ONEC_BASE); const d=await r.json();
+      const r=await apiFetch('/api/sales-history?days=400',{},ONEC_BASE); const d=await r.json();
       _salesHist=(d.days||[]);
-      drawSalesBars(document.getElementById('sales-history'),_salesHist);
-      drawSalesBars(document.getElementById('dash-bars'),_salesHist);
+      drawSalesBars(document.getElementById('sales-history'),_salesHist.slice(-30));   // график — последние 30 дней (для читаемости)
+      drawSalesBars(document.getElementById('dash-bars'),_salesHist.slice(-30));
       fillSalesDates();
       if(typeof dashSalesRender==='function') dashSalesRender();   // пересчитать KPI периода, когда история подгрузилась
     }catch(e){}
