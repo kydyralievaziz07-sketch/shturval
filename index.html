@@ -3819,10 +3819,12 @@
     const groups={}; paid.forEach(v=>{ const d=v.department||'Без отдела'; (groups[d]=groups[d]||[]).push(v); });
     const order=DEPT_ORDER.filter(d=>groups[d]).concat(Object.keys(groups).filter(d=>DEPT_ORDER.indexOf(d)<0));
     const totalPay=paid.reduce((a,v)=>a+(+v.to_receive||0),0);
+    const totalGross=paid.reduce((a,v)=>a+(+v.to_receive||0)+(+v.advance||0),0);   // зарплата без вычета авансов
     let html='<div id="hr-plans"></div>'+
-      '<div class="kpis" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">'+
+      '<div class="kpis" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">'+
         kpiCard('👥 Сотрудников',paid.length)+
         kpiCard('🏬 Отделов',order.length)+
+        kpiCard('💵 ЗП без авансов','<span class="money" data-som="'+totalGross+'">'+fmt(totalGross)+'</span>')+
         kpiCard('💰 Итого к выплате','<span class="money" data-som="'+totalPay+'">'+fmt(totalPay)+'</span>')+
       '</div>'+
       '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">'+
