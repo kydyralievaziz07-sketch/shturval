@@ -872,14 +872,16 @@
     </div>
   </div></div>
 
-  <!-- ОКНО: Аванс / Премия (редактирование суммы) -->
+  <!-- ОКНО: Аванс / Премия (по умолчанию ДОБАВЛЯЕТ к текущему) -->
   <div class="modal-bg" id="hrambg"><div class="modal" style="width:400px">
     <h3 id="hra-title">Аванс</h3>
     <div id="hra-sub" style="font-size:13px;color:var(--muted)"></div>
-    <label>Сумма, сом</label>
-    <input type="number" id="hra-input" placeholder="0" onkeydown="if(event.key==='Enter')hraSave()">
+    <label id="hra-label">Добавить, сом</label>
+    <input type="number" id="hra-input" placeholder="0" inputmode="decimal" oninput="hraPreview()" onkeydown="if(event.key==='Enter')hraSave('add')">
+    <div id="hra-preview" style="font-size:13px;color:var(--muted);margin-top:6px;min-height:16px"></div>
     <div class="modal-foot">
-      <button class="btn" onclick="hraSave()">Сохранить</button>
+      <button class="btn" onclick="hraSave('add')">➕ Добавить</button>
+      <button class="btn ghost" onclick="hraSave('set')" title="Заменить точным значением (исправить ошибку)">Задать точное</button>
       <button class="btn ghost" onclick="closeHra()">Отмена</button>
     </div>
   </div></div>
@@ -3473,24 +3475,37 @@
     if(d.view && i>=0){ HR_LIST[i]=d.view; renderHR(); }    // точные цифры с сервера
   }
   // --- окно «Аванс / Премия» (с редактированием: показывает текущее, можно исправить) ---
-  let hraLogin=null, hraKind='advance';
+  let hraLogin=null, hraKind='advance', hraCur=0;
   function openHra(login,kind){
     const v=HR_LIST[hrFind(login)]; if(!v) return;
     hraLogin=login; hraKind=kind;
     const cur=kind==='advance'?(v.advance||0):(v.bonus||0);
+    hraCur=cur||0;
+    const word=kind==='advance'?'аванс':'премия';
     document.getElementById('hra-title').textContent=(kind==='advance'?'💸 Аванс':'🎁 Премия')+' — '+v.name;
-    document.getElementById('hra-sub').textContent='Текущее значение: '+fmt(cur)+' сом. Впиши правильную сумму и сохрани.';
-    const inp=document.getElementById('hra-input'); inp.value=cur||'';
+    document.getElementById('hra-sub').textContent='Текущий '+word+': '+fmt(hraCur)+' сом. Впиши, сколько ДОБАВИТЬ.';
+    document.getElementById('hra-label').textContent='Добавить, сом';
+    const inp=document.getElementById('hra-input'); inp.value='';            // пусто — вписываем только прибавку
+    document.getElementById('hra-preview').textContent='';
     document.getElementById('hrambg').classList.add('open');
-    setTimeout(()=>{ inp.focus(); inp.select(); },60);
+    setTimeout(()=>{ inp.focus(); },60);
+  }
+  function hraPreview(){
+    const add=parseFloat((document.getElementById('hra-input').value||'').replace(/\s/g,'').replace(',','.'));
+    const p=document.getElementById('hra-preview');
+    if(isNaN(add)){ p.textContent=''; return; }
+    p.innerHTML='Станет: <b style="color:var(--text)">'+fmt(hraCur)+' + '+fmt(add)+' = '+fmt(hraCur+add)+'</b> сом';
   }
   function closeHra(){ document.getElementById('hrambg').classList.remove('open'); hraLogin=null; }
-  async function hraSave(){
+  async function hraSave(mode){
     if(!hraLogin) return;
     const raw=document.getElementById('hra-input').value;
     const amt=parseFloat((raw||'').replace(/\s/g,'').replace(',','.'));
-    if(isNaN(amt)||amt<0){ alert('Впиши сумму (число, можно 0).'); return; }
-    const action=hraKind==='advance'?'set_advance':'set_bonus';
+    if(isNaN(amt)||amt<0){ alert('Впиши сумму (число).'); return; }
+    // mode='add' — ДОБАВИТЬ к текущему; mode='set' — задать точное (исправить)
+    const action=(mode==='set')
+      ? (hraKind==='advance'?'set_advance':'set_bonus')
+      : (hraKind==='advance'?'advance':'bonus');
     const d=await hrPost({action:action,login:hraLogin,amount:amt});
     if(!d){ alert('Не сохранилось — подожди минуту и попробуй ещё раз.'); return loadHR(); }
     const i=hrFind(hraLogin); if(d.view && i>=0){ HR_LIST[i]=d.view; renderHR(); }
