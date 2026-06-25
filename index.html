@@ -675,7 +675,7 @@
           <div id="fin-expenses" style="max-height:340px;overflow:auto"><span style="color:var(--muted);font-size:13px">—</span></div>
         </div>
         <div class="card">
-          <h3>📂 Расходы по категориям <span style="font-size:12px;color:var(--muted);font-weight:400">— за месяц</span></h3>
+          <h3>📂 Расходы по категориям <span id="fin-cats-period" style="font-size:12px;color:var(--muted);font-weight:400">— за месяц</span></h3>
           <div id="fin-exp-cats"><span style="color:var(--muted);font-size:13px">—</span></div>
         </div>
       </div>
@@ -1147,6 +1147,9 @@
     if(titles[tab]){ const pt=document.getElementById('page-title'),ps=document.getElementById('page-sub'); if(pt)pt.textContent=titles[tab][0]; if(ps)ps.textContent=titles[tab][1]; }
     renderTopNav(); renderSubmenu();
     dispatchTab(tab);
+    // кнопки периода (Сегодня/Неделя/Месяц) показываем только там, где они реально работают
+    const psw=document.getElementById('periodsw');
+    if(psw) psw.style.display=({dash:1,crmdash:1,deals:1,crm:1}[tab]?'':'none');
     window.scrollTo(0,0);
   }
   function renderTopNav(){
@@ -1900,8 +1903,13 @@
     const list=(_expData.expenses||[]).filter(x=>inP(x.date||''));
     box.innerHTML=list.length?'<table><tbody>'+list.map(x=>'<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc((x.date||'').slice(5))+'</td><td>'+esc(x.category||'—')+(x.note?' <span style="color:var(--muted);font-size:12px">· '+esc(x.note)+'</span>':'')+'</td><td style="text-align:right;white-space:nowrap"><span class="money" data-som="'+x.amount+'">'+fmt(x.amount)+'</span></td><td style="width:26px;text-align:right"><span onclick="delExpense('+x.id+')" title="Удалить" style="cursor:pointer;color:var(--muted)">✕</span></td></tr>').join('')+'</tbody></table>':'<span style="color:var(--muted);font-size:13px">Расходов '+finPLabel[finPeriod]+' нет</span>';
     const cb=document.getElementById('fin-exp-cats');
-    if(cb){ const cats=_expData.by_category||[]; const mx=Math.max.apply(null,cats.map(c=>c.amount).concat([1]));
-      cb.innerHTML=cats.length?cats.map(c=>'<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>'+esc(c.category)+'</span><span class="money" data-som="'+c.amount+'">'+fmt(c.amount)+'</span></div><div class="progress"><div style="width:'+Math.round(c.amount/mx*100)+'%"></div></div></div>').join(''):'<span style="color:var(--muted);font-size:13px">Пока нет расходов в этом месяце</span>'; }
+    if(cb){
+      const byCat={}; list.forEach(x=>{const c=(x.category||'—'); byCat[c]=(byCat[c]||0)+(+x.amount||0);});   // за тот же период, что выбран
+      const cats=Object.keys(byCat).map(c=>({category:c,amount:byCat[c]})).sort((a,b)=>b.amount-a.amount);
+      const mx=Math.max.apply(null,cats.map(c=>c.amount).concat([1]));
+      cb.innerHTML=cats.length?cats.map(c=>'<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>'+esc(c.category)+'</span><span class="money" data-som="'+c.amount+'">'+fmt(c.amount)+'</span></div><div class="progress"><div style="width:'+Math.round(c.amount/mx*100)+'%"></div></div></div>').join(''):'<span style="color:var(--muted);font-size:13px">Расходов '+finPLabel[finPeriod]+' нет</span>';
+      const ch=document.getElementById('fin-cats-period'); if(ch) ch.textContent='— '+finPLabel[finPeriod];
+    }
     renderMoney();
   }
   async function loadExpenses(){
