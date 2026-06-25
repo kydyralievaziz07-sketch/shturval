@@ -641,7 +641,10 @@
           <div id="an-cats"><span style="color:var(--muted);font-size:13px">Загрузка…</span></div></div>
       </div>
       <div class="grid2b">
-        <div class="card"><h3>🅰️ ABC-анализ <span style="font-size:12px;color:var(--muted);font-weight:400">— по складским деньгам</span></h3>
+        <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <h3 style="margin:0">🅰️ ABC-анализ <span style="font-size:12px;color:var(--muted);font-weight:400">— по складским деньгам</span></h3>
+            <button class="btn ghost" style="font-size:12px;padding:5px 10px;white-space:nowrap" onclick="openAbcFull()" title="Развернуть на весь экран">⛶ Развернуть</button>
+          </div>
           <div id="an-abc"><span style="color:var(--muted);font-size:13px">Загрузка…</span></div></div>
         <div class="card"><h3>🤝 Поставщики — кому должны больше всего</h3>
           <div id="an-suppliers"><span style="color:var(--muted);font-size:13px">Загрузка…</span></div></div>
@@ -905,6 +908,16 @@
       <button class="btn" id="hrcal-save-btn" onclick="hrCalSave()">Сохранить</button>
       <button class="btn ghost" onclick="closeHrCal()">Закрыть</button>
     </div>
+  </div></div>
+
+  <!-- ОКНО: ABC-анализ на весь экран -->
+  <div class="modal-bg" id="abcfullbg"><div class="modal" style="width:96vw;max-width:1100px;max-height:92vh;display:flex;flex-direction:column">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <h3 style="margin:0">🅰️ ABC-анализ — полный</h3>
+      <button class="btn ghost" onclick="closeM('abcfullbg')">✕ Закрыть</button>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">По складским деньгам (розница). <b>A</b> — дают ~70% стоимости склада, <b>B</b> — следующие ~20%, <b>C</b> — остальное (балласт, кандидаты на распродажу).</div>
+    <div id="abcfull-body" style="overflow:auto;flex:1"></div>
   </div></div>
 
   <!-- ОКНО: Сотрудник (добавить / изменить) -->
@@ -1642,6 +1655,27 @@
       row('b-b','B — середняки','следующие ~20%',g.B)+
       row('b-c','C — балласт','лежат, мало денег',g.C)+
       '</tbody></table><div class="note" style="margin-top:12px">💡 Категории группы <b>C</b> занимают склад, но дают мало денег — кандидаты на распродажу/сокращение закупа.</div>';
+  }
+  function abcRows(){
+    const cats=(window._invData&&(window._invData.all_cats||window._invData.super_cats)||[]).slice().filter(c=>c.value>0).sort((a,b)=>b.value-a.value);
+    const total=cats.reduce((s,c)=>s+c.value,0)||1; let acc=0;
+    return cats.map(c=>{ const cum=acc/total; const grp=cum<0.7?'A':cum<0.9?'B':'C'; acc+=c.value;
+      return {name:c.title,value:c.value,count:c.count||0,share:c.value/total*100,cum:acc/total*100,grp}; });
+  }
+  function openAbcFull(){
+    const rows=abcRows(); const box=document.getElementById('abcfull-body');
+    if(!rows.length){ box.innerHTML='<div style="color:var(--muted);font-size:13px">Нет данных — склад ещё не загружен из 1С.</div>'; }
+    else{
+      const badge=g=>g==='A'?'b-a':g==='B'?'b-b':'b-c';
+      const total=rows.reduce((s,r)=>s+r.value,0)||1; const g={A:{n:0,v:0},B:{n:0,v:0},C:{n:0,v:0}};
+      rows.forEach(r=>{ g[r.grp].n++; g[r.grp].v+=r.value; });
+      const summary='<div class="kpis" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">'+
+        ['A','B','C'].map(k=>'<div class="card kpi"><div class="label"><span class="badge '+badge(k)+'">'+k+'</span> · '+g[k].n+' категорий</div><div class="value" style="font-size:18px">'+Math.round(g[k].v/total*100)+'% денег</div></div>').join('')+'</div>';
+      box.innerHTML=summary+'<table><thead><tr><th>#</th><th>Гр.</th><th>Категория</th><th style="text-align:right">Склад (сом)</th><th style="text-align:right">Товаров</th><th style="text-align:right">Доля</th><th style="text-align:right">Накопл.</th></tr></thead><tbody>'+
+        rows.map((r,i)=>'<tr><td style="color:var(--muted)">'+(i+1)+'</td><td><span class="badge '+badge(r.grp)+'">'+r.grp+'</span></td><td>'+esc(r.name)+'</td><td style="text-align:right"><span class="money" data-som="'+Math.round(r.value)+'">'+fmt(Math.round(r.value))+'</span></td><td style="text-align:right">'+r.count.toLocaleString('ru-RU')+'</td><td style="text-align:right">'+r.share.toFixed(1)+'%</td><td style="text-align:right;color:var(--muted)">'+r.cum.toFixed(0)+'%</td></tr>').join('')+'</tbody></table>';
+      renderMoney();
+    }
+    document.getElementById('abcfullbg').classList.add('open');
   }
   function anSuppliers(){
     const box=document.getElementById('an-suppliers'); if(!box) return;
@@ -3148,6 +3182,10 @@
         '<div style="color:var(--muted);font-size:13px;margin-top:3px">'+who+(USER.role?' · '+esc(USER.role):'')+'</div></div>'+
         '<div style="text-align:right"><div style="font-size:22px;font-weight:700">'+pct+'%</div><div style="color:var(--muted);font-size:12px">выполнение плана</div></div>'+
       '</div>'+
+      (owner?'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">'+
+        '<button class="btn" onclick="openExpense()">💸 Добавить расход</button>'+
+        '<button class="btn ghost" onclick="openTab(\'fin\')">📊 Расходы и финансы</button>'+
+      '</div>':'')+
       planBlock+
       '<div class="kpis" style="grid-template-columns:repeat(3,1fr)">'+
         kpiCard('🛒 Продаж сегодня',cnt)+
