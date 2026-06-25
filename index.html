@@ -379,7 +379,17 @@
     </section>
 
     <section id="tab-dash">
-      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">🛒 Продажи сегодня — живые данные из <b>1С</b> (касса)</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+        <div id="dash-sales-cap" style="font-size:12px;color:var(--muted)">🛒 Продажи сегодня — из <b>1С</b> (касса)</div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <span style="font-size:12px;color:var(--muted)">📅 период:</span>
+          <input type="date" id="dash-from" style="background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:5px 8px;font-size:12px">
+          <span style="color:var(--muted)">—</span>
+          <input type="date" id="dash-to" style="background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:5px 8px;font-size:12px">
+          <button class="btn ghost" style="padding:5px 10px;font-size:12px" onclick="dashSetRange()">Показать</button>
+          <button class="btn ghost" id="dash-range-clear" style="padding:5px 9px;font-size:12px;display:none" onclick="dashClearRange()" title="Сбросить период">✕</button>
+        </div>
+      </div>
       <div id="dash-sales-kpis" class="kpis" style="margin-bottom:18px">
         <div class="card kpi"><div class="label">Чеков сегодня</div><div class="value">—</div></div>
         <div class="card kpi"><div class="label">Выручка сегодня</div><div class="value">—</div></div>
@@ -1157,6 +1167,9 @@
       if(window._crmData){ renderCRM(window._crmData); updateDashKpis(window._crmData); }
       else loadCRM();
       const dt=document.getElementById('tab-deals'); if(dt&&!dt.classList.contains('hide')&&typeof renderLeft==='function'){ renderLeft(); renderCrmDash(); }
+      // дашборд Магазина: продажи за выбранный период (кнопка сбрасывает произвольный диапазон)
+      if(typeof dashClearRange==='function'){ _dashRange=null; const c=document.getElementById('dash-range-clear'); if(c)c.style.display='none'; }
+      if(typeof dashSalesRender==='function') dashSalesRender();
     });
   });
   function renderNotifs(){
@@ -2232,6 +2245,7 @@
       drawSalesBars(document.getElementById('sales-history'),_salesHist);
       drawSalesBars(document.getElementById('dash-bars'),_salesHist);
       fillSalesDates();
+      if(typeof dashSalesRender==='function') dashSalesRender();   // пересчитать KPI периода, когда история подгрузилась
     }catch(e){}
   }
   function fillSalesDates(){
@@ -2243,6 +2257,52 @@
     sel.innerHTML='<option value="today">Сегодня</option>'+past.map(x=>'<option value="'+esc(x.date)+'">'+esc(fmtD(x.date))+'</option>').join('');
     sel.value=cur; if(sel.value!==cur) sel.value='today';
   }
+  // --- Продажи на дашборде по периоду (Сегодня/Неделя/Месяц) или произвольному диапазону ---
+  let _dashRange=null, _dashSalesToday=null;
+  function dashPeriodDays(){
+    const hist=_salesHist||[]; const today=salesTodayStr();
+    if(_dashRange) return hist.filter(x=>x.date>=_dashRange.from && x.date<=_dashRange.to);
+    if(PERIOD==='today') return hist.filter(x=>x.date===today);
+    if(PERIOD==='month'){ const m=today.slice(0,7); return hist.filter(x=>(x.date||'').slice(0,7)===m); }
+    return hist.slice(-7);                       // неделя (по умолчанию)
+  }
+  function dashSalesRender(){
+    const box=document.getElementById('dash-sales-kpis'); if(!box) return;
+    const today=salesTodayStr();
+    const days=dashPeriodDays();
+    let sales=0,profit=0,rec=0;
+    days.forEach(x=>{ sales+=+x.sales||0; profit+=+x.profit||0; rec+=+x.receipts||0; });
+    // сегодняшний день в истории частичный — заменяем его живой цифрой из 1С
+    const inclToday=_dashRange?(today>=_dashRange.from&&today<=_dashRange.to):true;
+    if(inclToday && _dashSalesToday){
+      const td=days.find(x=>x.date===today);
+      if(td){ sales+=(_dashSalesToday.net_sales||0)-(+td.sales||0); profit+=(_dashSalesToday.profit||0)-(+td.profit||0); rec+=(_dashSalesToday.sales_count||0)-(+td.receipts||0); }
+      else if(PERIOD==='today'&&!_dashRange){ sales=_dashSalesToday.net_sales||0; profit=_dashSalesToday.profit||0; rec=_dashSalesToday.sales_count||0; }
+    }
+    const avg=rec?Math.round(sales/rec):0;
+    const lbl=_dashRange?'за период':({today:'сегодня',week:'за неделю',month:'за месяц'}[PERIOD]||'');
+    const km=(label,som)=>'<div class="card kpi"><div class="label">'+label+'</div><div class="value"><span class="money" data-som="'+(som||0)+'">'+fmt(som||0)+'</span></div></div>';
+    box.innerHTML=
+      kpiCard('Чеков '+lbl,(rec||0).toLocaleString('ru-RU'))+
+      km('Выручка '+lbl,sales)+km('Прибыль '+lbl,profit)+km('Средний чек',avg);
+    renderMoney();
+    const cap=document.getElementById('dash-sales-cap');
+    if(cap) cap.innerHTML=_dashRange?('🛒 Продажи '+esc(_dashRange.from)+' … '+esc(_dashRange.to)+' — из 1С')
+                                    :('🛒 Продажи '+lbl+' — из <b>1С</b> (касса)');
+  }
+  function dashSetRange(){
+    const f=(document.getElementById('dash-from')||{}).value, t=(document.getElementById('dash-to')||{}).value;
+    if(!f||!t){ alert('Выбери обе даты периода.'); return; }
+    _dashRange={from:f<=t?f:t, to:f<=t?t:f};
+    const c=document.getElementById('dash-range-clear'); if(c) c.style.display='';
+    dashSalesRender();
+  }
+  function dashClearRange(){
+    _dashRange=null;
+    ['dash-from','dash-to'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+    const c=document.getElementById('dash-range-clear'); if(c) c.style.display='none';
+    dashSalesRender();
+  }
   // дашборд: блок «Продажи сегодня» (1С) + карточка «Продажи по дням» (живые данные)
   async function loadDashSales(){
     if(!ONEC_BASE) return;
@@ -2250,14 +2310,8 @@
     try{
       const r=await apiFetch('/api/sales',{},ONEC_BASE); const d=await r.json();
       if(d&&!d.error){
-        const km=(label,som)=>'<div class="card kpi"><div class="label">'+label+'</div><div class="value"><span class="money" data-som="'+(som||0)+'">'+fmt(som||0)+'</span></div></div>';
-        const box=document.getElementById('dash-sales-kpis');
-        if(box){ box.innerHTML=
-          kpiCard('Чеков сегодня',(d.sales_count||0).toLocaleString('ru-RU'))+
-          km('Выручка сегодня',d.net_sales)+
-          km('Прибыль сегодня',d.profit)+
-          km('Средний чек',d.avg_check);
-          renderMoney(); }
+        _dashSalesToday=d;            // живые данные за сегодня
+        dashSalesRender();            // KPI с учётом выбранного периода/диапазона
         const t=document.getElementById('dash-sales-today');
         if(t) t.innerHTML='· сегодня '+(d.net_sales||0).toLocaleString('ru-RU')+' сом ('+(d.sales_count||0)+' чек.) · '+
           (d.stale?'<span style="color:#ffb84d">🟠 1С недоступна · данные на '+esc(d.updated||'')+'</span>'
