@@ -3790,12 +3790,14 @@
     const body=document.getElementById('ads-body');
     const goals=(_adsStatus&&_adsStatus.objectives)||[
       {key:'messages',label:'Сообщения в Direct'},{key:'traffic',label:'Переходы / профиль'},{key:'reach',label:'Охват / узнаваемость'}];
+    const _cur=(_adsStatus&&_adsStatus.currency)||'USD';
+    const _budDef=(_cur==='USD')?5:500;
     body.innerHTML=''
       +'<div class="card"><h3>🚀 Новая рекламная кампания</h3>'
       +'<div style="display:grid;gap:14px;max-width:640px">'
       +adsField('Название кампании','<input id="ad-name" class="inp" placeholder="Напр. Летняя распродажа" style="'+ADS_INP+'">')
       +adsField('Цель рекламы','<select id="ad-goal" class="inp" style="'+ADS_INP+'">'+goals.map(g=>'<option value="'+g.key+'">'+esc(g.label)+'</option>').join('')+'</select>')
-      +adsField('Дневной бюджет (в сомах)','<input id="ad-budget" type="number" min="1" value="500" class="inp" style="'+ADS_INP+'">')
+      +adsField('Дневной бюджет (в '+esc(_cur)+')','<input id="ad-budget" type="number" min="1" value="'+_budDef+'" class="inp" style="'+ADS_INP+'"><div style="font-size:12px;color:var(--muted);margin-top:4px">Валюта кабинета — '+esc(_cur)+'. Для теста начни с маленькой суммы (1–5 '+esc(_cur)+'/день).</div>')
       +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
         +adsField('Начало (необязательно)','<input id="ad-start" type="date" class="inp" style="'+ADS_INP+'">')
         +adsField('Окончание (необязательно)','<input id="ad-end" type="date" class="inp" style="'+ADS_INP+'">')
