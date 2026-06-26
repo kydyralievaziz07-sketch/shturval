@@ -383,6 +383,8 @@
     <section id="tab-rentlist" class="hide"><div id="rent-list"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-rentexp" class="hide"><div id="rent-exp"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-renthanded" class="hide"><div id="rent-handed"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
+    <section id="tab-rentanalysis" class="hide"><div id="rent-analysis"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
+    <section id="tab-rentplan" class="hide"><div id="rent-plan"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
 
     <section id="tab-dash">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
@@ -1116,6 +1118,8 @@
     rentlist :["Аренда авто","Кто, что и на сколько взял"],
     rentexp  :["Расходы","Куда уходят деньги по аренде"],
     renthanded:["Сдано","Передано руководителю"],
+    rentanalysis:["Анализ по машинам","Какая машина сколько зарабатывает"],
+    rentplan :["План","Цель по выручке и выполнение по месяцам"],
     set      :["Настройки","Доступы и интеграции"]
   };
   // ===== Навигация: модули сверху, подпункты слева (как в amoCRM) =====
@@ -1131,13 +1135,14 @@
     ai:{icon:'🤖',label:'ИИ-помощник'}, sim:{icon:'📊',label:'Симулятор'},
     rentdash:{icon:'📊',label:'Дашборд'}, rentcars:{icon:'🚗',label:'Машины'},
     rentlist:{icon:'🔑',label:'Аренда авто'}, rentexp:{icon:'🧾',label:'Расходы'},
-    renthanded:{icon:'📤',label:'Сдано'}
+    renthanded:{icon:'📤',label:'Сдано'},
+    rentanalysis:{icon:'📊',label:'Анализ по машинам'}, rentplan:{icon:'🎯',label:'План'}
   };
   const MODULES=[
     {key:'crm',  icon:'🧲', label:'CRM',     tabs:['crmdash','deals','tasks','clients','crm']},
     {key:'mkt',  icon:'📣', label:'Реклама', tabs:['ads']},
     {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','analytics','supl','fin']},
-    {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','rentcars','rentlist','rentexp','renthanded']},
+    {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','rentcars','rentlist','rentexp','renthanded','rentanalysis','rentplan']},
     {key:'team', icon:'👥', label:'Команда', tabs:['myday','hr']},
     {key:'ai',   icon:'🤖', label:'ИИ',      tabs:['ai','sim']}
   ];
@@ -1174,6 +1179,8 @@
     else if(tab==='rentlist') rentDispatch('list');
     else if(tab==='rentexp') rentDispatch('exp');
     else if(tab==='renthanded') rentDispatch('handed');
+    else if(tab==='rentanalysis') rentDispatch('analysis');
+    else if(tab==='rentplan') rentDispatch('plan');
   }
   function openTab(tab){
     curTab=tab;
@@ -4430,7 +4437,7 @@
   }
   function rAddBtn(type,label){ return '<button class="btn" style="padding:6px 14px;font-size:13px;margin-bottom:12px" onclick="openRentForm(\''+type+'\')">➕ '+label+'</button>'; }
 
-  var RENT_CONT={dash:'rent-dash',cars:'rent-cars',list:'rent-list',exp:'rent-exp',handed:'rent-handed'};
+  var RENT_CONT={dash:'rent-dash',cars:'rent-cars',list:'rent-list',exp:'rent-exp',handed:'rent-handed',analysis:'rent-analysis',plan:'rent-plan'};
   function rentDispatch(view){
     RENT_CUR=view;
     if(RENT){ rentRenderCur(); return; }
@@ -4450,7 +4457,7 @@
     if(el) el.innerHTML='<div class="card" style="border-color:var(--red)"><b>Не удалось загрузить данные аренды.</b><div style="color:var(--muted);font-size:13px;margin-top:6px">'+esc(RENT_ERR)+'</div><button class="btn ghost" style="margin-top:10px;padding:6px 12px;font-size:13px" onclick="RENT_ERR=\'\';rentDispatch(RENT_CUR)">↻ Повторить</button></div>';
   }
   function rentRenderCur(){
-    ({dash:renderRentDash,cars:renderRentCars,list:renderRentList,exp:renderRentExp,handed:renderRentHanded}[RENT_CUR]||renderRentDash)();
+    ({dash:renderRentDash,cars:renderRentCars,list:renderRentList,exp:renderRentExp,handed:renderRentHanded,analysis:renderRentAnalysis,plan:renderRentPlan}[RENT_CUR]||renderRentDash)();
   }
   // отправка изменения на сервер
   function rentPost(action,payload){
@@ -4586,6 +4593,46 @@
       '<td '+RT_TD+' style="text-align:right"><b>'+fmt(tot)+'</b></td><td '+RT_TD+'></td><td '+RT_TD+'></td></tr></tfoot>';
     b.innerHTML=rAddBtn('handed','Сдано')+'<div class="note" style="margin-bottom:12px">📤 Сдано руководителю — '+all.length+' записей (новые сверху). Суммы в сомах.</div>'+
       rtable(['Дата','Сумма','Комментарий',''], rows, foot);
+  }
+
+  // ---------- АНАЛИЗ ПО МАШИНАМ ----------
+  function renderRentAnalysis(){
+    var b=document.getElementById('rent-analysis'); if(!b) return;
+    var s=rentS(); var rows=rentD().caranalysis||[];
+    var tr=rows.map(function(c){
+      var pc=rnum(c.profit)<0?'var(--red)':'var(--green)';
+      return '<tr><td '+RT_TD+'><b>'+esc(c.model||'')+'</b></td>'+
+        '<td '+RT_TD+' style="text-align:center">'+esc(c.count||'0')+'</td>'+
+        '<td '+RT_TD+' style="text-align:center">'+esc(c.days||'0')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right">'+esc(c.revenue||'')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right;color:'+(rnum(c.debts)>0?'var(--red)':'var(--muted)')+'">'+esc(c.debts||'')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right">'+esc(c.expenses||'')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right;color:'+pc+'"><b>'+esc(c.profit||'')+'</b></td>'+
+        '<td '+RT_TD+' style="text-align:right;color:var(--muted)">'+esc(c.margin||'')+'</td></tr>';
+    }).join('');
+    b.innerHTML='<div class="note" style="margin-bottom:12px">📊 <b>Анализ по машинам</b> — какая машина сколько заработала за период (сортировка по прибыли). Прибыль = выручка − расходы по машине. Суммы в сомах.</div>'+
+      _rentPerSel(s)+rtable(['Модель','Аренд','Дней','Выручка','Долги','Расходы','Прибыль','Маржа'], tr);
+  }
+
+  // ---------- ПЛАН ----------
+  function renderRentPlan(){
+    var b=document.getElementById('rent-plan'); if(!b) return;
+    var p=rentD().plan||{rows:[]};
+    var bar=function(pct){ var w=Math.max(0,Math.min(100,pct||0)); var col=w>=100?'var(--green)':(w>=60?'var(--accent)':'#e0a23b');
+      return '<div style="background:var(--panel2);border-radius:6px;height:8px;overflow:hidden;min-width:80px"><div style="width:'+w+'%;height:100%;background:'+col+'"></div></div>'; };
+    var tr=(p.rows||[]).map(function(m){
+      return '<tr><td '+RT_TD+'><b>'+esc(m.month||'')+'</b></td>'+
+        '<td '+RT_TD+' style="text-align:right">'+esc(m.plan||'')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right">'+esc(m.fact||'')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right;font-weight:600">'+esc(m.pct||'')+'</td>'+
+        '<td '+RT_TD+'>'+bar(m.pct_num)+'</td></tr>';
+    }).join('');
+    var foot='<tfoot><tr><td '+RT_TD+'><b>ИТОГО</b></td><td '+RT_TD+' style="text-align:right"><b>'+esc(p.total_plan||'')+'</b></td>'+
+      '<td '+RT_TD+' style="text-align:right"><b>'+esc(p.total_fact||'')+'</b></td>'+
+      '<td '+RT_TD+' style="text-align:right"><b>'+esc(p.total_pct||'')+'</b></td><td '+RT_TD+'></td></tr></tfoot>';
+    b.innerHTML='<div class="note" style="margin-bottom:12px">🎯 <b>План выручки</b> — цель <b>'+esc(p.target||'')+'</b> сом/мес. «Факт» — это касса (получено) за месяц.</div>'+
+      ((p.rows&&p.rows.length)?rtable(['Месяц','План','Факт','Выполнено','Прогресс'], tr, foot)
+        :'<div class="card"><span style="color:var(--muted)">Пока нет месяцев с данными.</span></div>');
   }
 
   // ---------- ФОРМЫ (модальное окно) ----------

@@ -446,6 +446,41 @@ def rent_build(period=None):
     scnt = lambda w: sum(1 for c in cars if w in (c.get("status") or "").lower())
     active = sum(1 for r in frent if "заверш" not in (r.get("status") or "").lower() and (r.get("status") or ""))
     per_label = next((p["label"] for p in periods if p["key"] == (sel or "ИТОГО")), "ИТОГО")
+    # анализ по машинам (за выбранный период): какая машина сколько заработала
+    exp_by_model = {}
+    for e in fexp:
+        md = (e.get("model") or "").strip()
+        if md:
+            exp_by_model[md] = exp_by_model.get(md, 0) + _rnum(e.get("sum"))
+    car_an = []
+    for c in cars:
+        md = (c.get("model") or "").strip()
+        cr = [r for r in frent if (r.get("model") or "").strip() == md]
+        crev = sum(r["_got"] for r in cr)
+        cdebt = sum(r["_debt"] for r in cr)
+        cdays = sum(r["_days"] for r in cr if r["_days"] > 0)
+        cexp = exp_by_model.get(md, 0)
+        cprof = crev - cexp
+        car_an.append({"id": c.get("id", ""), "model": md, "count": str(len(cr)), "days": str(cdays),
+                       "revenue": _rmoney(crev), "debts": _rmoney(cdebt), "expenses": _rmoney(cexp),
+                       "profit": _rmoney(cprof), "margin": (str(round(cprof / crev * 100)) + "%") if crev else "—",
+                       "_profit": cprof})
+    car_an.sort(key=lambda x: x["_profit"], reverse=True)
+    # план выручки: цель на месяц и % выполнения по каждому месяцу (по всем данным)
+    plan_target = _rnum(d.get("plan_target")) or 400000
+    plan_rows = []
+    plan_fact_tot = 0
+    for k in sorted(months.keys()):
+        m = months[k]
+        y, mo = k.split("-")
+        fact = m["revenue"]
+        plan_fact_tot += fact
+        plan_rows.append({"month": "%s %s" % (RENT_MONTHS_RU[int(mo)], y), "plan": _rmoney(plan_target),
+                          "fact": _rmoney(fact), "pct": (str(round(fact / plan_target * 100)) + "%") if plan_target else "—",
+                          "pct_num": round(fact / plan_target * 100) if plan_target else 0})
+    plan_block = {"target": _rmoney(plan_target), "target_raw": plan_target, "rows": plan_rows,
+                  "total_plan": _rmoney(plan_target * len(plan_rows)), "total_fact": _rmoney(plan_fact_tot),
+                  "total_pct": (str(round(plan_fact_tot / (plan_target * len(plan_rows)) * 100)) + "%") if (plan_target and plan_rows) else "—"}
     summary = {
         "profit": _rmoney(profit), "revenue": _rmoney(revenue), "debts": _rmoney(debts), "expenses": _rmoney(exp_sum),
         "handed": _rmoney(handed_sum), "balance": _rmoney(balance), "salary": _rmoney(salary_sum), "undercollect": _rmoney(under_sum),
@@ -472,7 +507,8 @@ def rent_build(period=None):
                 "comment": h.get("comment", ""), "sum_raw": _rnum(h.get("sum"))}
     return {"data": {"cars": cars, "rentals": [fr(r) for r in rentals], "expenses": [fe(e) for e in exps],
                      "handed": [fh(h) for h in handed], "salary": [fh(s) for s in salary],
-                     "undercollect": [fh(u) for u in under], "months": months_list},
+                     "undercollect": [fh(u) for u in under], "months": months_list,
+                     "caranalysis": car_an, "plan": plan_block},
             "summary": summary, "periods": periods, "synced": time.strftime("%d.%m.%Y %H:%M")}
 
 def rent_apply(action, p):
@@ -2644,15 +2680,17 @@ def ads_create(p):
         raise RuntimeError("Укажите дневной бюджет (минимум 1).")
     if not c["page"]:
         raise RuntimeError("Не задан ID Страницы Facebook (META_PAGE_ID).")
-    # 1) Кампания
+    # 1) Кампания (бюджет задаём на уровне группы, поэтому общий бюджет кампании выключаем)
     camp = _ads_req("POST", _act() + "/campaigns",
                     {"name": name, "objective": spec["objective"], "status": "PAUSED",
-                     "special_ad_categories": "[]"})
+                     "special_ad_categories": "[]", "is_adset_budget_sharing_enabled": "false"})
     camp_id = camp.get("id")
     # 2) Таргетинг
     targeting = {"age_min": int(_num(p.get("age_min")) or 18),
                  "age_max": int(_num(p.get("age_max")) or 65),
-                 "publisher_platforms": ["instagram", "facebook"]}
+                 "publisher_platforms": ["instagram", "facebook"],
+                 # Meta требует явно указать Advantage-аудиторию: 0 = строго по нашему таргету
+                 "targeting_automation": {"advantage_audience": 0}}
     g = p.get("gender")
     if g == "male":   targeting["genders"] = [1]
     elif g == "female": targeting["genders"] = [2]
