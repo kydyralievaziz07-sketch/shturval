@@ -1392,19 +1392,19 @@
   }
   async function checkAuth(retries){
     // спрашиваем сервер: верный ли вход и какие разделы доступны.
-    // сервер на бесплатном тарифе может «просыпаться» — повторяем несколько раз.
-    retries=(retries==null)?4:retries;
+    // сервер на бесплатном тарифе может «просыпаться» (отдаёт 502/503) — повторяем несколько раз.
+    retries=(retries==null)?7:retries;
     for(let i=0;i<=retries;i++){
       try{
         const h={}; if(getPw()) h['X-Auth']=getPw(); if(getLg()) h['X-Login']=getLg();
         const r=await fetch(ONEC_BASE+'/api/auth',{headers:h});
-        if(r.ok) return await r.json();   // {ok, name, sections}
-        return false;                      // 401 — пароль реально не подошёл
-      }catch(e){
-        if(i<retries) await new Promise(res=>setTimeout(res,2500));  // ждём, пока сервер проснётся
-      }
+        if(r.ok) return await r.json();    // {ok, name, sections}
+        if(r.status===401) return false;   // ТОЛЬКО 401 = пароль реально не подошёл → выйти
+        // прочие коды (502/503 — сервер ещё просыпается, 500 и т.п.) — это НЕ «неверный пароль»
+      }catch(e){ /* нет связи — тоже ждём и повторяем */ }
+      if(i<retries) await new Promise(res=>setTimeout(res,3000));  // ждём, пока сервер проснётся
     }
-    return null;                           // сервер так и не ответил
+    return null;                           // сервер так и не ответил — вход НЕ стираем
   }
   document.getElementById('loginform').addEventListener('submit',async e=>{
     e.preventDefault();
