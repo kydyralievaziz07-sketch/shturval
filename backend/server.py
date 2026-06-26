@@ -2638,12 +2638,19 @@ def ads_campaigns():
     ins = {}
     try:
         di = _ads_req("GET", _act() + "/insights",
-                      {"level": "campaign", "fields": "campaign_id,spend,reach,impressions,clicks",
+                      {"level": "campaign", "fields": "campaign_id,spend,reach,impressions,clicks,actions",
                        "date_preset": "maximum", "limit": 200})
         for r in (di.get("data") or []):
             ins[r.get("campaign_id")] = r
     except Exception:
         pass
+    def _action(i, *types):
+        """Сумма по нужным типам действий (напр. начатые переписки)."""
+        tot = 0
+        for a in (i.get("actions") or []):
+            if a.get("action_type") in types:
+                tot += int(_num(a.get("value")))
+        return tot
     out = []
     for c in (d.get("data") or []):
         i = ins.get(c.get("id"), {})
@@ -2652,7 +2659,9 @@ def ads_campaigns():
                     "budget": round(_num(c.get("daily_budget", 0)) / ADS_CUR_MULT),
                     "spend": round(_num(i.get("spend", 0))), "reach": int(_num(i.get("reach", 0))),
                     "impressions": int(_num(i.get("impressions", 0))),
-                    "clicks": int(_num(i.get("clicks", 0)))})
+                    "clicks": int(_num(i.get("clicks", 0))),
+                    "conversations": _action(i, "onsite_conversion.messaging_conversation_started_7d",
+                                             "onsite_conversion.total_messaging_connection")})
     return {"campaigns": out, "configured": True}
 
 def ads_set_status(cid, active):

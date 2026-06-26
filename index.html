@@ -3986,13 +3986,14 @@
       const cs=d.campaigns||[];
       if(!cs.length){ el.innerHTML='<span style="color:var(--muted)">Пока нет кампаний. Создай первую выше ☝️</span>'; return; }
       el.innerHTML='<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
-        +'<tr style="color:var(--muted);text-align:left"><th style="padding:6px">Кампания</th><th>Статус</th><th>Бюджет/день</th><th>Потрачено</th><th>Охват</th><th>Клики</th><th></th></tr>'
+        +'<tr style="color:var(--muted);text-align:left"><th style="padding:6px">Кампания</th><th>Статус</th><th>Бюджет/день</th><th>Потрачено</th><th>Охват</th><th>Клики</th><th>💬 Переписок</th><th></th></tr>'
         +cs.map(c=>{
           const on=c.status==='ACTIVE';
           const badge=on?'<span style="color:#39d98a">● Активна</span>':(c.status==='PAUSED'?'<span style="color:#ffb84d">❚❚ Пауза</span>':'<span style="color:var(--muted)">'+esc(c.status||'')+'</span>');
           return '<tr style="border-top:1px solid var(--line,#222)"><td style="padding:7px 6px">'+esc(c.name||'')+'</td><td>'+badge+'</td>'
             +'<td>'+Number(c.budget||0).toLocaleString("ru-RU")+'</td><td>'+Number(c.spend||0).toLocaleString("ru-RU")+'</td>'
             +'<td>'+Number(c.reach||0).toLocaleString("ru-RU")+'</td><td>'+Number(c.clicks||0).toLocaleString("ru-RU")+'</td>'
+            +'<td style="font-weight:600;color:#39d98a">'+Number(c.conversations||0).toLocaleString("ru-RU")+'</td>'
             +'<td><button class="btn '+(on?'ghost':'')+'" style="font-size:12px;padding:5px 10px" onclick="adsToggle(\''+c.id+'\','+(on?'false':'true')+')">'+(on?'❚❚ Пауза':'▶ Включить')+'</button></td></tr>';
         }).join('')+'</table></div>';
     }catch(e){ el.innerHTML='<span style="color:#ff6b6b">Не удалось загрузить кампании</span>'; }
