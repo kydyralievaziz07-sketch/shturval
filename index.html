@@ -510,6 +510,18 @@
       <div id="ads-body"></div>
     </section>
 
+    <!-- ОТЧЁТЫ ПО РЕКЛАМЕ -->
+    <section id="tab-adsreport" class="hide">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">📑 Подробные метрики по каждой кампании — из Meta.</div>
+      <div id="adsreport-body"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div>
+    </section>
+
+    <!-- АНАЛИЗ РЕКЛАМЫ -->
+    <section id="tab-adsanalysis" class="hide">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">🔬 Какая аудитория и площадки приносят больше результата.</div>
+      <div id="adsanalysis-body"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div>
+    </section>
+
 
     <!-- PRODUCTS (живые данные из 1С) -->
     <section id="tab-prod" class="hide">
@@ -1113,6 +1125,8 @@
     sim      :["Симулятор «Что если»","Подвигай ползунки — увидишь, как изменится прибыль"],
     hr       :["Кадры","Явка, часы, авансы и премии"],
     ads      :["Реклама","Таргет Instagram/Facebook — запуск прямо из Штурвала"],
+    adsreport:["Отчёты по рекламе","Метрики кампаний: расход, охват, клики, переписки, цена результата"],
+    adsanalysis:["Анализ рекламы","Какая аудитория и площадки работают лучше"],
     rentdash :["Авто Рент — Дашборд","Сводка по аренде авто"],
     rentcars :["Машины","Автопарк аренды"],
     rentlist :["Аренда авто","Кто, что и на сколько взял"],
@@ -1131,7 +1145,7 @@
     prod:{icon:'📦',label:'Товары'}, sales:{icon:'🛒',label:'Продажи'},
     supl:{icon:'🤝',label:'Поставщики'}, fin:{icon:'💰',label:'Финансы'},
     myday:{icon:'🎯',label:'Мой день'}, hr:{icon:'🗓',label:'Кадры'},
-    ads:{icon:'📣',label:'Реклама'},
+    ads:{icon:'📣',label:'Реклама'}, adsreport:{icon:'📑',label:'Отчёты по рекламе'}, adsanalysis:{icon:'🔬',label:'Анализ'},
     ai:{icon:'🤖',label:'ИИ-помощник'}, sim:{icon:'📊',label:'Симулятор'},
     rentdash:{icon:'📊',label:'Дашборд'}, rentcars:{icon:'🚗',label:'Машины'},
     rentlist:{icon:'🔑',label:'Аренда авто'}, rentexp:{icon:'🧾',label:'Расходы'},
@@ -1140,7 +1154,7 @@
   };
   const MODULES=[
     {key:'crm',  icon:'🧲', label:'CRM',     tabs:['crmdash','deals','tasks','clients','crm']},
-    {key:'mkt',  icon:'📣', label:'Реклама', tabs:['ads']},
+    {key:'mkt',  icon:'📣', label:'Реклама', tabs:['ads','adsreport','adsanalysis']},
     {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','analytics','supl','fin']},
     {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','rentcars','rentlist','rentexp','renthanded','rentanalysis','rentplan']},
     {key:'team', icon:'👥', label:'Команда', tabs:['myday','hr']},
@@ -1151,7 +1165,7 @@
     if(tab==='set'||tab==='myday') return true;
     if(tab.indexOf('rent')===0) return isOwner()||canSee('rent');
     if(tab==='hr') return isOwner()||USER.sections.indexOf('hr')>=0;
-    if(tab==='ads') return isOwner()||canSee('ads');
+    if(tab==='ads'||tab==='adsreport'||tab==='adsanalysis') return isOwner()||canSee('ads');
     if(tab==='dash') return isOwner()||canSee('dash')||canSee('crm');
     if(tab==='sim') return isOwner()||canSee('ai')||canSee('analytics')||canSee('dash');
     return canSee(tab);
@@ -1162,6 +1176,8 @@
     else if(tab==='myday') renderMyDay();
     else if(tab==='hr') loadHR();
     else if(tab==='ads') loadAds();
+    else if(tab==='adsreport') loadAdsReport();
+    else if(tab==='adsanalysis') loadAdsAnalysis();
     else if(tab==='clients') renderClients();
     else if(tab==='ai') aiInit();
     else if(tab==='sim') simInit();
@@ -3791,6 +3807,59 @@
     renderAdsForm();
     loadAdsCampaigns();
   }
+  async function loadAdsReport(){
+    const el=document.getElementById('adsreport-body'); if(!el) return;
+    if(!ONEC_BASE){ el.innerHTML='<div class="card">🟠 Нужен подключённый сервер.</div>'; return; }
+    el.innerHTML='<div class="card"><span style="color:var(--muted)">⏳ Собираю отчёт…</span></div>';
+    try{
+      const r=await apiFetch('/api/ads/report',{},ONEC_BASE); const d=await r.json();
+      if(!d.configured){ el.innerHTML='<div class="card">🟠 Сначала подключи рекламный кабинет (раздел «Реклама»).</div>'; return; }
+      if(d.error){ el.innerHTML='<div class="card">🔴 '+esc(d.error)+'</div>'; return; }
+      const cur=d.currency||'', t=d.totals||{};
+      const N=n=>Number(n||0).toLocaleString('ru-RU');
+      const kpi=(ic,lbl,val)=>'<div class="card" style="padding:12px"><div style="font-size:12px;color:var(--muted)">'+ic+' '+lbl+'</div><div style="font-size:20px;font-weight:700;margin-top:4px">'+val+'</div></div>';
+      let html='<div class="kpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px">'
+        +kpi('💸','Потрачено',N(t.spend)+' '+esc(cur))
+        +kpi('👁','Охват',N(t.reach))
+        +kpi('📊','Показы',N(t.impr))
+        +kpi('🖱','Клики',N(t.clicks))
+        +kpi('💬','Переписки',N(t.conv))
+        +kpi('🎯','Цена переписки',t.cpconv?N(t.cpconv)+' '+esc(cur):'—')
+        +'</div>';
+      if(!(d.rows||[]).length){ html+='<div class="card"><span style="color:var(--muted)">Пока нет данных по кампаниям. Запусти рекламу — отчёт заполнится.</span></div>'; el.innerHTML=html; return; }
+      html+='<div class="card"><h3>Кампании</h3><div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
+        +'<tr style="color:var(--muted);text-align:left"><th style="padding:6px">Кампания</th><th>Потрачено</th><th>Охват</th><th>Показы</th><th>Клики</th><th>CTR%</th><th>CPC</th><th>CPM</th><th>Частота</th><th>💬</th><th>Цена 💬</th></tr>'
+        +d.rows.map(c=>'<tr style="border-top:1px solid var(--line,#222)"><td style="padding:7px 6px">'+esc(c.name||'')+'</td><td>'+N(c.spend)+'</td><td>'+N(c.reach)+'</td><td>'+N(c.impr)+'</td><td>'+N(c.clicks)+'</td><td>'+N(c.ctr)+'</td><td>'+N(c.cpc)+'</td><td>'+N(c.cpm)+'</td><td>'+N(c.freq)+'</td><td>'+N(c.conv)+'</td><td>'+(c.cpconv?N(c.cpconv):'—')+'</td></tr>').join('')
+        +'</table></div></div>';
+      if((d.days||[]).length){
+        const mx=Math.max.apply(null,d.days.map(x=>x.spend).concat([1]));
+        html+='<div class="card"><h3>Расход по дням (30 дней)</h3><div style="display:flex;align-items:flex-end;gap:3px;height:120px">'
+          +d.days.map(x=>'<div title="'+esc(x.date)+': '+N(x.spend)+' '+esc(cur)+'" style="flex:1;background:#39d98a;border-radius:3px 3px 0 0;height:'+Math.max(2,Math.round(x.spend/mx*110))+'px"></div>').join('')
+          +'</div></div>';
+      }
+      el.innerHTML=html;
+    }catch(e){ el.innerHTML='<div class="card">🔴 Не удалось загрузить отчёт</div>'; }
+  }
+  async function loadAdsAnalysis(){
+    const el=document.getElementById('adsanalysis-body'); if(!el) return;
+    if(!ONEC_BASE){ el.innerHTML='<div class="card">🟠 Нужен подключённый сервер.</div>'; return; }
+    el.innerHTML='<div class="card"><span style="color:var(--muted)">⏳ Анализирую…</span></div>';
+    try{
+      const r=await apiFetch('/api/ads/analysis',{},ONEC_BASE); const d=await r.json();
+      if(!d.configured){ el.innerHTML='<div class="card">🟠 Сначала подключи рекламный кабинет.</div>'; return; }
+      const N=n=>Number(n||0).toLocaleString('ru-RU');
+      const tbl=(title,rows)=>{
+        if(!(rows||[]).length) return '';
+        return '<div class="card"><h3>'+title+'</h3><div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
+          +'<tr style="color:var(--muted);text-align:left"><th style="padding:6px">Сегмент</th><th>Клики</th><th>Показы</th><th>Охват</th><th>Потрачено</th></tr>'
+          +rows.map(x=>'<tr style="border-top:1px solid var(--line,#222)"><td style="padding:7px 6px">'+esc(x.seg)+'</td><td>'+N(x.clicks)+'</td><td>'+N(x.impr)+'</td><td>'+N(x.reach)+'</td><td>'+N(x.spend)+'</td></tr>').join('')
+          +'</table></div></div>';
+      };
+      let html='<div class="card"><h3>💡 Выводы</h3><div style="font-size:14px;line-height:1.8">'+(d.tips||[]).map(t=>'• '+t).join('<br>')+'</div></div>';
+      html+=tbl('👥 Пол и возраст',d.age_gender)+tbl('📱 Площадки',d.platform)+tbl('📍 Плейсменты',d.placement);
+      el.innerHTML=html;
+    }catch(e){ el.innerHTML='<div class="card">🔴 Не удалось загрузить анализ</div>'; }
+  }
   function adsChecklist(s){
     const row=(ok,t)=>(ok?'✅ ':'⬜ ')+t;
     return [row(s.has_token,'Токен Meta'),row(s.has_account,'Рекламный аккаунт'),
@@ -3836,7 +3905,8 @@
       +adsField('Языки (необязательно)',SF('loc','Напр. Русский, Кыргызский'))
       +adsField('Интересы',SF('int','Напр. Мода, Красота, Дети')
         +'<div style="margin-top:8px"><div style="font-size:12px;color:var(--muted);margin-bottom:4px">💡 Популярные:</div><div style="display:flex;gap:6px;flex-wrap:wrap">'
-        +['Мода','Женская одежда','Красота','Шопинг','Косметика','Дети','Обувь'].map(t=>'<button type="button" class="btn ghost" style="font-size:12px;padding:4px 9px" onclick="adsQuickInterest(this,\''+t+'\')">+ '+t+'</button>').join('')+'</div></div>')
+        +['Мода','Женская одежда','Красота','Шопинг','Косметика','Дети','Обувь'].map(t=>'<button type="button" class="btn ghost" style="font-size:12px;padding:4px 9px" onclick="adsQuickInterest(this,\''+t+'\')">+ '+t+'</button>').join('')+'</div></div>'
+        +'<div id="ad-int-sugg" style="margin-top:10px"></div>')
       +adsField('Поведение (необязательно)',SF('beh','Напр. Частые путешественники'))
       +adsField('Исключить интересы (необязательно)',SF('exc','Кого НЕ показывать'))
       +'<div><div style="font-size:12px;color:var(--muted);margin-bottom:6px">Плейсменты (где показывать)</div>'
@@ -3903,8 +3973,32 @@
     try{
       const r=await apiFetch('/api/ads/interests?q='+encodeURIComponent(term),{},ONEC_BASE); const d=await r.json();
       const it=(d.items||[])[0];
-      if(it && !_adsSel.int.some(c=>c.id===it.id)){ _adsSel.int.push({id:it.id,name:it.name}); adsRenderChips(); }
+      if(it && !_adsSel.int.some(c=>c.id===it.id)){ _adsSel.int.push({id:it.id,name:it.name}); adsRenderChips(); adsLoadSuggestions(); }
     }catch(e){}
+  }
+  let _adsSuggT=null;
+  function adsLoadSuggestions(){
+    const el=document.getElementById('ad-int-sugg'); if(!el) return;
+    const names=_adsSel.int.map(c=>c.name).filter(Boolean);
+    if(!names.length){ el.innerHTML=''; return; }
+    el.innerHTML='<span style="font-size:12px;color:var(--muted)">✨ Подбираю похожие…</span>';
+    clearTimeout(_adsSuggT);
+    _adsSuggT=setTimeout(async()=>{
+      try{
+        const r=await apiFetch('/api/ads/suggest?q='+encodeURIComponent(names.join('||')),{},ONEC_BASE); const d=await r.json();
+        const sel=new Set(_adsSel.int.map(c=>String(c.id)));
+        const items=(d.items||[]).filter(it=>!sel.has(String(it.id))).slice(0,18);
+        window._adsSugg=items;
+        if(!items.length){ el.innerHTML=''; return; }
+        el.innerHTML='<div style="font-size:12px;color:var(--muted);margin-bottom:4px">✨ Похожие интересы (нажми, чтобы добавить — система продолжит подсказывать):</div><div style="display:flex;gap:6px;flex-wrap:wrap">'
+          +items.map((it,i)=>'<button type="button" class="btn ghost" style="font-size:12px;padding:4px 9px" onclick="adsAddSuggestion('+i+')">+ '+esc(it.name)+'</button>').join('')+'</div>';
+      }catch(e){ el.innerHTML=''; }
+    },300);
+  }
+  function adsAddSuggestion(i){
+    const it=(window._adsSugg||[])[i]; if(!it) return;
+    if(!_adsSel.int.some(c=>String(c.id)===String(it.id))) _adsSel.int.push({id:it.id,name:it.name});
+    adsRenderChips(); adsLoadSuggestions();
   }
   let _adsMode='post', _adsPostId='', _adsPosts=null;
   function setAdsMode(m){
@@ -3976,10 +4070,10 @@
     if(!arr.some(c=>String(c[idk])===String(it[idk]))){ const o={name:it.name}; o[idk]=it[idk]; if(kind==='geo') o.radius=25; arr.push(o); }
     const inp=document.getElementById('ad-'+kind); if(inp) inp.value='';
     const res=document.getElementById('ad-'+kind+'-res'); if(res) res.innerHTML='';
-    adsRenderChips();
+    adsRenderChips(); if(kind==='int') adsLoadSuggestions();
   }
   function adsRemove(kind,key){
-    const idk=ADS_KINDS[kind].idk; _adsSel[kind]=_adsSel[kind].filter(c=>String(c[idk])!==String(key)); adsRenderChips();
+    const idk=ADS_KINDS[kind].idk; _adsSel[kind]=_adsSel[kind].filter(c=>String(c[idk])!==String(key)); adsRenderChips(); if(kind==='int') adsLoadSuggestions();
   }
   function adsRenderChips(){
     const chip=(txt,kind,key)=>'<span style="display:inline-flex;align-items:center;gap:6px;background:var(--bg2,#1c2330);border:1px solid var(--line,#2a2f3a);border-radius:20px;padding:4px 10px;margin:3px;font-size:13px">'+esc(txt)+' <span style="cursor:pointer;opacity:.7" onclick="adsRemove(\''+kind+'\',\''+String(key).replace(/['\\]/g,"")+'\')">✕</span></span>';
@@ -4615,18 +4709,41 @@
   }
 
   // ---------- МАШИНЫ ----------
+  var RENT_SOLD_OPEN=false;
+  function carIsSold(c){ return ((c.status||'').toLowerCase().indexOf('продан')>=0); }
+  function rentToggleSold(){ RENT_SOLD_OPEN=!RENT_SOLD_OPEN; renderRentCars(); }
+  function rentSellCar(id){ if(!confirm('Отметить машину как ПРОДАННУЮ? Она уедет в скрытый архив «Проданные авто». История и расчёты сохранятся, из активного парка пропадёт.')) return;
+    rentPost('edit_car',{id:id,status:'Продана'}).catch(function(e){ alert('Не получилось: '+e.message); }); }
+  function rentRestoreCar(id){ rentPost('edit_car',{id:id,status:'Свободна'}).then(function(){ RENT_SOLD_OPEN=true; }).catch(function(e){ alert('Не получилось: '+e.message); }); }
+  function _carRow(c,archived){
+    var acts=archived
+      ? ('<td '+RT_TD+' style="white-space:nowrap;text-align:right">'+
+         '<button class="btn ghost" title="Вернуть в парк" style="padding:3px 8px;font-size:13px;color:var(--green)" onclick="rentRestoreCar(\''+c.id+'\')">↩︎ Вернуть</button> '+
+         '<button class="btn ghost" title="Удалить навсегда" style="padding:3px 8px;font-size:13px;color:var(--red)" onclick="rentDel(\'car\',\''+c.id+'\')">🗑</button></td>')
+      : ('<td '+RT_TD+' style="white-space:nowrap;text-align:right">'+
+         '<button class="btn ghost" title="Изменить" style="padding:3px 8px;font-size:13px" onclick="openRentForm(\'car\',\''+c.id+'\')">✏️</button> '+
+         '<button class="btn ghost" title="Продать (в архив)" style="padding:3px 8px;font-size:13px" onclick="rentSellCar(\''+c.id+'\')">💰</button> '+
+         '<button class="btn ghost" title="Удалить" style="padding:3px 8px;font-size:13px;color:var(--red)" onclick="rentDel(\'car\',\''+c.id+'\')">🗑</button></td>');
+    return '<tr><td '+RT_TD+' style="color:var(--muted)">'+esc(c.id||'')+'</td><td '+RT_TD+'><b>'+esc(c.model||'')+'</b></td>'+
+      '<td '+RT_TD+'>'+(c.plate?esc(c.plate):'<span style="color:var(--muted)">—</span>')+'</td>'+
+      '<td '+RT_TD+' style="text-align:right">'+esc(c.price||'')+'</td><td '+RT_TD+' style="text-align:right">'+esc(c.deposit||'')+'</td>'+
+      '<td '+RT_TD+' style="text-align:right">'+(c.cost?esc(c.cost):'<span style="color:var(--muted)">—</span>')+'</td>'+
+      '<td '+RT_TD+'>'+rstatusChip(c.status)+'</td>'+acts+'</tr>';
+  }
   function renderRentCars(){
     var b=document.getElementById('rent-cars'); if(!b) return;
-    var cars=rentD().cars||[];
-    var rows=cars.map(function(c){
-      return '<tr><td '+RT_TD+' style="color:var(--muted)">'+esc(c.id||'')+'</td><td '+RT_TD+'><b>'+esc(c.model||'')+'</b></td>'+
-        '<td '+RT_TD+'>'+(c.plate?esc(c.plate):'<span style="color:var(--muted)">—</span>')+'</td>'+
-        '<td '+RT_TD+' style="text-align:right">'+esc(c.price||'')+'</td><td '+RT_TD+' style="text-align:right">'+esc(c.deposit||'')+'</td>'+
-        '<td '+RT_TD+' style="text-align:right">'+(c.cost?esc(c.cost):'<span style="color:var(--muted)">—</span>')+'</td>'+
-        '<td '+RT_TD+'>'+rstatusChip(c.status)+'</td>'+rActs('car',c.id)+'</tr>';
-    }).join('');
-    b.innerHTML=rAddBtn('car','Машина')+'<div class="note" style="margin-bottom:12px">🚗 Автопарк — '+cars.length+' машин. Цена/сутки, залог и стоимость покупки в сомах.</div>'+
-      rtable(['ID','Модель','Госномер','Цена/сутки','Залог','Стоимость','Статус',''], rows);
+    var all=rentD().cars||[];
+    var active=all.filter(function(c){ return !carIsSold(c); });
+    var sold=all.filter(carIsSold);
+    var head=['ID','Модель','Госномер','Цена/сутки','Залог','Стоимость','Статус',''];
+    var main=rAddBtn('car','Машина')+'<div class="note" style="margin-bottom:12px">🚗 Автопарк — '+active.length+' машин. Цена/сутки, залог и стоимость покупки в сомах. ➕ добавить · ✏️ изменить · 💰 продать (в архив) · 🗑 удалить.</div>'+
+      rtable(head, active.map(function(c){ return _carRow(c,false); }).join(''));
+    var arch='';
+    if(sold.length){
+      arch='<div style="margin-top:18px"><button class="btn ghost" style="padding:7px 14px;font-size:14px" onclick="rentToggleSold()">🗄 Проданные авто ('+sold.length+') '+(RENT_SOLD_OPEN?'▲':'▼')+'</button>'+
+        (RENT_SOLD_OPEN?('<div style="margin-top:12px"><div class="note" style="margin-bottom:10px">Архив проданных машин — в активный парк и анализ не входят. Можно вернуть (↩︎) или удалить совсем.</div>'+rtable(head, sold.map(function(c){ return _carRow(c,true); }).join('')))+'</div>':'')+'</div>';
+    }
+    b.innerHTML=main+arch;
   }
 
   // ---------- АРЕНДЫ ----------

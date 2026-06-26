@@ -455,6 +455,8 @@ def rent_build(period=None):
             exp_by_model[md] = exp_by_model.get(md, 0) + _rnum(e.get("sum"))
     car_an = []
     for c in cars:
+        if "продан" in (c.get("status") or "").lower():   # проданные — в архиве, не в анализе
+            continue
         md = (c.get("model") or "").strip()
         cr = [r for r in frent if (r.get("model") or "").strip() == md]
         crev = sum(r["_got"] for r in cr)
@@ -523,7 +525,8 @@ def rent_build(period=None):
     summary = {
         "profit": _rmoney(profit), "revenue": _rmoney(revenue), "debts": _rmoney(debts), "expenses": _rmoney(exp_sum),
         "handed": _rmoney(handed_sum), "balance": _rmoney(balance), "salary": _rmoney(salary_sum), "undercollect": _rmoney(under_sum),
-        "cars_total": str(len(cars)), "cars_free": str(scnt("свобод")), "cars_rented": str(scnt("аренд")), "cars_repair": str(scnt("ремонт")),
+        "cars_total": str(sum(1 for c in cars if "продан" not in (c.get("status") or "").lower())),
+        "cars_free": str(scnt("свобод")), "cars_rented": str(scnt("аренд")), "cars_repair": str(scnt("ремонт")),
         "rev_accrued": _rmoney(accrued), "avg_check": _rmoney(round(accrued / cnt) if cnt else 0),
         "avg_days": str(avg_days).replace(".", ","), "margin": (str(round(profit / revenue * 100)) + "%") if revenue else "—",
         "rentals_total": str(cnt), "rentals_active": str(active), "plan": "", "period": per_label,
@@ -2696,6 +2699,18 @@ def ads_search_interests(q):
                        "audience": x.get("audience_size_upper_bound") or x.get("audience_size")}
                       for x in (d.get("data") or [])]}
 
+def ads_suggest_interests(names):
+    """Умные рекомендации интересов: по уже выбранным Meta предлагает похожие
+    (как «прощупывание аудитории» в Ads Manager). names — список названий интересов."""
+    names = [n for n in (names or []) if n]
+    if not (names and ads_on()):
+        return {"items": []}
+    d = _ads_req("GET", "search", {"type": "adinterestsuggestion",
+                 "interest_list": json.dumps(names), "limit": 30})
+    return {"items": [{"id": x.get("id"), "name": x.get("name"),
+                       "audience": x.get("audience_size_upper_bound") or x.get("audience_size")}
+                      for x in (d.get("data") or [])]}
+
 def ads_search_geo(q):
     if not (q and ads_on()):
         return {"items": []}
@@ -2768,6 +2783,91 @@ def ads_upload_image(b64):
         if v.get("hash"):
             return v["hash"]
     raise RuntimeError("Не удалось загрузить изображение в Meta")
+
+_CONV_ACTIONS = ("onsite_conversion.messaging_conversation_started_7d",
+                 "onsite_conversion.total_messaging_connection")
+def _ins_conv(i):
+    return sum(int(_num(a.get("value"))) for a in (i.get("actions") or [])
+               if a.get("action_type") in _CONV_ACTIONS)
+
+def ads_report():
+    """Подробный отчёт по рекламе: метрики по каждой кампании + итог + динамика по дням."""
+    if not ads_on():
+        return {"configured": False, "rows": [], "totals": {}, "days": []}
+    cur = ""
+    try:
+        cur = _ads_req("GET", _act(), {"fields": "currency"}).get("currency", "")
+    except Exception:
+        pass
+    flds = "campaign_name,spend,impressions,reach,clicks,ctr,cpc,cpm,frequency,actions"
+    rows, tot = [], {"spend": 0.0, "impr": 0, "reach": 0, "clicks": 0, "conv": 0}
+    try:
+        di = _ads_req("GET", _act() + "/insights",
+                      {"level": "campaign", "fields": flds, "date_preset": "maximum", "limit": 200})
+        for i in (di.get("data") or []):
+            spend = _num(i.get("spend")); conv = _ins_conv(i)
+            clicks = int(_num(i.get("clicks")))
+            rows.append({"name": i.get("campaign_name"), "spend": round(spend), "impr": int(_num(i.get("impressions"))),
+                         "reach": int(_num(i.get("reach"))), "clicks": clicks,
+                         "ctr": round(_num(i.get("ctr")), 2), "cpc": round(_num(i.get("cpc")), 2),
+                         "cpm": round(_num(i.get("cpm")), 2), "freq": round(_num(i.get("frequency")), 1),
+                         "conv": conv, "cpconv": round(spend / conv, 2) if conv else 0})
+            tot["spend"] += spend; tot["impr"] += _num(i.get("impressions"))
+            tot["reach"] += _num(i.get("reach")); tot["clicks"] += clicks; tot["conv"] += conv
+    except Exception as e:
+        return {"configured": True, "rows": [], "totals": {}, "days": [], "error": str(e), "currency": cur}
+    rows.sort(key=lambda r: -r["spend"])
+    days = []
+    try:
+        dd = _ads_req("GET", _act() + "/insights",
+                      {"fields": "spend,impressions,clicks", "time_increment": "1",
+                       "date_preset": "last_30d", "limit": 60})
+        days = [{"date": x.get("date_start"), "spend": round(_num(x.get("spend"))),
+                 "clicks": int(_num(x.get("clicks")))} for x in (dd.get("data") or [])]
+    except Exception:
+        pass
+    t = {"spend": round(tot["spend"]), "impr": int(tot["impr"]), "reach": int(tot["reach"]),
+         "clicks": tot["clicks"], "conv": tot["conv"],
+         "ctr": round(tot["clicks"] / tot["impr"] * 100, 2) if tot["impr"] else 0,
+         "cpc": round(tot["spend"] / tot["clicks"], 2) if tot["clicks"] else 0,
+         "cpconv": round(tot["spend"] / tot["conv"], 2) if tot["conv"] else 0}
+    return {"configured": True, "rows": rows, "totals": t, "days": days, "currency": cur}
+
+def ads_analysis():
+    """Анализ аудитории: разбивки по полу/возрасту, платформе, плейсменту + авто-выводы."""
+    if not ads_on():
+        return {"configured": False}
+    def bd(breakdowns):
+        try:
+            d = _ads_req("GET", _act() + "/insights",
+                         {"fields": "spend,impressions,clicks,reach", "breakdowns": breakdowns,
+                          "date_preset": "maximum", "limit": 100})
+            return d.get("data") or []
+        except Exception:
+            return []
+    def pack(rows, keyf):
+        out = []
+        for r in rows:
+            out.append({"seg": keyf(r), "spend": round(_num(r.get("spend"))),
+                        "impr": int(_num(r.get("impressions"))), "clicks": int(_num(r.get("clicks"))),
+                        "reach": int(_num(r.get("reach")))})
+        out.sort(key=lambda x: -x["clicks"])
+        return out
+    gen = {"male": "Мужчины", "female": "Женщины", "unknown": "Не указан"}
+    ag = pack(bd("age,gender"), lambda r: (r.get("age", "?") + " · " + gen.get(r.get("gender"), r.get("gender", "?"))))
+    plat = pack(bd("publisher_platform"), lambda r: r.get("publisher_platform", "?"))
+    place = pack(bd("publisher_platform,platform_position"),
+                 lambda r: (r.get("publisher_platform", "?") + " · " + r.get("platform_position", "?")))
+    tips = []
+    if ag and ag[0]["clicks"]:
+        tips.append("👥 Больше всего откликов от: <b>%s</b> (%d кликов)." % (ag[0]["seg"], ag[0]["clicks"]))
+    if plat and plat[0]["clicks"]:
+        tips.append("📱 Лучшая площадка: <b>%s</b>." % plat[0]["seg"])
+    if place and place[0]["clicks"]:
+        tips.append("📍 Лучший плейсмент: <b>%s</b>." % place[0]["seg"])
+    if not tips:
+        tips.append("Пока мало данных для выводов — запусти кампанию, и здесь появится анализ аудитории.")
+    return {"configured": True, "age_gender": ag[:12], "platform": plat, "placement": place[:12], "tips": tips}
 
 def ads_create(p):
     """Полный мастер Ads Manager: Кампания → Группа объявлений → Креатив → Объявление.
@@ -3537,6 +3637,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, ads_status())
                 if self.path.startswith("/api/ads/campaigns"):
                     return self._send(200, ads_campaigns())
+                if self.path.startswith("/api/ads/report"):
+                    return self._send(200, ads_report())
+                if self.path.startswith("/api/ads/analysis"):
+                    return self._send(200, ads_analysis())
                 if self.path.startswith("/api/ads/interests"):
                     return self._send(200, ads_search_interests(q))
                 if self.path.startswith("/api/ads/geo"):
@@ -3545,6 +3649,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, ads_search_locales(q))
                 if self.path.startswith("/api/ads/behaviors"):
                     return self._send(200, ads_search_behaviors(q))
+                if self.path.startswith("/api/ads/suggest"):
+                    return self._send(200, ads_suggest_interests([n for n in q.split("||") if n.strip()]))
                 if self.path.startswith("/api/ads/posts"):
                     return self._send(200, ads_list_posts())
             except Exception as e:
