@@ -2531,6 +2531,50 @@ def ads_status():
         st["error"] = str(e)
     return st
 
+_ig_id_cache = {"id": None}
+def ads_ig_id():
+    """ID инстаграм-аккаунта для рекламы: из конфига, иначе вычисляем по Странице."""
+    c = _ads_cfg()
+    if c["ig"]:
+        return c["ig"]
+    if _ig_id_cache["id"]:
+        return _ig_id_cache["id"]
+    if c["page"]:
+        try:
+            d = _ads_req("GET", str(c["page"]), {"fields": "instagram_business_account"})
+            iid = (d.get("instagram_business_account") or {}).get("id")
+            if iid:
+                _ig_id_cache["id"] = iid
+                return iid
+        except Exception:
+            pass
+    return ""
+
+def ads_list_posts(limit=30):
+    """Список постов инстаграма (для продвижения готового поста). Возвращает превью."""
+    if not ads_on():
+        return {"posts": [], "configured": False}
+    iid = ads_ig_id()
+    if not iid:
+        return {"posts": [], "error": "Не найден инстаграм-аккаунт. Привяжите Instagram к Странице/кабинету."}
+    try:
+        d = _ads_req("GET", str(iid) + "/media",
+                     {"fields": "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count",
+                      "limit": int(limit)})
+    except Exception as e:
+        return {"posts": [], "error": str(e)}
+    posts = []
+    for m in (d.get("data") or []):
+        posts.append({"id": m.get("id"),
+                      "caption": (m.get("caption") or "")[:140],
+                      "type": m.get("media_type"),
+                      "thumb": m.get("thumbnail_url") or m.get("media_url"),
+                      "permalink": m.get("permalink"),
+                      "likes": int(_num(m.get("like_count"))),
+                      "comments": int(_num(m.get("comments_count"))),
+                      "time": m.get("timestamp")})
+    return {"posts": posts, "configured": True}
+
 def ads_search_interests(q):
     if not (q and ads_on()):
         return {"items": []}
@@ -2643,26 +2687,35 @@ def ads_create(p):
         adset["promoted_object"] = json.dumps({"page_id": c["page"]})
     adset_id = _ads_req("POST", _act() + "/adsets", adset).get("id")
     # 4) Креатив
-    msg = (p.get("text") or "").strip()
-    link = (p.get("link") or "").strip()
-    if not link and CFG.get("IG_USERNAME"):
-        link = "https://instagram.com/" + CFG.get("IG_USERNAME")
-    story = {"page_id": c["page"]}
-    if c["ig"]:
-        story["instagram_actor_id"] = c["ig"]
-    link_data = {"message": msg}
-    if p.get("image_hash"):
-        link_data["image_hash"] = p["image_hash"]
-    if p.get("goal") != "messages":
-        link_data["link"] = link or "https://facebook.com/" + str(c["page"])
-        link_data["call_to_action"] = {"type": spec["cta"], "value": {"link": link_data["link"]}}
+    ig_id = ads_ig_id()
+    if p.get("post_id"):
+        # Продвижение ГОТОВОГО поста инстаграма (лайки/комменты сохраняются)
+        if not ig_id:
+            raise RuntimeError("Не найден инстаграм-аккаунт для продвижения поста.")
+        creative_params = {"name": name + " — креатив",
+                           "object_story_spec": json.dumps({"page_id": c["page"],
+                                                            "instagram_actor_id": ig_id}),
+                           "source_instagram_media_id": str(p["post_id"])}
     else:
-        link_data["call_to_action"] = {"type": spec["cta"]}
+        # Новое объявление: фото + текст
+        msg = (p.get("text") or "").strip()
+        link = (p.get("link") or "").strip()
+        if not link and CFG.get("IG_USERNAME"):
+            link = "https://instagram.com/" + CFG.get("IG_USERNAME")
+        story = {"page_id": c["page"]}
+        if ig_id:
+            story["instagram_actor_id"] = ig_id
+        link_data = {"message": msg}
+        if p.get("image_hash"):
+            link_data["image_hash"] = p["image_hash"]
         link_data["link"] = link or "https://facebook.com/" + str(c["page"])
-    story["link_data"] = link_data
-    creative_id = _ads_req("POST", _act() + "/adcreatives",
-                           {"name": name + " — креатив",
-                            "object_story_spec": json.dumps(story)}).get("id")
+        if p.get("goal") != "messages":
+            link_data["call_to_action"] = {"type": spec["cta"], "value": {"link": link_data["link"]}}
+        else:
+            link_data["call_to_action"] = {"type": spec["cta"]}
+        story["link_data"] = link_data
+        creative_params = {"name": name + " — креатив", "object_story_spec": json.dumps(story)}
+    creative_id = _ads_req("POST", _act() + "/adcreatives", creative_params).get("id")
     # 5) Объявление
     ad_id = _ads_req("POST", _act() + "/ads",
                      {"name": name + " — объявление", "adset_id": adset_id,
@@ -3307,6 +3360,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, ads_search_interests(q))
                 if self.path.startswith("/api/ads/geo"):
                     return self._send(200, ads_search_geo(q))
+                if self.path.startswith("/api/ads/posts"):
+                    return self._send(200, ads_list_posts())
             except Exception as e:
                 return self._send(200, {"error": str(e)})
             return self._send(404, {"error": "неизвестный метод рекламы"})

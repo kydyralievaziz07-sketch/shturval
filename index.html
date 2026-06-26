@@ -3809,15 +3809,67 @@
         +adsField('Пол','<select id="ad-gender" class="inp" style="'+ADS_INP+'"><option value="all">Все</option><option value="female">Женщины</option><option value="male">Мужчины</option></select>')
       +'</div>'
       +adsField('Интересы','<input id="ad-int" class="inp" placeholder="Напр. Мода, Красота, Дети — начни вводить" style="'+ADS_INP+'" oninput="adsSearch(\'int\',this.value)"><div id="ad-int-res" style="font-size:13px"></div><div id="ad-int-chips" style="margin-top:6px"></div>')
-      +adsField('Текст объявления','<textarea id="ad-text" class="inp" rows="3" placeholder="Что рекламируем? Коротко и цепляюще." style="'+ADS_INP+';resize:vertical"></textarea>')
-      +adsField('Ссылка (необязательно)','<input id="ad-link" class="inp" placeholder="https://… (профиль, сайт). Для «Сообщений» не нужна." style="'+ADS_INP+'">')
-      +adsField('Картинка','<input id="ad-img" type="file" accept="image/*" onchange="adsUploadImg(this)"><div id="ad-img-st" style="font-size:12px;color:var(--muted);margin-top:4px"></div>')
+      +'<div><div style="font-size:12px;color:var(--muted);margin-bottom:6px">Что показываем в рекламе</div>'
+        +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+          +'<button type="button" class="btn" id="ad-mode-post" onclick="setAdsMode(\'post\')">📲 Готовый пост из инстаграма</button>'
+          +'<button type="button" class="btn ghost" id="ad-mode-photo" onclick="setAdsMode(\'photo\')">🖼️ Своё фото + текст</button>'
+        +'</div>'
+        +'<div id="ad-creative-post"><div id="ad-posts" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;max-height:340px;overflow:auto;padding:2px">Загружаю посты…</div></div>'
+        +'<div id="ad-creative-photo" style="display:none;gap:14px;grid-template-columns:1fr">'
+          +adsField('Текст объявления','<textarea id="ad-text" class="inp" rows="3" placeholder="Что рекламируем? Коротко и цепляюще." style="'+ADS_INP+';resize:vertical"></textarea>')
+          +adsField('Ссылка (необязательно)','<input id="ad-link" class="inp" placeholder="https://… (профиль, сайт). Для «Сообщений» не нужна." style="'+ADS_INP+'">')
+          +adsField('Картинка','<input id="ad-img" type="file" accept="image/*" onchange="adsUploadImg(this)"><div id="ad-img-st" style="font-size:12px;color:var(--muted);margin-top:4px"></div>')
+        +'</div>'
+      +'</div>'
       +'<div id="ad-create-msg" style="font-size:13px"></div>'
       +'<div><button class="btn" id="ad-create-btn" onclick="adsCreate()">🚀 Создать кампанию (на паузе)</button></div>'
       +'<div style="font-size:12px;color:var(--muted)">Кампания создаётся <b>на паузе</b> — деньги не тратятся. Проверишь и включишь её кнопкой ниже.</div>'
       +'</div></div>'
       +'<div class="card" id="ads-camps"><h3>📊 Мои кампании</h3><div id="ads-camps-body" style="color:var(--muted)">Загрузка…</div></div>';
     adsRenderChips();
+    setAdsMode(_adsMode);
+  }
+  let _adsMode='post', _adsPostId='', _adsPosts=null;
+  function setAdsMode(m){
+    _adsMode=m;
+    const bp=document.getElementById('ad-mode-post'), bf=document.getElementById('ad-mode-photo');
+    const cp=document.getElementById('ad-creative-post'), cf=document.getElementById('ad-creative-photo');
+    if(bp) bp.className='btn'+(m==='post'?'':' ghost');
+    if(bf) bf.className='btn'+(m==='photo'?'':' ghost');
+    if(cp) cp.style.display=(m==='post'?'':'none');
+    if(cf) cf.style.display=(m==='photo'?'grid':'none');
+    if(m==='post' && _adsPosts===null) loadAdsPosts();
+  }
+  async function loadAdsPosts(){
+    const el=document.getElementById('ad-posts'); if(!el) return;
+    el.innerHTML='Загружаю посты…';
+    try{
+      const r=await apiFetch('/api/ads/posts',{},ONEC_BASE); const d=await r.json();
+      _adsPosts=d.posts||[];
+      if(d.error){ el.innerHTML='<span style="color:#ff6b6b;grid-column:1/-1">'+esc(d.error)+'</span>'; return; }
+      if(!_adsPosts.length){ el.innerHTML='<span style="color:var(--muted);grid-column:1/-1">Постов не найдено</span>'; return; }
+      el.innerHTML=_adsPosts.map(p=>{
+        const sel=(p.id===_adsPostId);
+        const cap=esc((p.caption||'').slice(0,40));
+        return '<div onclick="adsPickPost(\''+esc(p.id)+'\')" title="'+cap+'" style="cursor:pointer;border:2px solid '+(sel?'#39d98a':'transparent')+';border-radius:8px;overflow:hidden;background:#0e1320;aspect-ratio:1/1;position:relative">'
+          +(p.thumb?'<img src="'+esc(p.thumb)+'" style="width:100%;height:100%;object-fit:cover" loading="lazy">':'<div style="padding:6px;font-size:10px;color:var(--muted)">'+cap+'</div>')
+          +(p.type==='VIDEO'?'<span style="position:absolute;top:3px;right:4px;font-size:11px">▶️</span>':'')
+          +(sel?'<span style="position:absolute;bottom:3px;right:4px;font-size:14px">✅</span>':'')
+          +'</div>';
+      }).join('');
+    }catch(e){ el.innerHTML='<span style="color:#ff6b6b;grid-column:1/-1">Не удалось загрузить посты</span>'; }
+  }
+  function adsPickPost(id){ _adsPostId=(_adsPostId===id?'':id); renderAdsPostsGrid(); }
+  function renderAdsPostsGrid(){
+    const el=document.getElementById('ad-posts'); if(!el||!_adsPosts) return;
+    el.innerHTML=_adsPosts.map(p=>{
+      const sel=(p.id===_adsPostId); const cap=esc((p.caption||'').slice(0,40));
+      return '<div onclick="adsPickPost(\''+esc(p.id)+'\')" title="'+cap+'" style="cursor:pointer;border:2px solid '+(sel?'#39d98a':'transparent')+';border-radius:8px;overflow:hidden;background:#0e1320;aspect-ratio:1/1;position:relative">'
+        +(p.thumb?'<img src="'+esc(p.thumb)+'" style="width:100%;height:100%;object-fit:cover" loading="lazy">':'<div style="padding:6px;font-size:10px;color:var(--muted)">'+cap+'</div>')
+        +(p.type==='VIDEO'?'<span style="position:absolute;top:3px;right:4px;font-size:11px">▶️</span>':'')
+        +(sel?'<span style="position:absolute;bottom:3px;right:4px;font-size:14px">✅</span>':'')
+        +'</div>';
+    }).join('');
   }
   const ADS_INP='width:100%;padding:9px 11px;border:1px solid var(--line,#2a2f3a);border-radius:9px;background:var(--bg2,#161a22);color:inherit;font-size:14px';
   function adsField(label,inner){ return '<div><div style="font-size:12px;color:var(--muted);margin-bottom:4px">'+esc(label)+'</div>'+inner+'</div>'; }
@@ -3878,22 +3930,25 @@
       age_min:Number(document.getElementById('ad-agemin').value)||18, age_max:Number(document.getElementById('ad-agemax').value)||65,
       gender:document.getElementById('ad-gender').value||'all',
       cities:_adsCities, interests:_adsInterests,
-      text:(document.getElementById('ad-text').value||'').trim(),
-      link:(document.getElementById('ad-link').value||'').trim(),
-      image_hash:_adsImageHash||''
+      text:(document.getElementById('ad-text')?document.getElementById('ad-text').value:'').trim(),
+      link:(document.getElementById('ad-link')?document.getElementById('ad-link').value:'').trim(),
+      image_hash:_adsImageHash||'',
+      post_id:(_adsMode==='post'?_adsPostId:'')
     };
     if(!body.daily_budget){ msg.innerHTML='🔴 Укажи дневной бюджет.'; return; }
-    if(!body.text){ msg.innerHTML='🔴 Добавь текст объявления.'; return; }
+    if(_adsMode==='post' && !body.post_id){ msg.innerHTML='🔴 Выбери пост из инстаграма (нажми на нужный).'; return; }
+    if(_adsMode==='photo' && !body.text){ msg.innerHTML='🔴 Добавь текст объявления.'; return; }
     btn.disabled=true; const old=btn.textContent; btn.textContent='Создаю…'; msg.innerHTML='';
     try{
       const r=await apiFetch('/api/ads/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},ONEC_BASE);
       const d=await r.json();
       if(d.ok){
         msg.innerHTML='✅ '+esc(d.note||'Кампания создана.');
-        _adsInterests=[];_adsCities=[];_adsImageHash='';_adsImgName='';
-        document.getElementById('ad-name').value='';document.getElementById('ad-text').value='';
+        _adsInterests=[];_adsCities=[];_adsImageHash='';_adsImgName='';_adsPostId='';
+        document.getElementById('ad-name').value='';
+        const _t=document.getElementById('ad-text'); if(_t) _t.value='';
         const im=document.getElementById('ad-img-st'); if(im) im.textContent='';
-        adsRenderChips(); loadAdsCampaigns();
+        adsRenderChips(); if(_adsPosts) renderAdsPostsGrid(); loadAdsCampaigns();
       } else msg.innerHTML='🔴 '+esc(d.error||'Не удалось создать кампанию');
     }catch(e){ msg.innerHTML='🔴 Ошибка: '+esc(String(e)); }
     btn.disabled=false; btn.textContent=old;
