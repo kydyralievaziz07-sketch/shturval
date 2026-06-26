@@ -2727,12 +2727,12 @@ def ads_create(p):
     # 4) Креатив
     ig_id = ads_ig_id()
     if p.get("post_id"):
-        # Продвижение ГОТОВОГО поста инстаграма (лайки/комменты сохраняются)
+        # Продвижение ГОТОВОГО поста инстаграма (лайки/комменты сохраняются).
+        # Рабочая формула: instagram_user_id + source_instagram_media_id напрямую (без object_story_spec).
         if not ig_id:
             raise RuntimeError("Не найден инстаграм-аккаунт для продвижения поста.")
         creative_params = {"name": name + " — креатив",
-                           "object_story_spec": json.dumps({"page_id": c["page"],
-                                                            "instagram_actor_id": ig_id}),
+                           "instagram_user_id": str(ig_id),
                            "source_instagram_media_id": str(p["post_id"])}
     else:
         # Новое объявление: фото + текст
@@ -2742,7 +2742,7 @@ def ads_create(p):
             link = "https://instagram.com/" + CFG.get("IG_USERNAME")
         story = {"page_id": c["page"]}
         if ig_id:
-            story["instagram_actor_id"] = ig_id
+            story["instagram_user_id"] = str(ig_id)
         link_data = {"message": msg}
         if p.get("image_hash"):
             link_data["image_hash"] = p["image_hash"]
