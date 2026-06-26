@@ -61,6 +61,9 @@ def load_secret():
     cfg["IG_TOKEN"] = env("IG_TOKEN")            # токен доступа Instagram/страницы (заполнит владелец после настройки Meta)
     cfg["IG_APP_SECRET"] = env("IG_APP_SECRET")  # секрет приложения Meta (для проверки подписи и обновления токена)
     cfg["IG_ACCOUNT_ID"] = env("IG_ACCOUNT_ID")  # id бизнес-аккаунта Instagram
+    # Авто Рент — приватное чтение таблицы аренды через сервисный аккаунт Google
+    cfg["GOOGLE_SA_JSON"] = env("GOOGLE_SA_JSON")   # JSON сервис-аккаунта (читает таблицу)
+    cfg["RENT_SHEET_ID"] = env("RENT_SHEET_ID") or "1dEUZijK02ho264jrMBmXBzAZf18ITmLCXVMkdvqLr28"
     return cfg
 
 CFG = load_secret()
@@ -186,6 +189,7 @@ SECTION_OF = [
     ("/api/categories", "prod"), ("/api/add-product", "prod"),
     ("/api/sales-history", "sales"), ("/api/sales", "sales"),
     ("/api/suppliers", "supl"), ("/api/expenses", "fin"),
+    ("/api/rent", "rent"),
     ("/api/market", "market"),
     ("/api/chats", "chats"), ("/api/chat", "chats"), ("/api/send", "chats"),
     ("/api/bot-feedback", "chats"),
@@ -225,6 +229,83 @@ def cached(key, ttl, producer):
         return _cache[key][1]
     val = producer()
     _cache[key] = (now, val)
+    return val
+
+# --- АВТО РЕНТ: приватное чтение таблицы аренды авто через сервисный аккаунт ---
+def _rent_clean(s):
+    return (str(s) if s is not None else "").replace("\xa0", " ").strip()
+
+def _rent_rows(values, keys, n, must_idx):
+    out = []
+    for r in values:
+        rr = [_rent_clean(r[i]) if i < len(r) else "" for i in range(n)]
+        if not any(rr[j] for j in must_idx):
+            continue
+        out.append(dict(zip(keys, rr)))
+    return out
+
+def rent_fetch():
+    """Читает таблицу «Аренда авто — учёт» сервис-аккаунтом и собирает JSON.
+    Данные отдаются только через /api/rent за логином — в публичный код сайта не попадают."""
+    sa_raw = CFG.get("GOOGLE_SA_JSON", "").strip()
+    if not sa_raw:
+        return {"error": "Не настроен доступ к таблице (GOOGLE_SA_JSON). Добавьте ключ в настройках сервера (Render)."}
+    try:
+        from google.oauth2.service_account import Credentials
+        from googleapiclient.discovery import build
+    except Exception as e:
+        return {"error": "На сервере не установлены Google-библиотеки: %s" % e}
+    try:
+        info = json.loads(sa_raw)
+        creds = Credentials.from_service_account_info(
+            info, scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"])
+        sh = build("sheets", "v4", credentials=creds, cache_discovery=False)
+        sid = CFG.get("RENT_SHEET_ID", "")
+        def g(rng):
+            return sh.spreadsheets().values().get(
+                spreadsheetId=sid, range=rng,
+                valueRenderOption="FORMATTED_VALUE").execute().get("values", [])
+        D = {}
+        D["cars"] = _rent_rows(g("'Машины'!A3:K40"),
+            ["id","model","year","plate","color","price","deposit","cost","status","bought","note"], 11, [0])
+        D["rentals"] = _rent_rows(g("'Аренды'!A3:O230"),
+            ["id","carid","model","renter","phone","start","end","days","price","sum","deposit","got","debt","status","note"], 15, [0])
+        D["expenses"] = _rent_rows(g("'Расходы'!A3:G300"),
+            ["date","carid","model","cat","desc","sum","note"], 7, [3,5])
+        D["handed"] = _rent_rows(g("'Сдано'!A3:C120"), ["date","sum","comment"], 3, [1])
+        D["salary"] = _rent_rows(g("'Зарплата'!A3:C30"), ["date","sum","comment"], 3, [1])
+        D["undercollect"] = _rent_rows(g("'Недосбор'!A3:C30"), ["date","sum","comment"], 3, [1])
+        months_all = _rent_rows(g("'Отчёт по месяцам'!A3:K20"),
+            ["month","start","end","count","days","revenue","debts","expenses","profit","margin","avg"], 11, [0])
+        # строку ИТОГО из списка месяцев убираем (итог показываем отдельно в сводке)
+        D["months"] = [m for m in months_all if (m.get("month") or "").upper() != "ИТОГО"]
+        # Сводка — берём прямо из вашего «Дашборда» (как в таблице), плюс выбранный период.
+        dash = g("'Дашборд'!A1:P20")
+        def cell(rr, ci):
+            row = dash[rr-1] if rr-1 < len(dash) else []
+            return _rent_clean(row[ci]) if ci < len(row) else ""
+        D["summary"] = {
+            "profit": cell(5,1), "revenue": cell(5,5), "debts": cell(5,9), "expenses": cell(5,13),
+            "handed": cell(7,1), "balance": cell(7,5), "salary": cell(7,9), "undercollect": cell(7,13),
+            "cars_total": cell(11,5), "cars_free": cell(12,5), "cars_rented": cell(13,5), "cars_repair": cell(14,5),
+            "rev_accrued": cell(11,13), "avg_check": cell(12,13), "avg_days": cell(13,13), "margin": cell(14,13),
+            "rentals_total": cell(17,5), "rentals_active": cell(18,5),
+            "plan": cell(8,1), "period": cell(3,5) or "ИТОГО",
+        }
+        D["synced"] = time.strftime("%d.%m.%Y %H:%M")
+        return D
+    except Exception as e:
+        return {"error": "Не удалось прочитать таблицу: %s" % e}
+
+def rent_data():
+    """Кэш на 5 минут; ошибки не кэшируем, чтобы быстро подхватить починку."""
+    now = time.time()
+    c = _cache.get("rent_data")
+    if c and now - c[0] < 300 and not c[1].get("error"):
+        return c[1]
+    val = rent_fetch()
+    if not val.get("error"):
+        _cache["rent_data"] = (now, val)
     return val
 
 def amo_get(path):
@@ -2698,6 +2779,9 @@ class Handler(BaseHTTPRequestHandler):
                       "plan_day": v.get("plan_day", 0)}
                      for v in all_users() if "all" not in v.get("sections", [])]
             return self._send(200, {"staff": staff, "total": len(staff)})
+        if self.path.startswith("/api/rent"):
+            # доступ уже проверен общим шлюзом выше (раздел "rent")
+            return self._send(200, rent_data())
         if self.path.startswith("/api/overview"):
             return self._send(200, get_overview())
         if self.path.startswith("/api/categories"):
