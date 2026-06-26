@@ -2698,7 +2698,9 @@ def ads_create(p):
     cities = p.get("cities") or []
     countries = p.get("countries") or []
     if cities:
-        geo["cities"] = [{"key": x.get("key"), "radius": int(_num(x.get("radius")) or 15),
+        # Meta требует радиус города 17–80 км — подгоняем под границы, иначе ошибка
+        geo["cities"] = [{"key": x.get("key"),
+                          "radius": max(17, min(80, int(_num(x.get("radius")) or 25))),
                           "distance_unit": "kilometer"} for x in cities if x.get("key")]
     if countries:
         geo["countries"] = countries

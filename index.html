@@ -3902,7 +3902,7 @@
   }
   function adsPick(kind,i){
     const items=window['_adsLast'+kind]||[]; const it=items[i]; if(!it) return;
-    if(kind==='geo'){ if(!_adsCities.some(c=>c.key===it.key)) _adsCities.push({key:it.key,name:it.name,radius:15}); document.getElementById('ad-geo').value=''; document.getElementById('ad-geo-res').innerHTML=''; }
+    if(kind==='geo'){ if(!_adsCities.some(c=>c.key===it.key)) _adsCities.push({key:it.key,name:it.name,radius:25}); document.getElementById('ad-geo').value=''; document.getElementById('ad-geo-res').innerHTML=''; }
     else { if(!_adsInterests.some(c=>c.id===it.id)) _adsInterests.push({id:it.id,name:it.name}); document.getElementById('ad-int').value=''; document.getElementById('ad-int-res').innerHTML=''; }
     adsRenderChips();
   }
