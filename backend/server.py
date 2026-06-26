@@ -201,7 +201,7 @@ SECTION_OF = [
     ("/api/bot-feedback", "chats"),
     ("/api/ig/conversations", "chats"), ("/api/ig/thread", "chats"),
     ("/api/ig/reply", "chats"), ("/api/ig/accounts", "chats"),
-    ("/api/ig/broadcast", "chats"),
+    ("/api/ig/broadcast", "chats"), ("/api/ig/bot", "chats"),
     ("/api/assistant", "ai"),
     ("/api/ads", "ads"),
 ]
@@ -1038,6 +1038,10 @@ def ig_store_event(evt):
                 pass
             if sender and sender not in _ig_names:   # новый клиент — узнаём ник в фоне
                 _ig_fetch_name_async(sender, recipient)
+            # ИИ-бот: если включён — Claude отвечает клиенту (в фоне, чтобы webhook был быстрым)
+            if msg.get("text") and sender and recipient:
+                threading.Thread(target=igbot_handle,
+                                 args=(sender, recipient, msg.get("text", "")), daemon=True).start()
 
 def ig_send(recipient_id, text, from_account_id=None):
     """Отправить сообщение в Instagram. from_account_id = НАШ аккаунт (тот, на который писал клиент)."""
@@ -1163,14 +1167,114 @@ def ig_thread(account_id, customer_id):
     msgs.sort(key=lambda m: m["ts"])
     return {"msgs": msgs, "customer": ig_customer_name(customer_id, account_id) or customer_id}
 
-def ig_reply(account_id, customer_id, text):
-    """Ответить клиенту с нужного аккаунта и сохранить в историю."""
+def ig_reply(account_id, customer_id, text, by="human"):
+    """Ответить клиенту с нужного аккаунта и сохранить в историю.
+    by='human' (ручной ответ оператора) → ИИ-бот делает паузу в этом диалоге."""
     ig_send(customer_id, text, account_id)
     try:
         _supa("POST", "ig_inbox", "",
               {"company_id": COMPANY_ID, "sender_id": str(account_id),
                "recipient_id": str(customer_id), "text": text,
-               "ts": int(time.time() * 1000), "direction": "out", "raw": {}})
+               "ts": int(time.time() * 1000), "direction": "out", "raw": {"by": by}})
+    except Exception:
+        pass
+
+# ====== ИИ-БОТ Instagram (Claude отвечает клиентам автоматически) ======
+IGBOT_DEFAULT_PROMPT = (
+    "Ты — дружелюбный консультант интернет-магазина «Бизмарт» (Бишкек, Кыргызстан). "
+    "Отвечай клиентам в Instagram коротко, тепло и по делу, на языке клиента (русский или кыргызский). "
+    "Магазин продаёт женскую, мужскую и детскую одежду, обувь, косметику и товары для дома. "
+    "Помогай: подскажи режим работы, как сделать заказ, общую информацию о товарах. "
+    "Если точно не знаешь (наличие конкретного товара, размер, цена, бронь, доставка по адресу) — "
+    "НЕ выдумывай: вежливо скажи, что уточнишь у коллег, и попроси оставить номер телефона. "
+    "Не обещай скидок и условий, которых не знаешь. Пиши кратко — 1–3 предложения, без формальностей."
+)
+
+def _igbot_get():
+    s = kv_load("igbot_settings") or {}
+    return {"enabled": bool(s.get("enabled")), "prompt": s.get("prompt") or IGBOT_DEFAULT_PROMPT,
+            "model": s.get("model") or CFG.get("ANTHROPIC_MODEL"),
+            "handoff_hours": int(s.get("handoff_hours") or 6)}
+
+def _igbot_set(patch):
+    cur = _igbot_get()
+    for k in ("enabled", "prompt", "model", "handoff_hours"):
+        if k in patch:
+            cur[k] = patch[k]
+    cur["enabled"] = bool(cur["enabled"])
+    cur["handoff_hours"] = int(_num(cur["handoff_hours"]) or 6)
+    kv_save("igbot_settings", cur)
+    return cur
+
+def _igbot_history(account, customer, n=12):
+    """Последние сообщения диалога с клиентом (по возрастанию времени)."""
+    if not supa_on():
+        return []
+    try:
+        rows = _supa("GET", "ig_inbox",
+                     "?company_id=eq.%s&or=(sender_id.eq.%s,recipient_id.eq.%s)&order=ts.desc&limit=%d&select=text,direction,raw,ts"
+                     % (_q(COMPANY_ID), _q(str(customer)), _q(str(customer)), int(n))) or []
+        return list(reversed(rows))
+    except Exception:
+        return []
+
+def _igbot_generate(history, settings):
+    key = CFG.get("ANTHROPIC_API_KEY", "")
+    if not key:
+        return None
+    msgs = []
+    for r in history[-10:]:
+        txt = (r.get("text") or "").strip()
+        if not txt:
+            continue
+        msgs.append({"role": "user" if r.get("direction") == "in" else "assistant", "content": txt})
+    # схлопнуть подряд идущие одинаковые роли (Anthropic требует чередование)
+    merged = []
+    for m in msgs:
+        if merged and merged[-1]["role"] == m["role"]:
+            merged[-1]["content"] += "\n" + m["content"]
+        else:
+            merged.append(dict(m))
+    if not merged or merged[-1]["role"] != "user":
+        return None
+    body = json.dumps({"model": settings["model"], "max_tokens": 400,
+                       "system": settings["prompt"], "messages": merged}).encode("utf-8")
+    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, headers={
+        "x-api-key": key, "anthropic-version": "2023-06-01",
+        "content-type": "application/json", "User-Agent": "Shturval/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=40) as r:
+            resp = json.loads(r.read().decode("utf-8"))
+        return "".join(b.get("text", "") for b in resp.get("content", []) if b.get("type") == "text").strip()
+    except Exception:
+        return None
+
+def igbot_handle(sender, recipient, text):
+    """Сгенерировать и отправить ответ ИИ клиенту. sender = клиент, recipient = наш аккаунт.
+    Молчит, если бот выключен ИЛИ в диалоге недавно отвечал человек (передача оператору)."""
+    try:
+        s = _igbot_get()
+        if not s["enabled"] or not (CFG.get("ANTHROPIC_API_KEY") and supa_on()):
+            return
+        hist = _igbot_history(recipient, sender, 14)
+        # передача человеку: если последний исходящий — от оператора в пределах окна, бот молчит
+        for r in reversed(hist):
+            if r.get("direction") == "out":
+                by = (r.get("raw") or {}).get("by")
+                ts = r.get("ts") or 0; ts_sec = ts / 1000.0 if ts > 1e12 else ts
+                if by != "bot" and (time.time() - ts_sec) < s["handoff_hours"] * 3600:
+                    return
+                break
+        reply = _igbot_generate(hist, s)
+        if not reply:
+            return
+        ig_send(sender, reply, recipient)
+        try:
+            _supa("POST", "ig_inbox", "",
+                  {"company_id": COMPANY_ID, "sender_id": str(recipient), "recipient_id": str(sender),
+                   "text": reply, "ts": int(time.time() * 1000), "direction": "out", "raw": {"by": "bot"}})
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -3116,6 +3220,16 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send(200, {"ok": False, "error": "Instagram: " + str(e)})
             return self._send(200, {"ok": True})
+        if self.path.startswith("/api/ig/bot"):
+            u = self._user(); secs = u.get("sections", []) if u else []
+            if not (u and ("all" in secs or "chats" in secs)):
+                return self._send(403, {"error": "Только владелец или менеджер чатов"})
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            return self._send(200, {"ok": True, "settings": _igbot_set(body)})
         if self.path.startswith("/api/ig/broadcast"):
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -3707,6 +3821,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/ig/accounts"):
             return self._send(200, {"accounts": [{"username": a.get("username"), "ig_id": a.get("ig_id")}
                                                  for a in ig_accounts()]})
+        if self.path.startswith("/api/ig/bot"):
+            return self._send(200, {"settings": _igbot_get(),
+                                    "has_key": bool(CFG.get("ANTHROPIC_API_KEY")),
+                                    "default_prompt": IGBOT_DEFAULT_PROMPT})
         if self.path.startswith("/api/chats"):
             if CFG.get("CHATPLACE_KEY"):
                 try:

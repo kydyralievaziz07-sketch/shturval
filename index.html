@@ -452,6 +452,15 @@
     <!-- INSTAGRAM (прямой, без ChatPlace) -->
     <section id="tab-iginbox" class="hide">
       <div class="note" id="ig-status" style="margin-bottom:14px">📷 Переписки из Instagram <b>напрямую</b> (без ChatPlace). Аккаунты: <span id="ig-accs">…</span></div>
+      <div class="card" id="igbot-card" style="margin-bottom:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="igbotToggleCard()">
+          <h3 style="margin:0">🤖 ИИ-бот (Claude отвечает клиентам)</h3>
+          <span id="igbot-badge" style="font-size:13px;color:var(--muted)">▼</span>
+        </div>
+        <div id="igbot-panel" style="display:none;margin-top:12px">
+          <div id="igbot-body" style="color:var(--muted)">Загрузка…</div>
+        </div>
+      </div>
       <div class="inbox">
         <div class="chatlist" id="ig-list"></div>
         <div class="chatview">
@@ -2953,7 +2962,51 @@
   // ===== Раздел Instagram (прямые переписки, без ChatPlace) =====
   let IG_CONVOS=[], igCur=null, igAccounts=[], igTimer=null;
   function igTime(ms){ const t=new Date(ms>1e12?ms:ms*1000); return t.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'}); }
+  // ИИ-бот Instagram
+  let _igbot=null;
+  function igbotToggleCard(){ const p=document.getElementById('igbot-panel'),b=document.getElementById('igbot-badge'); if(!p) return; const open=p.style.display==='none'; p.style.display=open?'':'none'; if(b&&_igbot) b.textContent=_igbot.enabled?'🟢 включён':'⚪ выключен'; if(open&&!_igbot) loadIgBot(); }
+  function igbotBadge(){ const b=document.getElementById('igbot-badge'); if(b&&_igbot) b.textContent=_igbot.enabled?'🟢 включён':'⚪ выключен'; }
+  async function loadIgBot(){
+    const el=document.getElementById('igbot-body'); if(!el) return;
+    try{
+      const r=await apiFetch('/api/ig/bot',{},ONEC_BASE); const d=await r.json();
+      _igbot=d.settings||{}; igbotBadge();
+      const SS='width:100%;padding:9px 11px;border:1px solid var(--line,#2a2f3a);border-radius:9px;background:var(--bg2,#161a22);color:inherit;font-size:14px';
+      el.innerHTML=''
+        +(d.has_key?'':'<div class="note" style="border-color:#ffb84d;margin-bottom:10px">🟠 Не задан ключ Claude (ANTHROPIC_API_KEY) — бот не сможет отвечать.</div>')
+        +'<label style="display:flex;gap:10px;align-items:center;font-size:15px;margin-bottom:12px"><input type="checkbox" id="igbot-en" '+(_igbot.enabled?'checked':'')+' style="width:18px;height:18px"> <b>Бот включён</b> — Claude автоматически отвечает клиентам в Instagram Direct</label>'
+        +'<div style="font-size:12px;color:var(--muted);margin-bottom:4px">Как бот общается (роль и правила):</div>'
+        +'<textarea id="igbot-prompt" rows="7" style="'+SS+';resize:vertical;margin-bottom:10px">'+esc(_igbot.prompt||'')+'</textarea>'
+        +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">'
+          +'<div><div style="font-size:12px;color:var(--muted);margin-bottom:4px">Модель</div><select id="igbot-model" style="'+SS+'">'
+            +['claude-haiku-4-5-20251001','claude-sonnet-4-6','claude-opus-4-8'].map(m=>'<option value="'+m+'"'+(_igbot.model===m?' selected':'')+'>'+m+'</option>').join('')
+            +(['claude-haiku-4-5-20251001','claude-sonnet-4-6','claude-opus-4-8'].indexOf(_igbot.model)<0?'<option value="'+esc(_igbot.model)+'" selected>'+esc(_igbot.model)+'</option>':'')
+          +'</select></div>'
+          +'<div><div style="font-size:12px;color:var(--muted);margin-bottom:4px">Пауза после ответа человека (часов)</div><input id="igbot-hh" type="number" min="1" max="72" value="'+(_igbot.handoff_hours||6)+'" style="'+SS+'"></div>'
+        +'</div>'
+        +'<div style="font-size:12px;color:var(--muted);margin-bottom:10px">💡 Если оператор сам ответит клиенту — бот замолчит в этом диалоге на указанное время (передача человеку). Бот не отвечает на свои же сообщения.</div>'
+        +'<div id="igbot-msg" style="font-size:13px;margin-bottom:8px"></div>'
+        +'<button class="btn" id="igbot-save" onclick="saveIgBot()">💾 Сохранить</button>';
+    }catch(e){ el.innerHTML='🔴 Не удалось загрузить настройки бота'; }
+  }
+  async function saveIgBot(){
+    const msg=document.getElementById('igbot-msg'), btn=document.getElementById('igbot-save');
+    const body={enabled:document.getElementById('igbot-en').checked,
+      prompt:(document.getElementById('igbot-prompt').value||'').trim(),
+      model:document.getElementById('igbot-model').value,
+      handoff_hours:Number(document.getElementById('igbot-hh').value)||6};
+    if(body.enabled && !confirm('Включить ИИ-бота? Claude начнёт САМ отвечать клиентам в Instagram. Убедись, что роль и правила заданы верно.')){ return; }
+    btn.disabled=true; const o=btn.textContent; btn.textContent='Сохраняю…';
+    try{
+      const r=await apiFetch('/api/ig/bot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},ONEC_BASE);
+      const d=await r.json();
+      if(d.ok){ _igbot=d.settings; igbotBadge(); msg.innerHTML='✅ Сохранено. Бот '+(_igbot.enabled?'<b style="color:#39d98a">включён</b>':'выключен')+'.'; }
+      else msg.innerHTML='🔴 '+esc(d.error||'не удалось');
+    }catch(e){ msg.innerHTML='🔴 Ошибка'; }
+    btn.disabled=false; btn.textContent=o;
+  }
   async function loadIgInbox(){
+    loadIgBot();
     const list=document.getElementById('ig-list');
     if(list && !IG_CONVOS.length) list.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">Загрузка…</div>';
     try{
