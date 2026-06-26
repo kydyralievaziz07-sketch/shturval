@@ -4904,7 +4904,8 @@
   var RENT_EXP_CATS=['Реклама','Ремонт/Запчасти','Топливо','Мойка','Штраф','Страховка','Оформление','Эвакуатор','Прочее'];
   function _carOpts(sel){
     var cars=rentD().cars||[];
-    return cars.map(function(c){ return '<option value="'+esc(c.model)+'"'+((c.model===sel)?' selected':'')+'>'+esc(c.model)+'</option>'; }).join('');
+    return cars.filter(function(c){ return !carIsSold(c) || c.model===sel; })
+      .map(function(c){ return '<option value="'+esc(c.model)+'"'+((c.model===sel)?' selected':'')+'>'+esc(c.model)+'</option>'; }).join('');
   }
   function _selOpts(arr,sel){ return arr.map(function(o){ return '<option'+((o===sel)?' selected':'')+'>'+esc(o)+'</option>'; }).join(''); }
   function openRentForm(type,id){
@@ -4943,7 +4944,7 @@
         '<div class="row"><div><label>Цена/сутки, сом</label><input type="number" inputmode="numeric" id="rf-price" value="'+((rec&&rnum(rec.price))||'')+'" placeholder="0"></div>'+
         '<div><label>Залог, сом</label><input type="number" inputmode="numeric" id="rf-deposit" value="'+((rec&&rnum(rec.deposit))||'')+'" placeholder="0"></div></div>'+
         '<label>Стоимость покупки, сом</label><input type="number" inputmode="numeric" id="rf-cost" value="'+((rec&&rnum(rec.cost))||'')+'" placeholder="за сколько купили">'+
-        '<label>Статус</label><select id="rf-status">'+_selOpts(['Свободна','В аренде','На ремонте'],(rec&&rec.status)||'Свободна')+'</select>';
+        '<label>Статус</label><select id="rf-status">'+_selOpts(['Свободна','В аренде','На ремонте','Продана'],(rec&&rec.status)||'Свободна')+'</select>';
     }
     document.getElementById('rentmodal').innerHTML='<h3>'+title+'</h3>'+html+
       '<div id="rf-msg" style="font-size:13px;margin-top:10px;min-height:16px;color:var(--red)"></div>'+
