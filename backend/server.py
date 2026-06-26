@@ -364,9 +364,9 @@ def _rent_newid(d, pref):
     d["seq"] = int(d.get("seq", 0)) + 1
     return "%s%03d" % (pref, d["seq"])
 
-def rent_build():
-    """Грузит документ из базы, считает производные поля (дни/сумма/долг) и сводку.
-    Списки — новые сверху (по ts)."""
+def rent_build(period=None):
+    """Грузит документ из базы, считает производные поля (дни/сумма/долг) и сводку
+    за выбранный период (period='YYYY-MM' или None/'ИТОГО'). Списки — новые сверху."""
     d = rent_doc()
     cars = d["cars"]
     rentals = []
@@ -388,22 +388,7 @@ def rent_build():
     handed = sorted(d["handed"], key=ts, reverse=True)
     salary = sorted(d["salary"], key=ts, reverse=True)
     under = sorted(d["undercollect"], key=ts, reverse=True)
-    # суммы
-    revenue = sum(r["_got"] for r in rentals)
-    accrued = sum(r["_sum"] for r in rentals)
-    debts = sum(r["_debt"] for r in rentals)
-    exp_sum = sum(_rnum(e.get("sum")) for e in exps)
-    handed_sum = sum(_rnum(h.get("sum")) for h in handed)
-    salary_sum = sum(_rnum(s.get("sum")) for s in salary)
-    under_sum = sum(_rnum(u.get("sum")) for u in under)
-    profit = revenue - exp_sum
-    balance = profit - handed_sum - salary_sum - under_sum
-    cnt = len(rentals)
-    dl = [r["_days"] for r in rentals if r["_days"] > 0]
-    avg_days = round(sum(dl) / len(dl), 1) if dl else 0
-    scnt = lambda w: sum(1 for c in cars if w in (c.get("status") or "").lower())
-    active = sum(1 for r in rentals if "заверш" not in (r.get("status") or "").lower() and (r.get("status") or ""))
-    # помесячно (по дате начала аренды + расходы по дате)
+    # помесячно (по всем данным) — для разбивки и списка периодов
     months = {}
     for r in rentals:
         sd = _rdate(r.get("start"))
@@ -428,13 +413,47 @@ def rent_build():
         months_list.append({"month": "%s %s" % (RENT_MONTHS_RU[int(mo)], y), "count": str(m["count"]),
                             "revenue": _rmoney(rev), "expenses": _rmoney(exx), "profit": _rmoney(rev - exx),
                             "margin": (str(round((rev - exx) / rev * 100)) + "%") if rev else "—"})
+    # варианты периода для выбора на дашборде
+    periods = [{"key": "ИТОГО", "label": "ИТОГО"}]
+    for k in sorted(months.keys(), reverse=True):
+        y, mo = k.split("-")
+        periods.append({"key": k, "label": "%s %s" % (RENT_MONTHS_RU[int(mo)], y)})
+    # фильтр по выбранному периоду (ИТОГО = все)
+    sel = period if (period and period != "ИТОГО") else None
+    def inper(datestr):
+        if not sel:
+            return True
+        dt = _rdate(datestr)
+        return bool(dt and ("%04d-%02d" % (dt.year, dt.month)) == sel)
+    frent = [r for r in rentals if inper(r.get("start"))]
+    fexp = [e for e in exps if inper(e.get("date"))]
+    fhanded = [h for h in handed if inper(h.get("date"))]
+    fsalary = [s for s in salary if inper(s.get("date"))]
+    funder = [u for u in under if inper(u.get("date"))]
+    # суммы за выбранный период
+    revenue = sum(r["_got"] for r in frent)
+    accrued = sum(r["_sum"] for r in frent)
+    debts = sum(r["_debt"] for r in frent)
+    exp_sum = sum(_rnum(e.get("sum")) for e in fexp)
+    handed_sum = sum(_rnum(h.get("sum")) for h in fhanded)
+    salary_sum = sum(_rnum(s.get("sum")) for s in fsalary)
+    under_sum = sum(_rnum(u.get("sum")) for u in funder)
+    profit = revenue - exp_sum
+    balance = profit - handed_sum - salary_sum - under_sum
+    cnt = len(frent)
+    dl = [r["_days"] for r in frent if r["_days"] > 0]
+    avg_days = round(sum(dl) / len(dl), 1) if dl else 0
+    scnt = lambda w: sum(1 for c in cars if w in (c.get("status") or "").lower())
+    active = sum(1 for r in frent if "заверш" not in (r.get("status") or "").lower() and (r.get("status") or ""))
+    per_label = next((p["label"] for p in periods if p["key"] == (sel or "ИТОГО")), "ИТОГО")
     summary = {
         "profit": _rmoney(profit), "revenue": _rmoney(revenue), "debts": _rmoney(debts), "expenses": _rmoney(exp_sum),
         "handed": _rmoney(handed_sum), "balance": _rmoney(balance), "salary": _rmoney(salary_sum), "undercollect": _rmoney(under_sum),
         "cars_total": str(len(cars)), "cars_free": str(scnt("свобод")), "cars_rented": str(scnt("аренд")), "cars_repair": str(scnt("ремонт")),
         "rev_accrued": _rmoney(accrued), "avg_check": _rmoney(round(accrued / cnt) if cnt else 0),
         "avg_days": str(avg_days).replace(".", ","), "margin": (str(round(profit / revenue * 100)) + "%") if revenue else "—",
-        "rentals_total": str(cnt), "rentals_active": str(active), "plan": "", "period": "ИТОГО",
+        "rentals_total": str(cnt), "rentals_active": str(active), "plan": "", "period": per_label,
+        "period_key": (sel or "ИТОГО"),
     }
     # форматируем для показа (а raw — для редактирования формой)
     def fr(r):
@@ -454,7 +473,7 @@ def rent_build():
     return {"data": {"cars": cars, "rentals": [fr(r) for r in rentals], "expenses": [fe(e) for e in exps],
                      "handed": [fh(h) for h in handed], "salary": [fh(s) for s in salary],
                      "undercollect": [fh(u) for u in under], "months": months_list},
-            "summary": summary, "synced": time.strftime("%d.%m.%Y %H:%M")}
+            "summary": summary, "periods": periods, "synced": time.strftime("%d.%m.%Y %H:%M")}
 
 def rent_apply(action, p):
     """Изменение данных аренды. Возвращает свежий rent_build()."""
@@ -3240,7 +3259,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"staff": staff, "total": len(staff)})
         if self.path.startswith("/api/rent"):
             # доступ уже проверен общим шлюзом выше (раздел "rent")
-            return self._send(200, rent_build())
+            from urllib.parse import urlparse, parse_qs
+            per = (parse_qs(urlparse(self.path).query).get("period", [""])[0] or "").strip()
+            return self._send(200, rent_build(per or None))
         if self.path.startswith("/api/overview"):
             return self._send(200, get_overview())
         if self.path.startswith("/api/categories"):

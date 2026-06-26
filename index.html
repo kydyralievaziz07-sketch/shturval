@@ -348,7 +348,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.64.0<br>«Авто Рент» — самостоятельная система: ввод учёта прямо на сайте (аренды, расходы, сдано, машины) с хранением в базе. Данные приватны, считаются автоматически</div>
+      Штурвал v3.65.0<br>«Авто Рент»: выбор периода на дашборде (ИТОГО + по месяцам) — цифры считаются за выбранный месяц</div>
   </aside>
 
   <!-- MAIN -->
@@ -4343,7 +4343,7 @@
 <script>
   // ===================== АВТО РЕНТ — самостоятельная система (база) =====================
   // Данные в базе (Supabase), правятся прямо на сайте. Приходят с сервера за логином.
-  var RENT=null, RENT_ERR='', RENT_CUR='dash';
+  var RENT=null, RENT_ERR='', RENT_CUR='dash', RENT_PERIOD='ИТОГО';
   function rentD(){ return (RENT&&RENT.data)||{cars:[],rentals:[],expenses:[],handed:[],months:[]}; }
   function rentS(){ return (RENT&&RENT.summary)||{}; }
   function rnum(s){ return parseInt(String(s==null?'':s).replace(/[^\d-]/g,''),10)||0; }
@@ -4383,7 +4383,7 @@
     rentLoad();
   }
   function rentLoad(){
-    apiFetch('/api/rent',{},ONEC_BASE).then(function(r){ return r.json(); }).then(function(d){
+    apiFetch('/api/rent?period='+encodeURIComponent(RENT_PERIOD),{},ONEC_BASE).then(function(r){ return r.json(); }).then(function(d){
       if(d&&d.error){ RENT_ERR=d.error; RENT=null; rentShowErr(); return; }
       RENT=d; RENT_ERR=''; rentRenderCur();
     }).catch(function(e){ RENT_ERR=(e&&e.message==='unauthorized')?'Нужно войти заново.':'Сервер недоступен — обнови через минуту.'; rentShowErr(); });
@@ -4410,6 +4410,21 @@
     rentPost('del_'+type,{id:id}).catch(function(e){ alert('Не удалось удалить: '+e.message); });
   }
 
+  // выбор периода на дашборде (ИТОГО + месяцы)
+  function _rentPerSel(s){
+    var ps=(RENT&&RENT.periods)||[{key:'ИТОГО',label:'ИТОГО'}];
+    var cur=(s&&s.period_key)||RENT_PERIOD;
+    return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">'+
+      '<span style="font-size:13px;color:var(--muted)">📅 Период:</span>'+
+      '<select onchange="rentSetPeriod(this.value)" style="padding:7px 11px;background:var(--panel2);border:1px solid var(--line);border-radius:9px;color:var(--text);font-size:14px">'+
+      ps.map(function(p){ return '<option value="'+esc(p.key)+'"'+((p.key===cur)?' selected':'')+'>'+esc(p.label)+'</option>'; }).join('')+
+      '</select></div>';
+  }
+  function rentSetPeriod(p){
+    RENT_PERIOD=p||'ИТОГО';
+    var el=document.getElementById('rent-dash'); if(el) el.innerHTML='<div class="card"><span style="color:var(--muted)">⏳ Считаю за период…</span></div>';
+    rentLoad();
+  }
   // ---------- ДАШБОРД ----------
   function renderRentDash(){
     var b=document.getElementById('rent-dash'); if(!b) return;
@@ -4435,7 +4450,7 @@
         '<td '+RT_TD+' style="text-align:right;color:var(--muted)">'+esc(m.margin||'')+'</td></tr>';
     }).join('');
     var months=(D.months&&D.months.length)?('<h3 style="margin:6px 0 10px">📅 По месяцам</h3>'+rtable(['Месяц','Аренд','Выручка','Расходы','Прибыль','Маржа'], mr)):'';
-    b.innerHTML=note+row1+row2+park+eff+months;
+    b.innerHTML=note+_rentPerSel(s)+row1+row2+park+eff+months;
     if(typeof renderMoney==='function') renderMoney();
   }
 
