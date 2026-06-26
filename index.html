@@ -348,8 +348,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.63.0<br>Новый модуль «Авто Рент» (аренда авто): подкатегории Дашборд, Машины, Аренда авто, Расходы, Сдано. Данные из таблицы учёта вшиты приватно (снимок), видно только по логину
-    </div>
+      Штурвал v3.64.0<br>«Авто Рент» — самостоятельная система: ввод учёта прямо на сайте (аренды, расходы, сдано, машины) с хранением в базе. Данные приватны, считаются автоматически</div>
   </aside>
 
   <!-- MAIN -->
@@ -860,6 +859,9 @@
 
   <!-- ОКНО: КАРТОЧКА ЗАКАЗА / НОВЫЙ ЗАКАЗ -->
   <div class="modal-bg" id="dealbg"><div class="modal" id="dealmodal" style="width:600px"></div></div>
+
+  <!-- ОКНО: форма Авто Рент (аренда/расход/сдано/машина) -->
+  <div class="modal-bg" id="rentbg"><div class="modal" id="rentmodal" style="width:460px"></div></div>
 
   <!-- ОКНО: ПРИЧИНА ОТКАЗА -->
   <div class="modal-bg" id="rejectbg"><div class="modal" style="width:380px">
@@ -4339,15 +4341,17 @@
 
 <!-- RENT_BLOCK_START -->
 <script>
-  // ===================== АВТО РЕНТ (аренда авто) =====================
-  // Данные приватно подгружаются с сервера (/api/rent) за вашим логином.
-  // В коде публичного сайта самих цифр НЕТ.
-  var RENT_DATA=null, RENT_ERR='', RENT_CUR='dash';
+  // ===================== АВТО РЕНТ — самостоятельная система (база) =====================
+  // Данные в базе (Supabase), правятся прямо на сайте. Приходят с сервера за логином.
+  var RENT=null, RENT_ERR='', RENT_CUR='dash';
+  function rentD(){ return (RENT&&RENT.data)||{cars:[],rentals:[],expenses:[],handed:[],months:[]}; }
+  function rentS(){ return (RENT&&RENT.summary)||{}; }
   function rnum(s){ return parseInt(String(s==null?'':s).replace(/[^\d-]/g,''),10)||0; }
   function rsom(s){ s=(s==null?'':String(s)).trim(); return s?('<b>'+esc(s)+'</b> <span style="color:var(--muted);font-size:12px">сом</span>'):'<span style="color:var(--muted)">—</span>'; }
+  function isoToRu(s){ s=(s||'').trim(); var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s); return m?(m[3]+'.'+m[2]+'.'+m[1]):s; }
+  function ruToIso(s){ s=(s||'').trim(); var m=/^(\d{2})\.(\d{2})\.(\d{4})$/.exec(s); return m?(m[3]+'-'+m[2]+'-'+m[1]):''; }
   function rstatusChip(st){
-    st=(st||'').trim();
-    var low=st.toLowerCase(), col='var(--muted)', bg='var(--panel2)';
+    st=(st||'').trim(); var low=st.toLowerCase(), col='var(--muted)', bg='var(--panel2)';
     if(low.indexOf('заверш')>=0){ col='#06121f'; bg='var(--green)'; }
     else if(low.indexOf('аренд')>=0||low.indexOf('актив')>=0){ col='#06121f'; bg='var(--accent)'; }
     else if(low.indexOf('ремонт')>=0){ col='#fff'; bg='#e0a23b'; }
@@ -4362,181 +4366,233 @@
     return '<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:560px">'+
       '<thead><tr>'+th+'</tr></thead><tbody>'+rowsHtml+'</tbody>'+(foot||'')+'</table></div>';
   }
-  function rentEnsure(){ return RENT_DATA||{cars:[],rentals:[],expenses:[],handed:[],months:[],summary:{}}; }
+  function rActs(type,id){
+    return '<td '+RT_TD+' style="white-space:nowrap;text-align:right">'+
+      '<button class="btn ghost" title="Изменить" style="padding:3px 8px;font-size:13px" onclick="openRentForm(\''+type+'\',\''+id+'\')">✏️</button> '+
+      '<button class="btn ghost" title="Удалить" style="padding:3px 8px;font-size:13px;color:var(--red)" onclick="rentDel(\''+type+'\',\''+id+'\')">🗑</button></td>';
+  }
+  function rAddBtn(type,label){ return '<button class="btn" style="padding:6px 14px;font-size:13px;margin-bottom:12px" onclick="openRentForm(\''+type+'\')">➕ '+label+'</button>'; }
 
-  var RENT_CONTAINERS={dash:'rent-dash',cars:'rent-cars',list:'rent-list',exp:'rent-exp',handed:'rent-handed'};
+  var RENT_CONT={dash:'rent-dash',cars:'rent-cars',list:'rent-list',exp:'rent-exp',handed:'rent-handed'};
   function rentDispatch(view){
     RENT_CUR=view;
-    if(RENT_DATA){ rentRenderCur(); return; }
+    if(RENT){ rentRenderCur(); return; }
     if(RENT_ERR){ rentShowErr(); return; }
-    var id=RENT_CONTAINERS[view], el=id&&document.getElementById(id);
-    if(el) el.innerHTML='<div class="card"><span style="color:var(--muted)">⏳ Загружаю данные аренды… (сервер мог просыпаться — пара секунд)</span></div>';
+    var el=document.getElementById(RENT_CONT[view]);
+    if(el) el.innerHTML='<div class="card"><span style="color:var(--muted)">⏳ Загружаю… (сервер мог просыпаться)</span></div>';
     rentLoad();
   }
   function rentLoad(){
     apiFetch('/api/rent',{},ONEC_BASE).then(function(r){ return r.json(); }).then(function(d){
-      if(d && d.error){ RENT_ERR=d.error; RENT_DATA=null; rentShowErr(); return; }
-      RENT_DATA=d; RENT_ERR=''; rentRenderCur();
-    }).catch(function(e){
-      RENT_ERR=(e&&e.message==='unauthorized')?'Нужно войти заново.':'Сервер недоступен — попробуй обновить через минуту.';
-      rentShowErr();
-    });
+      if(d&&d.error){ RENT_ERR=d.error; RENT=null; rentShowErr(); return; }
+      RENT=d; RENT_ERR=''; rentRenderCur();
+    }).catch(function(e){ RENT_ERR=(e&&e.message==='unauthorized')?'Нужно войти заново.':'Сервер недоступен — обнови через минуту.'; rentShowErr(); });
   }
   function rentShowErr(){
-    var id=RENT_CONTAINERS[RENT_CUR], el=id&&document.getElementById(id);
+    var el=document.getElementById(RENT_CONT[RENT_CUR]);
     if(el) el.innerHTML='<div class="card" style="border-color:var(--red)"><b>Не удалось загрузить данные аренды.</b><div style="color:var(--muted);font-size:13px;margin-top:6px">'+esc(RENT_ERR)+'</div><button class="btn ghost" style="margin-top:10px;padding:6px 12px;font-size:13px" onclick="RENT_ERR=\'\';rentDispatch(RENT_CUR)">↻ Повторить</button></div>';
   }
   function rentRenderCur(){
-    if(RENT_CUR==='dash') renderRentDash();
-    else if(RENT_CUR==='cars') renderRentCars();
-    else if(RENT_CUR==='list') renderRentList();
-    else if(RENT_CUR==='exp') renderRentExp();
-    else if(RENT_CUR==='handed') renderRentHanded();
+    ({dash:renderRentDash,cars:renderRentCars,list:renderRentList,exp:renderRentExp,handed:renderRentHanded}[RENT_CUR]||renderRentDash)();
+  }
+  // отправка изменения на сервер
+  function rentPost(action,payload){
+    payload=payload||{}; payload.action=action;
+    return apiFetch('/api/rent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)},ONEC_BASE)
+      .then(function(r){ return r.json(); }).then(function(d){
+        if(d&&d.error) throw new Error(d.error);
+        RENT=d; rentRenderCur(); return d;
+      });
+  }
+  function rentDel(type,id){
+    var names={rental:'аренду',expense:'расход',handed:'запись «сдано»',car:'машину'};
+    if(!confirm('Удалить '+(names[type]||'запись')+'? Это нельзя отменить.')) return;
+    rentPost('del_'+type,{id:id}).catch(function(e){ alert('Не удалось удалить: '+e.message); });
   }
 
+  // ---------- ДАШБОРД ----------
   function renderRentDash(){
     var b=document.getElementById('rent-dash'); if(!b) return;
-    var D=rentEnsure(), s=D.summary||{};
-    var per=(s.period||'ИТОГО');
-    var note='<div class="note" style="margin-bottom:14px">🚗 <b>Аренда авто</b> — данные из вашей таблицы (приватно, через сервер; обновлено '+esc(D.synced||'')+'). '+
-      '📅 Цифры за период: <b>'+esc(per)+'</b>'+(per.toUpperCase()==='ИТОГО'?'':' <span style="color:var(--muted)">(меняется выбором периода в таблице на листе «Дашборд»)</span>')+'</div>';
+    var D=rentD(), s=rentS();
+    var note='<div class="note" style="margin-bottom:14px">🚗 <b>Аренда авто</b> — ваша система учёта (данные в базе, правятся на сайте; обновлено '+esc((RENT&&RENT.synced)||'')+'). Все цифры считаются из ваших записей.</div>';
     var row1='<div class="kpis" style="grid-template-columns:repeat(4,1fr);margin-bottom:12px">'+
-      kpiCard('💰 Чистая прибыль', rsom(s.profit))+
-      kpiCard('🟢 Выручка (касса)', rsom(s.revenue))+
-      kpiCard('📕 Долги клиентов', rsom(s.debts))+
-      kpiCard('🧾 Расходы', rsom(s.expenses))+'</div>';
+      kpiCard('💰 Чистая прибыль', rsom(s.profit))+kpiCard('🟢 Выручка (касса)', rsom(s.revenue))+
+      kpiCard('📕 Долги клиентов', rsom(s.debts))+kpiCard('🧾 Расходы', rsom(s.expenses))+'</div>';
     var row2='<div class="kpis" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">'+
-      kpiCard('📤 Сдано руководителю', rsom(s.handed))+
-      kpiCard('🏁 Остаток прибыли', rsom(s.balance))+
-      kpiCard('💼 Зарплата', rsom(s.salary))+
-      kpiCard('📉 Недосбор (списано)', rsom(s.undercollect))+'</div>';
-    var plan=s.plan?('<div class="card" style="margin-bottom:14px;text-align:center;font-size:15px;font-weight:600">'+esc(s.plan)+'</div>'):'';
-    var park='<div class="card" style="margin-bottom:14px"><h3>🚗 Парк</h3>'+
-      '<div class="kpis" style="grid-template-columns:repeat(4,1fr);margin:0">'+
-        kpiCard('Всего машин', esc(s.cars_total||'0'))+
-        kpiCard('Свободно', esc(s.cars_free||'0'))+
-        kpiCard('В аренде', esc(s.cars_rented||'0'))+
-        kpiCard('На ремонте', esc(s.cars_repair||'0'))+'</div></div>';
-    var eff='<div class="card" style="margin-bottom:14px"><h3>📈 Эффективность</h3>'+
-      '<div class="kpis" style="grid-template-columns:repeat(4,1fr);margin:0">'+
-        kpiCard('Выручка (начислено)', rsom(s.rev_accrued))+
-        kpiCard('Средний чек', rsom(s.avg_check))+
-        kpiCard('Средняя длит. (дн.)', esc(s.avg_days||'—'))+
-        kpiCard('Маржа', esc(s.margin||'—'))+'</div></div>';
+      kpiCard('📤 Сдано руководителю', rsom(s.handed))+kpiCard('🏁 Остаток прибыли', rsom(s.balance))+
+      kpiCard('💼 Зарплата', rsom(s.salary))+kpiCard('📉 Недосбор', rsom(s.undercollect))+'</div>';
+    var park='<div class="card" style="margin-bottom:14px"><h3>🚗 Парк</h3><div class="kpis" style="grid-template-columns:repeat(4,1fr);margin:0">'+
+      kpiCard('Всего машин', esc(s.cars_total||'0'))+kpiCard('Свободно', esc(s.cars_free||'0'))+
+      kpiCard('В аренде', esc(s.cars_rented||'0'))+kpiCard('На ремонте', esc(s.cars_repair||'0'))+'</div></div>';
+    var eff='<div class="card" style="margin-bottom:14px"><h3>📈 Эффективность</h3><div class="kpis" style="grid-template-columns:repeat(4,1fr);margin:0">'+
+      kpiCard('Выручка (начислено)', rsom(s.rev_accrued))+kpiCard('Средний чек', rsom(s.avg_check))+
+      kpiCard('Средняя длит. (дн.)', esc(s.avg_days||'—'))+kpiCard('Маржа', esc(s.margin||'—'))+'</div></div>';
     var mr=(D.months||[]).map(function(m){
-      var pr=rnum(m.profit), pc=pr<0?'var(--red)':'var(--green)';
-      return '<tr>'+
-        '<td '+RT_TD+'><b>'+esc(m.month)+'</b></td>'+
-        '<td '+RT_TD+' style="text-align:center">'+esc(m.count||'')+'</td>'+
-        '<td '+RT_TD+' style="text-align:right">'+esc(m.revenue||'')+'</td>'+
-        '<td '+RT_TD+' style="text-align:right">'+esc(m.expenses||'')+'</td>'+
+      var pc=rnum(m.profit)<0?'var(--red)':'var(--green)';
+      return '<tr><td '+RT_TD+'><b>'+esc(m.month)+'</b></td><td '+RT_TD+' style="text-align:center">'+esc(m.count||'')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right">'+esc(m.revenue||'')+'</td><td '+RT_TD+' style="text-align:right">'+esc(m.expenses||'')+'</td>'+
         '<td '+RT_TD+' style="text-align:right;color:'+pc+'"><b>'+esc(m.profit||'')+'</b></td>'+
-        '<td '+RT_TD+' style="text-align:right;color:var(--muted)">'+esc(m.margin||'')+'</td>'+
-      '</tr>';
+        '<td '+RT_TD+' style="text-align:right;color:var(--muted)">'+esc(m.margin||'')+'</td></tr>';
     }).join('');
-    var months='<h3 style="margin:6px 0 10px">📅 По месяцам</h3>'+
-      rtable(['Месяц','Аренд','Выручка','Расходы','Прибыль','Маржа'], mr);
-    b.innerHTML=note+row1+row2+plan+park+eff+months;
+    var months=(D.months&&D.months.length)?('<h3 style="margin:6px 0 10px">📅 По месяцам</h3>'+rtable(['Месяц','Аренд','Выручка','Расходы','Прибыль','Маржа'], mr)):'';
+    b.innerHTML=note+row1+row2+park+eff+months;
     if(typeof renderMoney==='function') renderMoney();
   }
 
+  // ---------- МАШИНЫ ----------
   function renderRentCars(){
     var b=document.getElementById('rent-cars'); if(!b) return;
-    var cars=rentEnsure().cars||[];
+    var cars=rentD().cars||[];
     var rows=cars.map(function(c){
-      return '<tr>'+
-        '<td '+RT_TD+' style="color:var(--muted)">'+esc(c.id||'')+'</td>'+
-        '<td '+RT_TD+'><b>'+esc(c.model||'')+'</b></td>'+
+      return '<tr><td '+RT_TD+' style="color:var(--muted)">'+esc(c.id||'')+'</td><td '+RT_TD+'><b>'+esc(c.model||'')+'</b></td>'+
         '<td '+RT_TD+'>'+(c.plate?esc(c.plate):'<span style="color:var(--muted)">—</span>')+'</td>'+
-        '<td '+RT_TD+' style="text-align:right">'+esc(c.price||'')+'</td>'+
-        '<td '+RT_TD+' style="text-align:right">'+esc(c.deposit||'')+'</td>'+
-        '<td '+RT_TD+'>'+rstatusChip(c.status)+'</td>'+
-      '</tr>';
+        '<td '+RT_TD+' style="text-align:right">'+esc(c.price||'')+'</td><td '+RT_TD+' style="text-align:right">'+esc(c.deposit||'')+'</td>'+
+        '<td '+RT_TD+'>'+rstatusChip(c.status)+'</td>'+rActs('car',c.id)+'</tr>';
     }).join('');
-    b.innerHTML='<div class="note" style="margin-bottom:12px">🚗 Автопарк — '+cars.length+' машин. Цена/сутки и залог в сомах.</div>'+
-      rtable(['ID','Модель','Госномер','Цена/сутки','Залог','Статус'], rows);
+    b.innerHTML=rAddBtn('car','Машина')+'<div class="note" style="margin-bottom:12px">🚗 Автопарк — '+cars.length+' машин. Цена/сутки и залог в сомах.</div>'+
+      rtable(['ID','Модель','Госномер','Цена/сутки','Залог','Статус',''], rows);
   }
 
+  // ---------- АРЕНДЫ ----------
   var RENT_LF='';
   function rentListFilter(v){ RENT_LF=(v||'').toLowerCase().trim(); renderRentList(); }
   function renderRentList(){
     var b=document.getElementById('rent-list'); if(!b) return;
-    var all=rentEnsure().rentals||[];
-    var list=all.filter(function(r){
-      if(!RENT_LF) return true;
-      return ((r.model||'')+' '+(r.renter||'')+' '+(r.id||'')+' '+(r.status||'')+' '+(r.start||'')).toLowerCase().indexOf(RENT_LF)>=0;
-    });
+    var all=rentD().rentals||[];
+    var list=all.filter(function(r){ return !RENT_LF || ((r.model||'')+' '+(r.renter||'')+' '+(r.id||'')+' '+(r.status||'')+' '+(r.start||'')).toLowerCase().indexOf(RENT_LF)>=0; });
     var totSum=0,totDebt=0;
     var rows=list.map(function(r){
-      totSum+=rnum(r.sum); totDebt+=rnum(r.debt);
-      var debt=rnum(r.debt);
-      return '<tr>'+
-        '<td '+RT_TD+' style="color:var(--muted)">'+esc(r.id||'')+'</td>'+
-        '<td '+RT_TD+'><b>'+esc(r.model||'')+'</b></td>'+
+      totSum+=rnum(r.sum); totDebt+=rnum(r.debt); var debt=rnum(r.debt);
+      return '<tr><td '+RT_TD+' style="color:var(--muted)">'+esc(r.id||'')+'</td><td '+RT_TD+'><b>'+esc(r.model||'')+'</b></td>'+
         '<td '+RT_TD+'>'+(r.renter?esc(r.renter):'<span style="color:var(--muted)">—</span>')+'</td>'+
-        '<td '+RT_TD+' style="white-space:nowrap">'+esc(r.start||'')+'</td>'+
-        '<td '+RT_TD+' style="white-space:nowrap">'+esc(r.end||'')+'</td>'+
-        '<td '+RT_TD+' style="text-align:center">'+esc(r.days||'')+'</td>'+
-        '<td '+RT_TD+' style="text-align:right">'+esc(r.sum||'')+'</td>'+
+        '<td '+RT_TD+' style="white-space:nowrap">'+esc(r.start||'')+'</td><td '+RT_TD+' style="white-space:nowrap">'+esc(r.end||'')+'</td>'+
+        '<td '+RT_TD+' style="text-align:center">'+esc(r.days||'')+'</td><td '+RT_TD+' style="text-align:right">'+esc(r.sum||'')+'</td>'+
         '<td '+RT_TD+' style="text-align:right">'+esc(r.got||'')+'</td>'+
         '<td '+RT_TD+' style="text-align:right;color:'+(debt>0?'var(--red)':'var(--muted)')+'">'+(debt>0?esc(r.debt):'0')+'</td>'+
-        '<td '+RT_TD+'>'+rstatusChip(r.status)+'</td>'+
-      '</tr>';
+        '<td '+RT_TD+'>'+rstatusChip(r.status)+'</td>'+rActs('rental',r.id)+'</tr>';
     }).join('');
-    var foot='<tfoot><tr>'+
-      '<td '+RT_TD+' colspan="6" style="text-align:right;color:var(--muted)">Итого ('+list.length+'):</td>'+
-      '<td '+RT_TD+' style="text-align:right"><b>'+fmt(totSum)+'</b></td>'+
-      '<td '+RT_TD+'></td>'+
-      '<td '+RT_TD+' style="text-align:right;color:'+(totDebt>0?'var(--red)':'var(--muted)')+'"><b>'+fmt(totDebt)+'</b></td>'+
-      '<td '+RT_TD+'></td></tr></tfoot>';
-    var search='<div style="margin-bottom:12px"><input type="text" placeholder="🔎 поиск: модель, арендатор, статус, дата…" value="'+esc(RENT_LF)+'" oninput="rentListFilter(this.value)" style="width:100%;max-width:420px;padding:9px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:14px"></div>';
-    b.innerHTML='<div class="note" style="margin-bottom:12px">🔑 Аренды — всего '+all.length+'. Суммы в сомах.</div>'+search+
-      rtable(['ID','Модель','Арендатор','Начало','Конец','Дней','Сумма','Получено','Долг','Статус'], rows, foot);
+    var foot='<tfoot><tr><td '+RT_TD+' colspan="6" style="text-align:right;color:var(--muted)">Итого ('+list.length+'):</td>'+
+      '<td '+RT_TD+' style="text-align:right"><b>'+fmt(totSum)+'</b></td><td '+RT_TD+'></td>'+
+      '<td '+RT_TD+' style="text-align:right;color:'+(totDebt>0?'var(--red)':'var(--muted)')+'"><b>'+fmt(totDebt)+'</b></td><td '+RT_TD+'></td><td '+RT_TD+'></td></tr></tfoot>';
+    var search='<input type="text" placeholder="🔎 поиск: модель, арендатор, статус, дата…" value="'+esc(RENT_LF)+'" oninput="rentListFilter(this.value)" style="width:100%;max-width:420px;margin-bottom:12px;padding:9px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:14px">';
+    b.innerHTML=rAddBtn('rental','Аренда')+'<div class="note" style="margin-bottom:12px">🔑 Аренды — всего '+all.length+' (новые сверху). Суммы в сомах. Дни и сумма считаются сами.</div>'+search+
+      rtable(['ID','Модель','Арендатор','Начало','Конец','Дней','Сумма','Получено','Долг','Статус',''], rows, foot);
   }
 
+  // ---------- РАСХОДЫ ----------
   var RENT_EF='';
   function rentExpFilter(v){ RENT_EF=(v||'').toLowerCase().trim(); renderRentExp(); }
   function renderRentExp(){
     var b=document.getElementById('rent-exp'); if(!b) return;
-    var all=rentEnsure().expenses||[];
-    var list=all.filter(function(e){
-      if(!RENT_EF) return true;
-      return ((e.cat||'')+' '+(e.desc||'')+' '+(e.model||'')+' '+(e.date||'')).toLowerCase().indexOf(RENT_EF)>=0;
-    });
+    var all=rentD().expenses||[];
+    var list=all.filter(function(e){ return !RENT_EF || ((e.cat||'')+' '+(e.desc||'')+' '+(e.model||'')+' '+(e.date||'')).toLowerCase().indexOf(RENT_EF)>=0; });
     var tot=0;
     var rows=list.map(function(e){
       tot+=rnum(e.sum);
-      return '<tr>'+
-        '<td '+RT_TD+' style="white-space:nowrap">'+esc(e.date||'')+'</td>'+
+      return '<tr><td '+RT_TD+' style="white-space:nowrap">'+esc(e.date||'')+'</td>'+
         '<td '+RT_TD+'>'+(e.model?esc(e.model):'<span style="color:var(--muted)">—</span>')+'</td>'+
-        '<td '+RT_TD+'>'+esc(e.cat||'')+'</td>'+
-        '<td '+RT_TD+'>'+esc(e.desc||'')+'</td>'+
-        '<td '+RT_TD+' style="text-align:right">'+esc(e.sum||'')+'</td>'+
-      '</tr>';
+        '<td '+RT_TD+'>'+esc(e.cat||'')+'</td><td '+RT_TD+'>'+esc(e.desc||'')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right">'+esc(e.sum||'')+'</td>'+rActs('expense',e.id)+'</tr>';
     }).join('');
     var foot='<tfoot><tr><td '+RT_TD+' colspan="4" style="text-align:right;color:var(--muted)">Итого ('+list.length+'):</td>'+
-      '<td '+RT_TD+' style="text-align:right"><b>'+fmt(tot)+'</b></td></tr></tfoot>';
-    var search='<div style="margin-bottom:12px"><input type="text" placeholder="🔎 поиск: категория, описание, машина…" value="'+esc(RENT_EF)+'" oninput="rentExpFilter(this.value)" style="width:100%;max-width:420px;padding:9px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:14px"></div>';
-    b.innerHTML='<div class="note" style="margin-bottom:12px">🧾 Расходы — всего '+all.length+'. Суммы в сомах.</div>'+search+
-      rtable(['Дата','Машина','Категория','Описание','Сумма'], rows, foot);
+      '<td '+RT_TD+' style="text-align:right"><b>'+fmt(tot)+'</b></td><td '+RT_TD+'></td></tr></tfoot>';
+    var search='<input type="text" placeholder="🔎 поиск: категория, описание, машина…" value="'+esc(RENT_EF)+'" oninput="rentExpFilter(this.value)" style="width:100%;max-width:420px;margin-bottom:12px;padding:9px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:14px">';
+    b.innerHTML=rAddBtn('expense','Расход')+'<div class="note" style="margin-bottom:12px">🧾 Расходы — всего '+all.length+' (новые сверху). Суммы в сомах.</div>'+search+
+      rtable(['Дата','Машина','Категория','Описание','Сумма',''], rows, foot);
   }
 
+  // ---------- СДАНО ----------
   function renderRentHanded(){
     var b=document.getElementById('rent-handed'); if(!b) return;
-    var all=rentEnsure().handed||[];
-    var tot=0;
+    var all=rentD().handed||[]; var tot=0;
     var rows=all.map(function(h){
       tot+=rnum(h.sum);
-      return '<tr>'+
-        '<td '+RT_TD+' style="white-space:nowrap">'+esc(h.date||'')+'</td>'+
-        '<td '+RT_TD+' style="text-align:right">'+esc(h.sum||'')+'</td>'+
-        '<td '+RT_TD+'>'+esc(h.comment||'')+'</td>'+
-      '</tr>';
+      return '<tr><td '+RT_TD+' style="white-space:nowrap">'+esc(h.date||'')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right">'+esc(h.sum||'')+'</td><td '+RT_TD+'>'+esc(h.comment||'')+'</td>'+rActs('handed',h.id)+'</tr>';
     }).join('');
     var foot='<tfoot><tr><td '+RT_TD+' style="text-align:right;color:var(--muted)">Итого:</td>'+
-      '<td '+RT_TD+' style="text-align:right"><b>'+fmt(tot)+'</b></td><td '+RT_TD+'></td></tr></tfoot>';
-    b.innerHTML='<div class="note" style="margin-bottom:12px">📤 Сдано руководителю — '+all.length+' записей. Суммы в сомах.</div>'+
-      rtable(['Дата','Сумма','Комментарий'], rows, foot);
+      '<td '+RT_TD+' style="text-align:right"><b>'+fmt(tot)+'</b></td><td '+RT_TD+'></td><td '+RT_TD+'></td></tr></tfoot>';
+    b.innerHTML=rAddBtn('handed','Сдано')+'<div class="note" style="margin-bottom:12px">📤 Сдано руководителю — '+all.length+' записей (новые сверху). Суммы в сомах.</div>'+
+      rtable(['Дата','Сумма','Комментарий',''], rows, foot);
+  }
+
+  // ---------- ФОРМЫ (модальное окно) ----------
+  var RENT_EXP_CATS=['Реклама','Ремонт/Запчасти','Топливо','Мойка','Штраф','Страховка','Оформление','Эвакуатор','Прочее'];
+  function _carOpts(sel){
+    var cars=rentD().cars||[];
+    return cars.map(function(c){ return '<option value="'+esc(c.model)+'"'+((c.model===sel)?' selected':'')+'>'+esc(c.model)+'</option>'; }).join('');
+  }
+  function _selOpts(arr,sel){ return arr.map(function(o){ return '<option'+((o===sel)?' selected':'')+'>'+esc(o)+'</option>'; }).join(''); }
+  function openRentForm(type,id){
+    var D=rentD(), rec=null, listMap={rental:'rentals',expense:'expenses',handed:'handed',car:'cars'};
+    if(id){ rec=(D[listMap[type]]||[]).filter(function(x){return x.id===id;})[0]||null; }
+    var titleMap={rental:'аренду',expense:'расход',handed:'«сдано»',car:'машину'};
+    var title=(id?'✏️ Изменить ':'➕ Добавить ')+titleMap[type];
+    var html='';
+    if(type==='rental'){
+      html=
+        '<label>Машина (модель) *</label><select id="rf-model"><option value="">— выбрать —</option>'+_carOpts(rec&&rec.model)+'</select>'+
+        '<label>Арендатор</label><input id="rf-renter" value="'+esc(rec&&rec.renter||'')+'" placeholder="имя">'+
+        '<label>Телефон</label><input id="rf-phone" value="'+esc(rec&&rec.phone||'')+'" placeholder="необязательно">'+
+        '<div class="row"><div><label>Дата начала *</label><input type="date" id="rf-start" value="'+ruToIso(rec&&rec.start)+'"></div>'+
+        '<div><label>Дата конца *</label><input type="date" id="rf-end" value="'+ruToIso(rec&&rec.end)+'"></div></div>'+
+        '<div class="row"><div><label>Цена/сутки, сом *</label><input type="number" inputmode="numeric" id="rf-price" value="'+((rec&&rec.price_raw)||'')+'" placeholder="0"></div>'+
+        '<div><label>Получено, сом</label><input type="number" inputmode="numeric" id="rf-got" value="'+((rec&&rec.got_raw)||'')+'" placeholder="0"></div></div>'+
+        '<label>Статус</label><select id="rf-status">'+_selOpts(['Активна','Завершена'],(rec&&rec.status)||'Активна')+'</select>'+
+        '<div style="font-size:12px;color:var(--muted);margin-top:8px">Дни и сумма посчитаются сами: дни = конец − начало, сумма = дни × цена, долг = сумма − получено.</div>';
+    } else if(type==='expense'){
+      html=
+        '<label>Дата *</label><input type="date" id="rf-date" value="'+ruToIso(rec&&rec.date)+'">'+
+        '<label>Машина (необязательно)</label><select id="rf-model"><option value="">— не привязано —</option>'+_carOpts(rec&&rec.model)+'</select>'+
+        '<label>Категория</label><select id="rf-cat">'+_selOpts(RENT_EXP_CATS,(rec&&rec.cat)||'Прочее')+'</select>'+
+        '<label>Описание</label><input id="rf-desc" value="'+esc(rec&&rec.desc||'')+'" placeholder="за что">'+
+        '<label>Сумма, сом *</label><input type="number" inputmode="numeric" id="rf-sum" value="'+((rec&&rec.sum_raw)||'')+'" placeholder="0">';
+    } else if(type==='handed'){
+      html=
+        '<label>Дата *</label><input type="date" id="rf-date" value="'+ruToIso(rec&&rec.date)+'">'+
+        '<label>Сумма, сом *</label><input type="number" inputmode="numeric" id="rf-sum" value="'+((rec&&rec.sum_raw)||'')+'" placeholder="0">'+
+        '<label>Комментарий (кому / за что)</label><input id="rf-comment" value="'+esc(rec&&rec.comment||'')+'" placeholder="напр. Сдано руководителю">';
+    } else if(type==='car'){
+      html=
+        '<label>Модель *</label><input id="rf-model" value="'+esc(rec&&rec.model||'')+'" placeholder="напр. Kia Seltos">'+
+        '<label>Госномер</label><input id="rf-plate" value="'+esc(rec&&rec.plate||'')+'" placeholder="напр. 01 925 AZN">'+
+        '<div class="row"><div><label>Цена/сутки, сом</label><input type="number" inputmode="numeric" id="rf-price" value="'+((rec&&rnum(rec.price))||'')+'" placeholder="0"></div>'+
+        '<div><label>Залог, сом</label><input type="number" inputmode="numeric" id="rf-deposit" value="'+((rec&&rnum(rec.deposit))||'')+'" placeholder="0"></div></div>'+
+        '<label>Статус</label><select id="rf-status">'+_selOpts(['Свободна','В аренде','На ремонте'],(rec&&rec.status)||'Свободна')+'</select>';
+    }
+    document.getElementById('rentmodal').innerHTML='<h3>'+title+'</h3>'+html+
+      '<div id="rf-msg" style="font-size:13px;margin-top:10px;min-height:16px;color:var(--red)"></div>'+
+      '<div class="modal-foot"><button class="btn" id="rf-save" onclick="submitRentForm(\''+type+'\',\''+(id||'')+'\')">Сохранить</button>'+
+      '<button class="btn ghost" onclick="closeRentForm()">Отмена</button></div>';
+    document.getElementById('rentbg').classList.add('open');
+  }
+  function closeRentForm(){ document.getElementById('rentbg').classList.remove('open'); }
+  function _v(id){ var el=document.getElementById(id); return el?el.value.trim():''; }
+  function submitRentForm(type,id){
+    var p={}, msg=document.getElementById('rf-msg');
+    if(type==='rental'){
+      p.model=_v('rf-model'); p.renter=_v('rf-renter'); p.phone=_v('rf-phone');
+      p.start=isoToRu(_v('rf-start')); p.end=isoToRu(_v('rf-end'));
+      p.price=_v('rf-price'); p.got=_v('rf-got'); p.status=_v('rf-status');
+      if(!p.model){ msg.textContent='Выберите машину.'; return; }
+      if(!p.start||!p.end){ msg.textContent='Укажите даты начала и конца.'; return; }
+    } else if(type==='expense'){
+      p.date=isoToRu(_v('rf-date')); p.model=_v('rf-model'); p.cat=_v('rf-cat'); p.desc=_v('rf-desc'); p.sum=_v('rf-sum');
+      if(!p.date){ msg.textContent='Укажите дату.'; return; }
+      if(!p.sum){ msg.textContent='Укажите сумму.'; return; }
+    } else if(type==='handed'){
+      p.date=isoToRu(_v('rf-date')); p.sum=_v('rf-sum'); p.comment=_v('rf-comment');
+      if(!p.date){ msg.textContent='Укажите дату.'; return; }
+      if(!p.sum){ msg.textContent='Укажите сумму.'; return; }
+    } else if(type==='car'){
+      p.model=_v('rf-model'); p.plate=_v('rf-plate'); p.price=_v('rf-price'); p.deposit=_v('rf-deposit'); p.status=_v('rf-status');
+      if(!p.model){ msg.textContent='Укажите модель.'; return; }
+    }
+    if(id) p.id=id;
+    var btn=document.getElementById('rf-save'); btn.disabled=true; btn.textContent='Сохраняю…';
+    rentPost((id?'edit_':'add_')+type, p).then(function(){ closeRentForm(); }).catch(function(e){
+      msg.textContent='Не сохранилось: '+e.message; btn.disabled=false; btn.textContent='Сохранить';
+    });
   }
 
 </script>

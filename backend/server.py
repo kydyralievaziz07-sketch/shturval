@@ -315,6 +315,211 @@ def rent_data():
         _cache["rent_data"] = (now, val)
     return val
 
+# ====== АВТО РЕНТ: собственная база (Supabase KV) — ввод учёта прямо на сайте ======
+# Данные хранятся одним документом в kv_cache (ключ rent_<company>). Таблица Google
+# больше не нужна — сайт самостоятельная система. Импорт из таблицы — разовый (seed).
+def _rent_key():
+    return "rent_" + COMPANY_ID   # COMPANY_ID определён ниже; вызывается в рантайме
+RENT_MONTHS_RU = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+                  "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
+
+def _rnum(s):
+    if isinstance(s, (int, float)):
+        return int(s)
+    s = str(s or "")
+    neg = "-" in s
+    d = "".join(ch for ch in s if ch.isdigit())
+    n = int(d) if d else 0
+    return -n if neg else n
+
+def _rdate(s):
+    s = (str(s or "")).strip()
+    if not s:
+        return None
+    import datetime
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d.%m.%y"):
+        try:
+            return datetime.datetime.strptime(s, fmt).date()
+        except Exception:
+            pass
+    return None
+
+def _rmoney(n):
+    return "{:,}".format(int(n)).replace(",", " ")
+
+def rent_doc():
+    d = kv_load(_rent_key())
+    if not isinstance(d, dict):
+        d = {}
+    for k in ("cars", "rentals", "expenses", "handed", "salary", "undercollect"):
+        if not isinstance(d.get(k), list):
+            d[k] = []
+    d.setdefault("seq", 0)
+    return d
+
+def rent_save(d):
+    kv_save(_rent_key(), d)
+
+def _rent_newid(d, pref):
+    d["seq"] = int(d.get("seq", 0)) + 1
+    return "%s%03d" % (pref, d["seq"])
+
+def rent_build():
+    """Грузит документ из базы, считает производные поля (дни/сумма/долг) и сводку.
+    Списки — новые сверху (по ts)."""
+    d = rent_doc()
+    cars = d["cars"]
+    rentals = []
+    for r in d["rentals"]:
+        x = dict(r)
+        sd, ed = _rdate(x.get("start")), _rdate(x.get("end"))
+        days = (ed - sd).days if (sd and ed and ed >= sd) else _rnum(x.get("days"))
+        price = _rnum(x.get("price"))
+        got = _rnum(x.get("got"))
+        summ = days * price if (days and price) else _rnum(x.get("sum"))
+        x["_days"] = days
+        x["_sum"] = summ
+        x["_got"] = got
+        x["_debt"] = max(summ - got, 0)
+        rentals.append(x)
+    ts = lambda r: r.get("ts", 0)
+    rentals.sort(key=ts, reverse=True)
+    exps = sorted(d["expenses"], key=ts, reverse=True)
+    handed = sorted(d["handed"], key=ts, reverse=True)
+    salary = sorted(d["salary"], key=ts, reverse=True)
+    under = sorted(d["undercollect"], key=ts, reverse=True)
+    # суммы
+    revenue = sum(r["_got"] for r in rentals)
+    accrued = sum(r["_sum"] for r in rentals)
+    debts = sum(r["_debt"] for r in rentals)
+    exp_sum = sum(_rnum(e.get("sum")) for e in exps)
+    handed_sum = sum(_rnum(h.get("sum")) for h in handed)
+    salary_sum = sum(_rnum(s.get("sum")) for s in salary)
+    under_sum = sum(_rnum(u.get("sum")) for u in under)
+    profit = revenue - exp_sum
+    balance = profit - handed_sum - salary_sum - under_sum
+    cnt = len(rentals)
+    dl = [r["_days"] for r in rentals if r["_days"] > 0]
+    avg_days = round(sum(dl) / len(dl), 1) if dl else 0
+    scnt = lambda w: sum(1 for c in cars if w in (c.get("status") or "").lower())
+    active = sum(1 for r in rentals if "заверш" not in (r.get("status") or "").lower() and (r.get("status") or ""))
+    # помесячно (по дате начала аренды + расходы по дате)
+    months = {}
+    for r in rentals:
+        sd = _rdate(r.get("start"))
+        if not sd:
+            continue
+        k = "%04d-%02d" % (sd.year, sd.month)
+        m = months.setdefault(k, {"count": 0, "revenue": 0, "expenses": 0})
+        m["count"] += 1
+        m["revenue"] += r["_got"]
+    for e in exps:
+        ed = _rdate(e.get("date"))
+        if not ed:
+            continue
+        k = "%04d-%02d" % (ed.year, ed.month)
+        m = months.setdefault(k, {"count": 0, "revenue": 0, "expenses": 0})
+        m["expenses"] += _rnum(e.get("sum"))
+    months_list = []
+    for k in sorted(months.keys(), reverse=True):
+        m = months[k]
+        y, mo = k.split("-")
+        rev, exx = m["revenue"], m["expenses"]
+        months_list.append({"month": "%s %s" % (RENT_MONTHS_RU[int(mo)], y), "count": str(m["count"]),
+                            "revenue": _rmoney(rev), "expenses": _rmoney(exx), "profit": _rmoney(rev - exx),
+                            "margin": (str(round((rev - exx) / rev * 100)) + "%") if rev else "—"})
+    summary = {
+        "profit": _rmoney(profit), "revenue": _rmoney(revenue), "debts": _rmoney(debts), "expenses": _rmoney(exp_sum),
+        "handed": _rmoney(handed_sum), "balance": _rmoney(balance), "salary": _rmoney(salary_sum), "undercollect": _rmoney(under_sum),
+        "cars_total": str(len(cars)), "cars_free": str(scnt("свобод")), "cars_rented": str(scnt("аренд")), "cars_repair": str(scnt("ремонт")),
+        "rev_accrued": _rmoney(accrued), "avg_check": _rmoney(round(accrued / cnt) if cnt else 0),
+        "avg_days": str(avg_days).replace(".", ","), "margin": (str(round(profit / revenue * 100)) + "%") if revenue else "—",
+        "rentals_total": str(cnt), "rentals_active": str(active), "plan": "", "period": "ИТОГО",
+    }
+    # форматируем для показа (а raw — для редактирования формой)
+    def fr(r):
+        return {"id": r.get("id", ""), "model": r.get("model", ""), "renter": r.get("renter", ""),
+                "phone": r.get("phone", ""), "start": r.get("start", ""), "end": r.get("end", ""),
+                "days": str(r["_days"] or ""), "price": _rmoney(_rnum(r.get("price"))) if _rnum(r.get("price")) else "",
+                "sum": _rmoney(r["_sum"]), "got": _rmoney(r["_got"]) if r.get("got") not in (None, "") else "",
+                "debt": _rmoney(r["_debt"]), "status": r.get("status", ""), "note": r.get("note", ""),
+                "price_raw": _rnum(r.get("price")), "got_raw": _rnum(r.get("got"))}
+    def fe(e):
+        return {"id": e.get("id", ""), "date": e.get("date", ""), "model": e.get("model", ""),
+                "cat": e.get("cat", ""), "desc": e.get("desc", ""), "sum": _rmoney(_rnum(e.get("sum"))),
+                "sum_raw": _rnum(e.get("sum"))}
+    def fh(h):
+        return {"id": h.get("id", ""), "date": h.get("date", ""), "sum": _rmoney(_rnum(h.get("sum"))),
+                "comment": h.get("comment", ""), "sum_raw": _rnum(h.get("sum"))}
+    return {"data": {"cars": cars, "rentals": [fr(r) for r in rentals], "expenses": [fe(e) for e in exps],
+                     "handed": [fh(h) for h in handed], "salary": [fh(s) for s in salary],
+                     "undercollect": [fh(u) for u in under], "months": months_list},
+            "summary": summary, "synced": time.strftime("%d.%m.%Y %H:%M")}
+
+def rent_apply(action, p):
+    """Изменение данных аренды. Возвращает свежий rent_build()."""
+    d = rent_doc()
+    now_ms = int(time.time() * 1000)
+    def keep(lst, _id):
+        return [x for x in lst if x.get("id") != _id]
+    def find(lst, _id):
+        for x in lst:
+            if x.get("id") == _id:
+                return x
+        return None
+    if action == "add_rental":
+        d["rentals"].append({"id": _rent_newid(d, "RN"), "ts": now_ms,
+            "model": p.get("model", ""), "renter": p.get("renter", ""), "phone": p.get("phone", ""),
+            "start": p.get("start", ""), "end": p.get("end", ""), "price": p.get("price", ""),
+            "got": p.get("got", ""), "status": (p.get("status") or "Активна"), "note": p.get("note", "")})
+    elif action == "edit_rental":
+        r = find(d["rentals"], p.get("id"))
+        if r:
+            for f in ("model", "renter", "phone", "start", "end", "price", "got", "status", "note"):
+                if f in p:
+                    r[f] = p[f]
+    elif action == "del_rental":
+        d["rentals"] = keep(d["rentals"], p.get("id"))
+    elif action == "add_expense":
+        d["expenses"].append({"id": _rent_newid(d, "EX"), "ts": now_ms,
+            "date": p.get("date", ""), "model": p.get("model", ""), "cat": p.get("cat", ""),
+            "desc": p.get("desc", ""), "sum": p.get("sum", "")})
+    elif action == "edit_expense":
+        e = find(d["expenses"], p.get("id"))
+        if e:
+            for f in ("date", "model", "cat", "desc", "sum"):
+                if f in p:
+                    e[f] = p[f]
+    elif action == "del_expense":
+        d["expenses"] = keep(d["expenses"], p.get("id"))
+    elif action == "add_handed":
+        d["handed"].append({"id": _rent_newid(d, "HD"), "ts": now_ms,
+            "date": p.get("date", ""), "sum": p.get("sum", ""), "comment": p.get("comment", "")})
+    elif action == "edit_handed":
+        h = find(d["handed"], p.get("id"))
+        if h:
+            for f in ("date", "sum", "comment"):
+                if f in p:
+                    h[f] = p[f]
+    elif action == "del_handed":
+        d["handed"] = keep(d["handed"], p.get("id"))
+    elif action == "add_car":
+        d["cars"].append({"id": _rent_newid(d, "M"), "ts": now_ms,
+            "model": p.get("model", ""), "plate": p.get("plate", ""), "price": p.get("price", ""),
+            "deposit": p.get("deposit", ""), "status": (p.get("status") or "Свободна"), "note": p.get("note", "")})
+    elif action == "edit_car":
+        c = find(d["cars"], p.get("id"))
+        if c:
+            for f in ("model", "plate", "price", "deposit", "status", "note"):
+                if f in p:
+                    c[f] = p[f]
+    elif action == "del_car":
+        d["cars"] = keep(d["cars"], p.get("id"))
+    else:
+        return {"error": "неизвестное действие"}
+    rent_save(d)
+    return rent_build()
+
 def amo_get(path):
     """GET-запрос к amoCRM с токеном. Возвращает dict (или {} если пусто)."""
     url = BASE + path
@@ -2514,6 +2719,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(401, {"error": "Требуется вход"})
             if not _allowed(u, self.path):
                 return self._send(403, {"error": "Нет доступа к этому разделу"})
+        if self.path.startswith("/api/rent"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            try:
+                res = rent_apply(body.get("action"), body)
+            except Exception as e:
+                return self._send(500, {"error": "Не удалось сохранить: %s" % e})
+            if isinstance(res, dict) and res.get("error"):
+                return self._send(400, res)
+            return self._send(200, res)
         if self.path.startswith("/api/send"):
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -3022,7 +3240,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"staff": staff, "total": len(staff)})
         if self.path.startswith("/api/rent"):
             # доступ уже проверен общим шлюзом выше (раздел "rent")
-            return self._send(200, rent_data())
+            return self._send(200, rent_build())
         if self.path.startswith("/api/overview"):
             return self._send(200, get_overview())
         if self.path.startswith("/api/categories"):
