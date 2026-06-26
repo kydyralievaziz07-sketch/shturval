@@ -5,7 +5,7 @@
 Токен хранится здесь, на сервере, и НЕ попадает в код сайта.
 Запуск: python3 server.py   (или двойной клик по «Запустить-сервер.command»)
 """
-import os, json, time, threading, urllib.request, urllib.error, hmac, hashlib, gzip
+import os, json, time, threading, urllib.request, urllib.error, urllib.parse, hmac, hashlib, gzip
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # Часовой пояс — Бишкек (UTC+6). Чтобы «сегодня», время сообщений, явка, касса
@@ -64,6 +64,12 @@ def load_secret():
     # Авто Рент — приватное чтение таблицы аренды через сервисный аккаунт Google
     cfg["GOOGLE_SA_JSON"] = env("GOOGLE_SA_JSON")   # JSON сервис-аккаунта (читает таблицу)
     cfg["RENT_SHEET_ID"] = env("RENT_SHEET_ID") or "1dEUZijK02ho264jrMBmXBzAZf18ITmLCXVMkdvqLr28"
+    # Реклама (Meta Marketing API — таргет прямо из «Штурвала»)
+    cfg["META_ADS_TOKEN"] = env("META_ADS_TOKEN")    # токен системного пользователя (СЕКРЕТ) с ads_management
+    cfg["META_AD_ACCOUNT"] = env("META_AD_ACCOUNT")  # id рекламного аккаунта (act_XXXX или просто число)
+    cfg["META_PAGE_ID"] = env("META_PAGE_ID")        # id Страницы Facebook (реклама привязана к странице)
+    cfg["META_IG_ID"] = env("META_IG_ID")            # id бизнес-аккаунта Instagram для рекламы (если пусто — берём IG_ACCOUNT_ID)
+    cfg["IG_USERNAME"] = env("IG_USERNAME")          # ник Instagram (для ссылки по умолчанию)
     return cfg
 
 CFG = load_secret()
@@ -197,6 +203,7 @@ SECTION_OF = [
     ("/api/ig/reply", "chats"), ("/api/ig/accounts", "chats"),
     ("/api/ig/broadcast", "chats"),
     ("/api/assistant", "ai"),
+    ("/api/ads", "ads"),
 ]
 
 # Исправления для бота (обучение). Хранится в памяти процесса + дозапись в файл.
@@ -2228,6 +2235,219 @@ def market_search(q):
             "avg_kgs": round(sum(prices) / len(prices)) if prices else 0}
 
 
+# ====== РЕКЛАМА (Meta Marketing API — таргет прямо из «Штурвала») ======
+ADS_GRAPH = "https://graph.facebook.com/v21.0"
+ADS_CUR_MULT = 100   # Meta принимает бюджет в «копейках» (minor units). Для сома/тенге/рубля = 100.
+
+# Цель «по-человечески» → настройки кампании/оптимизации Meta (новый формат ODAX)
+ADS_OBJECTIVES = {
+    "messages": {"objective": "OUTCOME_ENGAGEMENT", "optimization_goal": "CONVERSATIONS",
+                 "billing_event": "IMPRESSIONS", "cta": "MESSAGE_PAGE", "label": "Сообщения в Direct"},
+    "traffic":  {"objective": "OUTCOME_TRAFFIC", "optimization_goal": "LINK_CLICKS",
+                 "billing_event": "IMPRESSIONS", "cta": "LEARN_MORE", "label": "Переходы / профиль"},
+    "reach":    {"objective": "OUTCOME_AWARENESS", "optimization_goal": "REACH",
+                 "billing_event": "IMPRESSIONS", "cta": "LEARN_MORE", "label": "Охват / узнаваемость"},
+}
+
+def _ads_cfg():
+    return {"token": CFG.get("META_ADS_TOKEN", ""), "act": CFG.get("META_AD_ACCOUNT", ""),
+            "page": CFG.get("META_PAGE_ID", ""),
+            "ig": CFG.get("META_IG_ID", "") or CFG.get("IG_ACCOUNT_ID", "")}
+
+def ads_on():
+    c = _ads_cfg(); return bool(c["token"] and c["act"])
+
+def _act(c=None):
+    c = c or _ads_cfg(); a = (c["act"] or "").strip()
+    return a if a.startswith("act_") else ("act_" + a if a else "")
+
+def _ads_req(method, path, params=None, timeout=45):
+    """Запрос к Meta Graph API. GET — параметры в URL, POST — в теле. Ошибки Meta
+    разворачиваем в понятное сообщение (error_user_msg)."""
+    c = _ads_cfg()
+    if not c["token"]:
+        raise RuntimeError("Не задан токен Meta (META_ADS_TOKEN) — добавьте его в настройки сервера.")
+    url = ADS_GRAPH + "/" + str(path).lstrip("/")
+    p = dict(params or {}); p["access_token"] = c["token"]
+    if method == "GET":
+        req = urllib.request.Request(url + "?" + urllib.parse.urlencode(p),
+                                     headers={"User-Agent": "Shturval/1.0"})
+    else:
+        req = urllib.request.Request(url, data=urllib.parse.urlencode(p).encode("utf-8"),
+                                     headers={"User-Agent": "Shturval/1.0"})
+        req.get_method = lambda: method
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        try:
+            eo = (json.loads(e.read().decode()) or {}).get("error") or {}
+            msg = eo.get("error_user_msg") or eo.get("message") or str(e)
+        except Exception:
+            msg = str(e)
+        raise RuntimeError("Meta: " + msg)
+
+def _ads_iso(ts):
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(int(ts)))
+
+def ads_status():
+    """Готовность рекламы: какие доступы заданы + данные аккаунта (валюта, статус, потрачено)."""
+    c = _ads_cfg()
+    st = {"configured": ads_on(), "has_token": bool(c["token"]), "has_account": bool(c["act"]),
+          "has_page": bool(c["page"]), "has_ig": bool(c["ig"]), "objectives": [
+              {"key": k, "label": v["label"]} for k, v in ADS_OBJECTIVES.items()]}
+    if not ads_on():
+        return st
+    try:
+        acc = _ads_req("GET", _act(c), {"fields": "name,currency,account_status,amount_spent"})
+        st["account_name"] = acc.get("name"); st["currency"] = acc.get("currency")
+        st["account_status"] = acc.get("account_status")   # 1 = активен
+        st["spent"] = round(_num(acc.get("amount_spent", 0)) / ADS_CUR_MULT)
+    except Exception as e:
+        st["error"] = str(e)
+    return st
+
+def ads_search_interests(q):
+    if not (q and ads_on()):
+        return {"items": []}
+    d = _ads_req("GET", "search", {"type": "adinterest", "q": q, "limit": 25})
+    return {"items": [{"id": x.get("id"), "name": x.get("name"),
+                       "audience": x.get("audience_size_upper_bound") or x.get("audience_size")}
+                      for x in (d.get("data") or [])]}
+
+def ads_search_geo(q):
+    if not (q and ads_on()):
+        return {"items": []}
+    d = _ads_req("GET", "search", {"type": "adgeolocation",
+                 "location_types": '["city","region","country"]', "q": q, "limit": 20})
+    out = []
+    for x in (d.get("data") or []):
+        out.append({"key": x.get("key"), "name": x.get("name"), "type": x.get("type"),
+                    "region": x.get("region"), "country": x.get("country_name")})
+    return {"items": out}
+
+def ads_campaigns():
+    if not ads_on():
+        return {"campaigns": [], "configured": False}
+    d = _ads_req("GET", _act() + "/campaigns",
+                 {"fields": "name,status,objective,daily_budget,created_time", "limit": 50})
+    ins = {}
+    try:
+        di = _ads_req("GET", _act() + "/insights",
+                      {"level": "campaign", "fields": "campaign_id,spend,reach,impressions,clicks",
+                       "date_preset": "maximum", "limit": 200})
+        for r in (di.get("data") or []):
+            ins[r.get("campaign_id")] = r
+    except Exception:
+        pass
+    out = []
+    for c in (d.get("data") or []):
+        i = ins.get(c.get("id"), {})
+        out.append({"id": c.get("id"), "name": c.get("name"), "status": c.get("status"),
+                    "objective": c.get("objective"),
+                    "budget": round(_num(c.get("daily_budget", 0)) / ADS_CUR_MULT),
+                    "spend": round(_num(i.get("spend", 0))), "reach": int(_num(i.get("reach", 0))),
+                    "impressions": int(_num(i.get("impressions", 0))),
+                    "clicks": int(_num(i.get("clicks", 0)))})
+    return {"campaigns": out, "configured": True}
+
+def ads_set_status(cid, active):
+    _ads_req("POST", str(cid), {"status": "ACTIVE" if active else "PAUSED"})
+    return {"ok": True}
+
+def ads_upload_image(b64):
+    """Загрузить картинку в рекламный аккаунт, вернуть image_hash для креатива."""
+    d = _ads_req("POST", _act() + "/adimages", {"bytes": b64})
+    for k, v in (d.get("images") or {}).items():
+        if v.get("hash"):
+            return v["hash"]
+    raise RuntimeError("Не удалось загрузить изображение в Meta")
+
+def ads_create(p):
+    """Создать всю цепочку: Кампания → Группа объявлений → Креатив → Объявление.
+    Всё создаётся в статусе ПАУЗА — деньги не тратятся, пока владелец не нажмёт «Включить»."""
+    if not ads_on():
+        raise RuntimeError("Реклама не настроена: нужны токен Meta, рекламный аккаунт и Страница.")
+    c = _ads_cfg()
+    spec = ADS_OBJECTIVES.get(p.get("goal"), ADS_OBJECTIVES["traffic"])
+    name = (p.get("name") or "Кампания Штурвал").strip()
+    daily = int(round(_num(p.get("daily_budget", 0)) * ADS_CUR_MULT))
+    if daily < ADS_CUR_MULT:
+        raise RuntimeError("Укажите дневной бюджет (минимум 1).")
+    if not c["page"]:
+        raise RuntimeError("Не задан ID Страницы Facebook (META_PAGE_ID).")
+    # 1) Кампания
+    camp = _ads_req("POST", _act() + "/campaigns",
+                    {"name": name, "objective": spec["objective"], "status": "PAUSED",
+                     "special_ad_categories": "[]"})
+    camp_id = camp.get("id")
+    # 2) Таргетинг
+    targeting = {"age_min": int(_num(p.get("age_min")) or 18),
+                 "age_max": int(_num(p.get("age_max")) or 65),
+                 "publisher_platforms": ["instagram", "facebook"]}
+    g = p.get("gender")
+    if g == "male":   targeting["genders"] = [1]
+    elif g == "female": targeting["genders"] = [2]
+    geo = {}
+    cities = p.get("cities") or []
+    countries = p.get("countries") or []
+    if cities:
+        geo["cities"] = [{"key": x.get("key"), "radius": int(_num(x.get("radius")) or 15),
+                          "distance_unit": "kilometer"} for x in cities if x.get("key")]
+    if countries:
+        geo["countries"] = countries
+    if not geo:
+        geo = {"countries": ["KG"]}
+    targeting["geo_locations"] = geo
+    interests = [x for x in (p.get("interests") or []) if x.get("id")]
+    if interests:
+        targeting["flexible_spec"] = [{"interests": [{"id": x["id"], "name": x.get("name")}
+                                                     for x in interests]}]
+    # 3) Группа объявлений
+    adset = {"name": name + " — группа", "campaign_id": camp_id, "daily_budget": daily,
+             "billing_event": spec["billing_event"], "optimization_goal": spec["optimization_goal"],
+             "bid_strategy": "LOWEST_COST_WITHOUT_CAP", "targeting": json.dumps(targeting),
+             "status": "PAUSED"}
+    if p.get("start_date"):
+        try: adset["start_time"] = _ads_iso(_day_bounds(p["start_date"])[0])
+        except Exception: pass
+    if p.get("end_date"):
+        try: adset["end_time"] = _ads_iso(_day_bounds(p["end_date"])[1])
+        except Exception: pass
+    if p.get("goal") == "messages":
+        adset["destination_type"] = "INSTAGRAM_DIRECT"
+        adset["promoted_object"] = json.dumps({"page_id": c["page"]})
+    adset_id = _ads_req("POST", _act() + "/adsets", adset).get("id")
+    # 4) Креатив
+    msg = (p.get("text") or "").strip()
+    link = (p.get("link") or "").strip()
+    if not link and CFG.get("IG_USERNAME"):
+        link = "https://instagram.com/" + CFG.get("IG_USERNAME")
+    story = {"page_id": c["page"]}
+    if c["ig"]:
+        story["instagram_actor_id"] = c["ig"]
+    link_data = {"message": msg}
+    if p.get("image_hash"):
+        link_data["image_hash"] = p["image_hash"]
+    if p.get("goal") != "messages":
+        link_data["link"] = link or "https://facebook.com/" + str(c["page"])
+        link_data["call_to_action"] = {"type": spec["cta"], "value": {"link": link_data["link"]}}
+    else:
+        link_data["call_to_action"] = {"type": spec["cta"]}
+        link_data["link"] = link or "https://facebook.com/" + str(c["page"])
+    story["link_data"] = link_data
+    creative_id = _ads_req("POST", _act() + "/adcreatives",
+                           {"name": name + " — креатив",
+                            "object_story_spec": json.dumps(story)}).get("id")
+    # 5) Объявление
+    ad_id = _ads_req("POST", _act() + "/ads",
+                     {"name": name + " — объявление", "adset_id": adset_id,
+                      "creative": json.dumps({"creative_id": creative_id}),
+                      "status": "PAUSED"}).get("id")
+    return {"ok": True, "campaign_id": camp_id, "adset_id": adset_id, "ad_id": ad_id,
+            "note": "Реклама создана в статусе ПАУЗА. Проверьте и нажмите «Включить», чтобы запустить."}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -2344,6 +2564,27 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, ig_broadcast(text, account, limit=limit))
             except Exception as e:
                 return self._send(500, {"error": "Рассылка не удалась: %s" % e})
+        if self.path.startswith("/api/ads/"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}") if length else {}
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            try:
+                if self.path.startswith("/api/ads/create"):
+                    return self._send(200, ads_create(body))
+                if self.path.startswith("/api/ads/pause"):
+                    return self._send(200, ads_set_status(body.get("id"), bool(body.get("active"))))
+                if self.path.startswith("/api/ads/upload"):
+                    b64 = body.get("image_b64") or ""
+                    if "," in b64[:64] and b64[:5] == "data:":
+                        b64 = b64.split(",", 1)[1]
+                    if not b64:
+                        return self._send(400, {"error": "Нет изображения"})
+                    return self._send(200, {"ok": True, "image_hash": ads_upload_image(b64)})
+            except Exception as e:
+                return self._send(200, {"ok": False, "error": str(e)})
+            return self._send(404, {"error": "неизвестный метод рекламы"})
         if self.path.startswith("/api/add-product"):
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -2815,6 +3056,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, market_search(q))
             except Exception as e:
                 return self._send(200, {"items": [], "error": str(e)})
+        if self.path.startswith("/api/ads/"):
+            from urllib.parse import urlparse, parse_qs
+            q = (parse_qs(urlparse(self.path).query).get("q", [""])[0] or "").strip()
+            try:
+                if self.path.startswith("/api/ads/status"):
+                    return self._send(200, ads_status())
+                if self.path.startswith("/api/ads/campaigns"):
+                    return self._send(200, ads_campaigns())
+                if self.path.startswith("/api/ads/interests"):
+                    return self._send(200, ads_search_interests(q))
+                if self.path.startswith("/api/ads/geo"):
+                    return self._send(200, ads_search_geo(q))
+            except Exception as e:
+                return self._send(200, {"error": str(e)})
+            return self._send(404, {"error": "неизвестный метод рекламы"})
         if self.path.startswith("/api/suppliers"):
             try:
                 return self._send(200, suppliers_list())

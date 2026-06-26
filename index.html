@@ -502,6 +502,13 @@
       <div id="hr-body"></div>
     </section>
 
+    <!-- РЕКЛАМА (таргет Meta прямо из Штурвала) -->
+    <section id="tab-ads" class="hide">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">📣 Запуск таргетированной рекламы Instagram/Facebook прямо из «Штурвала» — без захода в кабинет Meta.</div>
+      <div id="ads-status" class="note" style="margin-bottom:14px">⏳ Проверяю подключение рекламного кабинета…</div>
+      <div id="ads-body"></div>
+    </section>
+
 
     <!-- PRODUCTS (живые данные из 1С) -->
     <section id="tab-prod" class="hide">
@@ -1101,6 +1108,7 @@
     ai       :["ИИ-помощник","Подсказки, прогнозы и чат по данным"],
     sim      :["Симулятор «Что если»","Подвигай ползунки — увидишь, как изменится прибыль"],
     hr       :["Кадры","Явка, часы, авансы и премии"],
+    ads      :["Реклама","Таргет Instagram/Facebook — запуск прямо из Штурвала"],
     rentdash :["Авто Рент — Дашборд","Сводка по аренде авто"],
     rentcars :["Машины","Автопарк аренды"],
     rentlist :["Аренда авто","Кто, что и на сколько взял"],
@@ -1117,6 +1125,7 @@
     prod:{icon:'📦',label:'Товары'}, sales:{icon:'🛒',label:'Продажи'},
     supl:{icon:'🤝',label:'Поставщики'}, fin:{icon:'💰',label:'Финансы'},
     myday:{icon:'🎯',label:'Мой день'}, hr:{icon:'🗓',label:'Кадры'},
+    ads:{icon:'📣',label:'Реклама'},
     ai:{icon:'🤖',label:'ИИ-помощник'}, sim:{icon:'📊',label:'Симулятор'},
     rentdash:{icon:'📊',label:'Дашборд'}, rentcars:{icon:'🚗',label:'Машины'},
     rentlist:{icon:'🔑',label:'Аренда авто'}, rentexp:{icon:'🧾',label:'Расходы'},
@@ -1124,6 +1133,7 @@
   };
   const MODULES=[
     {key:'crm',  icon:'🧲', label:'CRM',     tabs:['crmdash','deals','tasks','clients','crm']},
+    {key:'mkt',  icon:'📣', label:'Реклама', tabs:['ads']},
     {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','analytics','supl','fin']},
     {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','rentcars','rentlist','rentexp','renthanded']},
     {key:'team', icon:'👥', label:'Команда', tabs:['myday','hr']},
@@ -1134,6 +1144,7 @@
     if(tab==='set'||tab==='myday') return true;
     if(tab.indexOf('rent')===0) return isOwner()||canSee('rent');
     if(tab==='hr') return isOwner()||USER.sections.indexOf('hr')>=0;
+    if(tab==='ads') return isOwner()||canSee('ads');
     if(tab==='dash') return isOwner()||canSee('dash')||canSee('crm');
     if(tab==='sim') return isOwner()||canSee('ai')||canSee('analytics')||canSee('dash');
     return canSee(tab);
@@ -1143,6 +1154,7 @@
     if(tab==='crm') loadCRM();
     else if(tab==='myday') renderMyDay();
     else if(tab==='hr') loadHR();
+    else if(tab==='ads') loadAds();
     else if(tab==='clients') renderClients();
     else if(tab==='ai') aiInit();
     else if(tab==='sim') simInit();
@@ -3587,7 +3599,7 @@
   }
   function renderStaff(d){
     const b=document.getElementById('staff-body'); if(!b) return; const staff=d.staff||[];
-    const secNames={all:'Все разделы',dash:'Дашборд',myday:'Мой день',crm:'Живые данные',deals:'CRM',chats:'Чаты',prod:'Товары',sales:'Продажи',clients:'Клиенты',market:'Рынок',analytics:'Аналитика',fin:'Финансы',supl:'Поставщики',rent:'Авто Рент',ai:'ИИ-помощник',staff:'Персонал',set:'Настройки'};
+    const secNames={all:'Все разделы',dash:'Дашборд',myday:'Мой день',crm:'Живые данные',deals:'CRM',chats:'Чаты',prod:'Товары',sales:'Продажи',clients:'Клиенты',market:'Рынок',analytics:'Аналитика',fin:'Финансы',supl:'Поставщики',rent:'Авто Рент',ads:'Реклама',ai:'ИИ-помощник',staff:'Персонал',set:'Настройки'};
     const depts=new Set(staff.filter(s=>s.department).map(s=>s.department));
     const rows=staff.map(s=>{
       const secs=(s.sections||[]).map(x=>secNames[x]||x).join(', ')||'—';
@@ -3734,6 +3746,181 @@
     document.getElementById('hrcalbg').classList.remove('open'); hrCalLogin=null;
     renderHR();
   }
+  // ===== РЕКЛАМА (таргет Meta прямо из Штурвала) =====
+  let _adsStatus=null, _adsInterests=[], _adsCities=[], _adsImageHash='', _adsImgName='';
+  let _adsSearchT=null;
+  async function loadAds(){
+    const st=document.getElementById('ads-status'), body=document.getElementById('ads-body');
+    if(!ONEC_BASE){ st.innerHTML='🟠 Реклама работает только с подключённым сервером.'; return; }
+    st.style.borderStyle='dashed'; st.innerHTML='⏳ Проверяю подключение рекламного кабинета…';
+    try{
+      const r=await apiFetch('/api/ads/status',{},ONEC_BASE); _adsStatus=await r.json();
+    }catch(e){ st.innerHTML='🔴 Не удалось проверить рекламу: '+esc(String(e)); return; }
+    const s=_adsStatus||{};
+    if(!s.configured){
+      st.style.borderColor='#ffb84d';
+      st.innerHTML='🟠 <b>Рекламный кабинет ещё не подключён.</b> Чтобы запускать таргет из «Штурвала», нужно один раз добавить на сервер три доступа Meta.';
+      body.innerHTML='<div class="card"><h3>🔌 Что нужно подключить (один раз)</h3>'
+        +'<div style="font-size:13px;line-height:1.7;color:var(--muted)">'
+        +'<p>Всё берётся в <b>business.facebook.com → Настройки компании</b>. Долгая проверка Meta для своего кабинета <b>не нужна</b>.</p>'
+        +'<p><b>1. Токен системного пользователя</b> (Пользователи → Системные пользователи → Создать → Сгенерировать токен с правами <code>ads_management, ads_read, business_management</code>) — это секрет, как пароль.</p>'
+        +'<p><b>2. ID рекламного аккаунта</b> (Аккаунты → Рекламные аккаунты) — вид <code>act_1234567890</code>.</p>'
+        +'<p><b>3. ID Страницы Facebook</b> (Аккаунты → Страницы).</p>'
+        +'<p style="margin-top:10px">Эти три значения добавляются в настройки сервера (переменные <code>META_ADS_TOKEN</code>, <code>META_AD_ACCOUNT</code>, <code>META_PAGE_ID</code>). После этого здесь появится форма запуска рекламы.</p>'
+        +'<div class="note" style="margin-top:10px">'+adsChecklist(s)+'</div>'
+        +'</div></div>';
+      return;
+    }
+    st.style.borderColor='#39d98a'; st.style.borderStyle='solid';
+    const cur=s.currency||'';
+    st.innerHTML='🟢 <b>Кабинет подключён:</b> '+esc(s.account_name||'')+(cur?(' · валюта '+esc(cur)):'')
+      +(s.spent!=null?(' · потрачено '+Number(s.spent).toLocaleString("ru-RU")+' '+esc(cur)):'')
+      +(s.account_status&&s.account_status!==1?' · <span style="color:#ff6b6b">аккаунт не активен!</span>':'');
+    renderAdsForm();
+    loadAdsCampaigns();
+  }
+  function adsChecklist(s){
+    const row=(ok,t)=>(ok?'✅ ':'⬜ ')+t;
+    return [row(s.has_token,'Токен Meta'),row(s.has_account,'Рекламный аккаунт'),
+            row(s.has_page,'Страница Facebook'),row(s.has_ig,'Instagram-аккаунт (необязательно)')].join('<br>');
+  }
+  function renderAdsForm(){
+    const body=document.getElementById('ads-body');
+    const goals=(_adsStatus&&_adsStatus.objectives)||[
+      {key:'messages',label:'Сообщения в Direct'},{key:'traffic',label:'Переходы / профиль'},{key:'reach',label:'Охват / узнаваемость'}];
+    body.innerHTML=''
+      +'<div class="card"><h3>🚀 Новая рекламная кампания</h3>'
+      +'<div style="display:grid;gap:14px;max-width:640px">'
+      +adsField('Название кампании','<input id="ad-name" class="inp" placeholder="Напр. Летняя распродажа" style="'+ADS_INP+'">')
+      +adsField('Цель рекламы','<select id="ad-goal" class="inp" style="'+ADS_INP+'">'+goals.map(g=>'<option value="'+g.key+'">'+esc(g.label)+'</option>').join('')+'</select>')
+      +adsField('Дневной бюджет (в сомах)','<input id="ad-budget" type="number" min="1" value="500" class="inp" style="'+ADS_INP+'">')
+      +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
+        +adsField('Начало (необязательно)','<input id="ad-start" type="date" class="inp" style="'+ADS_INP+'">')
+        +adsField('Окончание (необязательно)','<input id="ad-end" type="date" class="inp" style="'+ADS_INP+'">')
+      +'</div>'
+      +adsField('География','<input id="ad-geo" class="inp" placeholder="Город (напр. Бишкек) — начни вводить" style="'+ADS_INP+'" oninput="adsSearch(\'geo\',this.value)"><div id="ad-geo-res" style="font-size:13px"></div><div id="ad-geo-chips" style="margin-top:6px"></div><div style="font-size:12px;color:var(--muted);margin-top:4px">Если города не выбраны — реклама идёт на весь Кыргызстан.</div>')
+      +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">'
+        +adsField('Возраст от','<input id="ad-agemin" type="number" min="13" max="65" value="18" class="inp" style="'+ADS_INP+'">')
+        +adsField('Возраст до','<input id="ad-agemax" type="number" min="13" max="65" value="55" class="inp" style="'+ADS_INP+'">')
+        +adsField('Пол','<select id="ad-gender" class="inp" style="'+ADS_INP+'"><option value="all">Все</option><option value="female">Женщины</option><option value="male">Мужчины</option></select>')
+      +'</div>'
+      +adsField('Интересы','<input id="ad-int" class="inp" placeholder="Напр. Мода, Красота, Дети — начни вводить" style="'+ADS_INP+'" oninput="adsSearch(\'int\',this.value)"><div id="ad-int-res" style="font-size:13px"></div><div id="ad-int-chips" style="margin-top:6px"></div>')
+      +adsField('Текст объявления','<textarea id="ad-text" class="inp" rows="3" placeholder="Что рекламируем? Коротко и цепляюще." style="'+ADS_INP+';resize:vertical"></textarea>')
+      +adsField('Ссылка (необязательно)','<input id="ad-link" class="inp" placeholder="https://… (профиль, сайт). Для «Сообщений» не нужна." style="'+ADS_INP+'">')
+      +adsField('Картинка','<input id="ad-img" type="file" accept="image/*" onchange="adsUploadImg(this)"><div id="ad-img-st" style="font-size:12px;color:var(--muted);margin-top:4px"></div>')
+      +'<div id="ad-create-msg" style="font-size:13px"></div>'
+      +'<div><button class="btn" id="ad-create-btn" onclick="adsCreate()">🚀 Создать кампанию (на паузе)</button></div>'
+      +'<div style="font-size:12px;color:var(--muted)">Кампания создаётся <b>на паузе</b> — деньги не тратятся. Проверишь и включишь её кнопкой ниже.</div>'
+      +'</div></div>'
+      +'<div class="card" id="ads-camps"><h3>📊 Мои кампании</h3><div id="ads-camps-body" style="color:var(--muted)">Загрузка…</div></div>';
+    adsRenderChips();
+  }
+  const ADS_INP='width:100%;padding:9px 11px;border:1px solid var(--line,#2a2f3a);border-radius:9px;background:var(--bg2,#161a22);color:inherit;font-size:14px';
+  function adsField(label,inner){ return '<div><div style="font-size:12px;color:var(--muted);margin-bottom:4px">'+esc(label)+'</div>'+inner+'</div>'; }
+  function adsSearch(kind,q){
+    q=(q||'').trim();
+    const resEl=document.getElementById(kind==='geo'?'ad-geo-res':'ad-int-res');
+    if(q.length<2){ if(resEl) resEl.innerHTML=''; return; }
+    clearTimeout(_adsSearchT);
+    _adsSearchT=setTimeout(async()=>{
+      try{
+        const path=kind==='geo'?'/api/ads/geo?q=':'/api/ads/interests?q=';
+        const r=await apiFetch(path+encodeURIComponent(q),{},ONEC_BASE); const d=await r.json();
+        const items=d.items||[];
+        if(!items.length){ resEl.innerHTML='<span style="color:var(--muted)">Ничего не найдено</span>'; return; }
+        resEl.innerHTML=items.slice(0,12).map((it,i)=>{
+          const label=kind==='geo'?(esc(it.name)+(it.region?(', '+esc(it.region)):'')+(it.country?(', '+esc(it.country)):'')+' · '+esc(it.type||''))
+                                  :(esc(it.name)+(it.audience?(' · ~'+Number(it.audience).toLocaleString("ru-RU")):''));
+          return '<div style="padding:6px 8px;border-bottom:1px solid var(--line,#222);cursor:pointer" onclick="adsPick(\''+kind+'\','+i+')">'+label+'</div>';
+        }).join('');
+        window['_adsLast'+kind]=items;
+      }catch(e){ resEl.innerHTML='<span style="color:#ff6b6b">Ошибка поиска</span>'; }
+    },350);
+  }
+  function adsPick(kind,i){
+    const items=window['_adsLast'+kind]||[]; const it=items[i]; if(!it) return;
+    if(kind==='geo'){ if(!_adsCities.some(c=>c.key===it.key)) _adsCities.push({key:it.key,name:it.name,radius:15}); document.getElementById('ad-geo').value=''; document.getElementById('ad-geo-res').innerHTML=''; }
+    else { if(!_adsInterests.some(c=>c.id===it.id)) _adsInterests.push({id:it.id,name:it.name}); document.getElementById('ad-int').value=''; document.getElementById('ad-int-res').innerHTML=''; }
+    adsRenderChips();
+  }
+  function adsRemove(kind,key){
+    if(kind==='geo') _adsCities=_adsCities.filter(c=>c.key!==key);
+    else _adsInterests=_adsInterests.filter(c=>c.id!==key);
+    adsRenderChips();
+  }
+  function adsRenderChips(){
+    const chip=(txt,kind,key)=>'<span style="display:inline-flex;align-items:center;gap:6px;background:var(--bg2,#1c2330);border:1px solid var(--line,#2a2f3a);border-radius:20px;padding:4px 10px;margin:3px;font-size:13px">'+esc(txt)+' <span style="cursor:pointer;opacity:.7" onclick="adsRemove(\''+kind+'\',\''+String(key).replace(/'/g,"")+'\')">✕</span></span>';
+    const g=document.getElementById('ad-geo-chips'); if(g) g.innerHTML=_adsCities.map(c=>chip(c.name+' (+'+c.radius+'км)','geo',c.key)).join('')||'<span style="font-size:12px;color:var(--muted)">Весь Кыргызстан</span>';
+    const it=document.getElementById('ad-int-chips'); if(it) it.innerHTML=_adsInterests.map(c=>chip(c.name,'int',c.id)).join('');
+  }
+  async function adsUploadImg(input){
+    const f=input.files&&input.files[0]; if(!f) return;
+    const stEl=document.getElementById('ad-img-st'); stEl.textContent='Загружаю картинку…';
+    try{
+      const b64=await new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(f); });
+      const r=await apiFetch('/api/ads/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image_b64:b64})},ONEC_BASE);
+      const d=await r.json();
+      if(d.ok&&d.image_hash){ _adsImageHash=d.image_hash; _adsImgName=f.name; stEl.innerHTML='✅ Загружено: '+esc(f.name); }
+      else stEl.innerHTML='🔴 '+esc(d.error||'не удалось загрузить');
+    }catch(e){ stEl.innerHTML='🔴 Ошибка загрузки'; }
+  }
+  async function adsCreate(){
+    const msg=document.getElementById('ad-create-msg'), btn=document.getElementById('ad-create-btn');
+    const g=(document.getElementById('ad-goal').value||'traffic');
+    const body={
+      name:(document.getElementById('ad-name').value||'').trim()||'Кампания Штурвал',
+      goal:g, daily_budget:Number(document.getElementById('ad-budget').value)||0,
+      start_date:document.getElementById('ad-start').value||'', end_date:document.getElementById('ad-end').value||'',
+      age_min:Number(document.getElementById('ad-agemin').value)||18, age_max:Number(document.getElementById('ad-agemax').value)||65,
+      gender:document.getElementById('ad-gender').value||'all',
+      cities:_adsCities, interests:_adsInterests,
+      text:(document.getElementById('ad-text').value||'').trim(),
+      link:(document.getElementById('ad-link').value||'').trim(),
+      image_hash:_adsImageHash||''
+    };
+    if(!body.daily_budget){ msg.innerHTML='🔴 Укажи дневной бюджет.'; return; }
+    if(!body.text){ msg.innerHTML='🔴 Добавь текст объявления.'; return; }
+    btn.disabled=true; const old=btn.textContent; btn.textContent='Создаю…'; msg.innerHTML='';
+    try{
+      const r=await apiFetch('/api/ads/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},ONEC_BASE);
+      const d=await r.json();
+      if(d.ok){
+        msg.innerHTML='✅ '+esc(d.note||'Кампания создана.');
+        _adsInterests=[];_adsCities=[];_adsImageHash='';_adsImgName='';
+        document.getElementById('ad-name').value='';document.getElementById('ad-text').value='';
+        const im=document.getElementById('ad-img-st'); if(im) im.textContent='';
+        adsRenderChips(); loadAdsCampaigns();
+      } else msg.innerHTML='🔴 '+esc(d.error||'Не удалось создать кампанию');
+    }catch(e){ msg.innerHTML='🔴 Ошибка: '+esc(String(e)); }
+    btn.disabled=false; btn.textContent=old;
+  }
+  async function loadAdsCampaigns(){
+    const el=document.getElementById('ads-camps-body'); if(!el) return;
+    try{
+      const r=await apiFetch('/api/ads/campaigns',{},ONEC_BASE); const d=await r.json();
+      const cs=d.campaigns||[];
+      if(!cs.length){ el.innerHTML='<span style="color:var(--muted)">Пока нет кампаний. Создай первую выше ☝️</span>'; return; }
+      el.innerHTML='<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
+        +'<tr style="color:var(--muted);text-align:left"><th style="padding:6px">Кампания</th><th>Статус</th><th>Бюджет/день</th><th>Потрачено</th><th>Охват</th><th>Клики</th><th></th></tr>'
+        +cs.map(c=>{
+          const on=c.status==='ACTIVE';
+          const badge=on?'<span style="color:#39d98a">● Активна</span>':(c.status==='PAUSED'?'<span style="color:#ffb84d">❚❚ Пауза</span>':'<span style="color:var(--muted)">'+esc(c.status||'')+'</span>');
+          return '<tr style="border-top:1px solid var(--line,#222)"><td style="padding:7px 6px">'+esc(c.name||'')+'</td><td>'+badge+'</td>'
+            +'<td>'+Number(c.budget||0).toLocaleString("ru-RU")+'</td><td>'+Number(c.spend||0).toLocaleString("ru-RU")+'</td>'
+            +'<td>'+Number(c.reach||0).toLocaleString("ru-RU")+'</td><td>'+Number(c.clicks||0).toLocaleString("ru-RU")+'</td>'
+            +'<td><button class="btn '+(on?'ghost':'')+'" style="font-size:12px;padding:5px 10px" onclick="adsToggle(\''+c.id+'\','+(on?'false':'true')+')">'+(on?'❚❚ Пауза':'▶ Включить')+'</button></td></tr>';
+        }).join('')+'</table></div>';
+    }catch(e){ el.innerHTML='<span style="color:#ff6b6b">Не удалось загрузить кампании</span>'; }
+  }
+  async function adsToggle(id,active){
+    try{
+      const r=await apiFetch('/api/ads/pause',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,active:active})},ONEC_BASE);
+      const d=await r.json();
+      if(d.ok) loadAdsCampaigns();
+      else alert(d.error||'Не удалось изменить статус');
+    }catch(e){ alert('Ошибка'); }
+  }
+
   // ===== Кабинет «Кадры» (HR-менеджер) =====
   let DEPT_PLANS=[], HR_LIST=[], hrClosed=new Set();
   async function loadHR(){
