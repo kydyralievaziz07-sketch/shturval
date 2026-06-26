@@ -78,6 +78,7 @@ BASE = "https://{}.amocrm.ru/api/v4".format(CFG.get("AMO_SUBDOMAIN", ""))
 # --- пользователи и роли ---
 # каждый пользователь: пароль -> {name, sections}. sections=["all"] = видит всё.
 # разделы: dash, crm, chats, prod, sales, clients, market, analytics, fin, ai, set
+COMPANY_ID = "bizmart"   # компания по умолчанию; у пользователя может быть своя (мульти-тенант)
 def load_users():
     """Возвращает два индекса:
       users     — по паролю (обратная совместимость: вход только по паролю);
@@ -88,6 +89,7 @@ def load_users():
     def _add(pw, info, login=""):
         info = dict(info)
         info["pw"] = pw
+        info.setdefault("company", COMPANY_ID)   # к какой компании относится (мульти-тенант)
         if login:
             info["login"] = login
             by_login[login.lower()] = info
@@ -108,6 +110,7 @@ def load_users():
                           "sections": u.get("sections", []),
                           "role": u.get("role", ""),
                           "department": u.get("department", ""),
+                          "company": (u.get("company") or COMPANY_ID),
                           "plan_day": u.get("plan_day", 0),
                           "salary_month": u.get("salary_month", 0),
                           "daily_rate": u.get("daily_rate", 0),
@@ -318,8 +321,10 @@ def rent_data():
 # ====== АВТО РЕНТ: собственная база (Supabase KV) — ввод учёта прямо на сайте ======
 # Данные хранятся одним документом в kv_cache (ключ rent_<company>). Таблица Google
 # больше не нужна — сайт самостоятельная система. Импорт из таблицы — разовый (seed).
-def _rent_key():
-    return "rent_" + COMPANY_ID   # COMPANY_ID определён ниже; вызывается в рантайме
+def _rent_key(company=None):
+    # ключ данных аренды зависит от КОМПАНИИ вошедшего пользователя (мульти-тенант):
+    # у Бизмарта rent_bizmart, у демо-клиента rent_<его компания> — данные не пересекаются.
+    return "rent_" + (company or COMPANY_ID)   # COMPANY_ID определён ниже; вызывается в рантайме
 RENT_MONTHS_RU = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
                   "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
 RENT_WEEKDAYS_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
@@ -348,8 +353,8 @@ def _rdate(s):
 def _rmoney(n):
     return "{:,}".format(int(n)).replace(",", " ")
 
-def rent_doc():
-    d = kv_load(_rent_key())
+def rent_doc(company=None):
+    d = kv_load(_rent_key(company))
     if not isinstance(d, dict):
         d = {}
     for k in ("cars", "rentals", "expenses", "handed", "salary", "undercollect"):
@@ -358,17 +363,17 @@ def rent_doc():
     d.setdefault("seq", 0)
     return d
 
-def rent_save(d):
-    kv_save(_rent_key(), d)
+def rent_save(d, company=None):
+    kv_save(_rent_key(company), d)
 
 def _rent_newid(d, pref):
     d["seq"] = int(d.get("seq", 0)) + 1
     return "%s%03d" % (pref, d["seq"])
 
-def rent_build(period=None):
+def rent_build(period=None, company=None):
     """Грузит документ из базы, считает производные поля (дни/сумма/долг) и сводку
     за выбранный период (period='YYYY-MM' или None/'ИТОГО'). Списки — новые сверху."""
-    d = rent_doc()
+    d = rent_doc(company)
     cars = d["cars"]
     rentals = []
     for r in d["rentals"]:
@@ -554,9 +559,9 @@ def rent_build(period=None):
                      "abc": abc, "weekdays": weekdays, "best_weekday": best_wd, "daily": daily},
             "summary": summary, "periods": periods, "synced": time.strftime("%d.%m.%Y %H:%M")}
 
-def rent_apply(action, p):
+def rent_apply(action, p, company=None):
     """Изменение данных аренды. Возвращает свежий rent_build()."""
-    d = rent_doc()
+    d = rent_doc(company)
     now_ms = int(time.time() * 1000)
     def keep(lst, _id):
         return [x for x in lst if x.get("id") != _id]
@@ -616,8 +621,8 @@ def rent_apply(action, p):
         d["cars"] = keep(d["cars"], p.get("id"))
     else:
         return {"error": "неизвестное действие"}
-    rent_save(d)
-    return rent_build()
+    rent_save(d, company)
+    return rent_build(None, company)
 
 def amo_get(path):
     """GET-запрос к amoCRM с токеном. Возвращает dict (или {} если пусто)."""
@@ -2147,7 +2152,7 @@ def ai_answer(question, crm, history):
 # ====== БАЗА ДАННЫХ (Supabase / Postgres, REST API) ======
 from urllib.parse import quote as _q, unquote as _unq, parse_qs as _parse_qs
 
-COMPANY_ID = "bizmart"   # пока одна компания; мульти-тенант — позже (поле company_id уже заложено)
+# COMPANY_ID определён выше (перед load_users) — компания по умолчанию для bizmart
 
 def supa_on():
     return bool(CFG.get("SUPABASE_URL") and CFG.get("SUPABASE_KEY"))
@@ -3183,7 +3188,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 return self._send(400, {"error": "плохой запрос"})
             try:
-                res = rent_apply(body.get("action"), body)
+                _co = (self._user() or {}).get("company") or COMPANY_ID
+                res = rent_apply(body.get("action"), body, _co)
             except Exception as e:
                 return self._send(500, {"error": "Не удалось сохранить: %s" % e})
             if isinstance(res, dict) and res.get("error"):
@@ -3709,7 +3715,8 @@ class Handler(BaseHTTPRequestHandler):
             # доступ уже проверен общим шлюзом выше (раздел "rent")
             from urllib.parse import urlparse, parse_qs
             per = (parse_qs(urlparse(self.path).query).get("period", [""])[0] or "").strip()
-            return self._send(200, rent_build(per or None))
+            _co = (self._user() or {}).get("company") or COMPANY_ID
+            return self._send(200, rent_build(per or None, _co))
         if self.path.startswith("/api/overview"):
             return self._send(200, get_overview())
         if self.path.startswith("/api/categories"):
