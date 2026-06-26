@@ -4434,6 +4434,20 @@
   function rsom(s){ s=(s==null?'':String(s)).trim(); return s?('<b>'+esc(s)+'</b> <span style="color:var(--muted);font-size:12px">сом</span>'):'<span style="color:var(--muted)">—</span>'; }
   function isoToRu(s){ s=(s||'').trim(); var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s); return m?(m[3]+'.'+m[2]+'.'+m[1]):s; }
   function ruToIso(s){ s=(s||'').trim(); var m=/^(\d{2})\.(\d{2})\.(\d{4})$/.exec(s); return m?(m[3]+'-'+m[2]+'-'+m[1]):''; }
+  function todayIso(){ var d=new Date(),p=function(n){return(n<10?'0':'')+n;}; return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
+  function ruToDate(s){ var m=/^(\d{2})\.(\d{2})\.(\d{4})$/.exec((s||'').trim()); return m?new Date(+m[3],+m[2]-1,+m[1]):null; }
+  function rIsActive(r){ return ((r.status||'').toLowerCase().indexOf('заверш')<0); }
+  // срочность по дате сдачи (только активные): за 1 день — жёлтый, день сдачи — оранжевый, просрочка — красный
+  function rentUrg(r){
+    if(!rIsActive(r)) return null;
+    var e=ruToDate(r.end); if(!e) return null;
+    var t=new Date(); t.setHours(0,0,0,0); e.setHours(0,0,0,0);
+    var diff=Math.round((e-t)/86400000);
+    if(diff<0)   return {bg:'rgba(229,57,53,.20)', col:'var(--red)', tag:'🔴 просрочка '+(-diff)+' дн'};
+    if(diff===0) return {bg:'rgba(230,140,30,.22)',col:'#e0871e',    tag:'🟠 сдача сегодня'};
+    if(diff===1) return {bg:'rgba(241,188,55,.22)',col:'#e0a23b',    tag:'🟡 сдача завтра'};
+    return null;
+  }
   function rstatusChip(st){
     st=(st||'').trim(); var low=st.toLowerCase(), col='var(--muted)', bg='var(--panel2)';
     if(low.indexOf('заверш')>=0){ col='#06121f'; bg='var(--green)'; }
@@ -4546,10 +4560,11 @@
       return '<tr><td '+RT_TD+' style="color:var(--muted)">'+esc(c.id||'')+'</td><td '+RT_TD+'><b>'+esc(c.model||'')+'</b></td>'+
         '<td '+RT_TD+'>'+(c.plate?esc(c.plate):'<span style="color:var(--muted)">—</span>')+'</td>'+
         '<td '+RT_TD+' style="text-align:right">'+esc(c.price||'')+'</td><td '+RT_TD+' style="text-align:right">'+esc(c.deposit||'')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right">'+(c.cost?esc(c.cost):'<span style="color:var(--muted)">—</span>')+'</td>'+
         '<td '+RT_TD+'>'+rstatusChip(c.status)+'</td>'+rActs('car',c.id)+'</tr>';
     }).join('');
-    b.innerHTML=rAddBtn('car','Машина')+'<div class="note" style="margin-bottom:12px">🚗 Автопарк — '+cars.length+' машин. Цена/сутки и залог в сомах.</div>'+
-      rtable(['ID','Модель','Госномер','Цена/сутки','Залог','Статус',''], rows);
+    b.innerHTML=rAddBtn('car','Машина')+'<div class="note" style="margin-bottom:12px">🚗 Автопарк — '+cars.length+' машин. Цена/сутки, залог и стоимость покупки в сомах.</div>'+
+      rtable(['ID','Модель','Госномер','Цена/сутки','Залог','Стоимость','Статус',''], rows);
   }
 
   // ---------- АРЕНДЫ ----------
@@ -4559,12 +4574,21 @@
     var b=document.getElementById('rent-list'); if(!b) return;
     var all=rentD().rentals||[];
     var list=all.filter(function(r){ return !RENT_LF || ((r.model||'')+' '+(r.renter||'')+' '+(r.id||'')+' '+(r.status||'')+' '+(r.start||'')).toLowerCase().indexOf(RENT_LF)>=0; });
+    // активные сверху (по дате сдачи — ближайшие первыми), завершённые ниже (по дате старта — новые первыми)
+    list.sort(function(a,b){
+      var aa=rIsActive(a), bb=rIsActive(b);
+      if(aa!==bb) return aa?-1:1;
+      if(aa){ var ea=ruToDate(a.end),eb=ruToDate(b.end); return (ea?ea.getTime():9e15)-(eb?eb.getTime():9e15); }
+      var sa=ruToDate(a.start),sb=ruToDate(b.start); return (sb?sb.getTime():0)-(sa?sa.getTime():0);
+    });
     var totSum=0,totDebt=0;
     var rows=list.map(function(r){
       totSum+=rnum(r.sum); totDebt+=rnum(r.debt); var debt=rnum(r.debt);
-      return '<tr><td '+RT_TD+' style="color:var(--muted)">'+esc(r.id||'')+'</td><td '+RT_TD+'><b>'+esc(r.model||'')+'</b></td>'+
+      var u=rentUrg(r), trst=u?(' style="background:'+u.bg+'"'):'';
+      var endCell=u?('<span style="color:'+u.col+';font-weight:600">'+esc(r.end||'')+'</span><div style="font-size:11px;color:'+u.col+'">'+u.tag+'</div>'):esc(r.end||'');
+      return '<tr'+trst+'><td '+RT_TD+' style="color:var(--muted)">'+esc(r.id||'')+'</td><td '+RT_TD+'><b>'+esc(r.model||'')+'</b></td>'+
         '<td '+RT_TD+'>'+(r.renter?esc(r.renter):'<span style="color:var(--muted)">—</span>')+'</td>'+
-        '<td '+RT_TD+' style="white-space:nowrap">'+esc(r.start||'')+'</td><td '+RT_TD+' style="white-space:nowrap">'+esc(r.end||'')+'</td>'+
+        '<td '+RT_TD+' style="white-space:nowrap">'+esc(r.start||'')+'</td><td '+RT_TD+' style="white-space:nowrap">'+endCell+'</td>'+
         '<td '+RT_TD+' style="text-align:center">'+esc(r.days||'')+'</td><td '+RT_TD+' style="text-align:right">'+esc(r.sum||'')+'</td>'+
         '<td '+RT_TD+' style="text-align:right">'+esc(r.got||'')+'</td>'+
         '<td '+RT_TD+' style="text-align:right;color:'+(debt>0?'var(--red)':'var(--muted)')+'">'+(debt>0?esc(r.debt):'0')+'</td>'+
@@ -4574,7 +4598,7 @@
       '<td '+RT_TD+' style="text-align:right"><b>'+fmt(totSum)+'</b></td><td '+RT_TD+'></td>'+
       '<td '+RT_TD+' style="text-align:right;color:'+(totDebt>0?'var(--red)':'var(--muted)')+'"><b>'+fmt(totDebt)+'</b></td><td '+RT_TD+'></td><td '+RT_TD+'></td></tr></tfoot>';
     var search='<input type="text" placeholder="🔎 поиск: модель, арендатор, статус, дата…" value="'+esc(RENT_LF)+'" oninput="rentListFilter(this.value)" style="width:100%;max-width:420px;margin-bottom:12px;padding:9px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:14px">';
-    b.innerHTML=rAddBtn('rental','Аренда')+'<div class="note" style="margin-bottom:12px">🔑 Аренды — всего '+all.length+' (новые сверху). Суммы в сомах. Дни и сумма считаются сами.</div>'+search+
+    b.innerHTML=rAddBtn('rental','Аренда')+'<div class="note" style="margin-bottom:12px">🔑 Аренды — всего '+all.length+' (активные сверху по дате сдачи, затем завершённые по дате). 🟡 за день до сдачи · 🟠 в день сдачи · 🔴 просрочка. Суммы в сомах.</div>'+search+
       rtable(['ID','Модель','Арендатор','Начало','Конец','Дней','Сумма','Получено','Долг','Статус',''], rows, foot);
   }
 
@@ -4615,11 +4639,12 @@
       rtable(['Дата','Сумма','Комментарий',''], rows, foot);
   }
 
-  // ---------- АНАЛИЗ ПО МАШИНАМ ----------
+  // ---------- АНАЛИЗ (по машинам + ABC + дни недели + диаграмма) ----------
   function renderRentAnalysis(){
     var b=document.getElementById('rent-analysis'); if(!b) return;
-    var s=rentS(); var rows=rentD().caranalysis||[];
-    var tr=rows.map(function(c){
+    var s=rentS(), D=rentD();
+    // 1) по машинам
+    var tr=(D.caranalysis||[]).map(function(c){
       var pc=rnum(c.profit)<0?'var(--red)':'var(--green)';
       return '<tr><td '+RT_TD+'><b>'+esc(c.model||'')+'</b></td>'+
         '<td '+RT_TD+' style="text-align:center">'+esc(c.count||'0')+'</td>'+
@@ -4628,10 +4653,51 @@
         '<td '+RT_TD+' style="text-align:right;color:'+(rnum(c.debts)>0?'var(--red)':'var(--muted)')+'">'+esc(c.debts||'')+'</td>'+
         '<td '+RT_TD+' style="text-align:right">'+esc(c.expenses||'')+'</td>'+
         '<td '+RT_TD+' style="text-align:right;color:'+pc+'"><b>'+esc(c.profit||'')+'</b></td>'+
-        '<td '+RT_TD+' style="text-align:right;color:var(--muted)">'+esc(c.margin||'')+'</td></tr>';
+        '<td '+RT_TD+' style="text-align:right;color:var(--muted)">'+esc(c.margin||'')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right;color:var(--muted)">'+(c.cost?esc(c.cost):'—')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right;color:var(--muted)">'+esc(c.payback||'—')+'</td></tr>';
     }).join('');
-    b.innerHTML='<div class="note" style="margin-bottom:12px">📊 <b>Анализ по машинам</b> — какая машина сколько заработала за период (сортировка по прибыли). Прибыль = выручка − расходы по машине. Суммы в сомах.</div>'+
-      _rentPerSel(s)+rtable(['Модель','Аренд','Дней','Выручка','Долги','Расходы','Прибыль','Маржа'], tr);
+    var carTable='<h3 style="margin:4px 0 10px">📊 По машинам</h3>'+
+      rtable(['Модель','Аренд','Дней','Выручка','Долги','Расходы','Прибыль','Маржа','Стоимость','Окуп.%'], tr);
+    // 2) ABC-анализ
+    var abcCol={A:'var(--green)',B:'#e0a23b',C:'var(--red)'};
+    var abctr=(D.abc||[]).map(function(a){
+      return '<tr><td '+RT_TD+'><b>'+esc(a.model||'')+'</b></td>'+
+        '<td '+RT_TD+' style="text-align:right">'+esc(a.revenue||'')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right">'+esc(a.share||'')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right;color:var(--muted)">'+esc(a.cum||'')+'</td>'+
+        '<td '+RT_TD+' style="text-align:center"><span style="display:inline-block;width:22px;height:22px;line-height:22px;border-radius:50%;font-weight:700;color:#06121f;background:'+(abcCol[a.cls]||'var(--muted)')+'">'+esc(a.cls)+'</span></td></tr>';
+    }).join('');
+    var abcBlock=(D.abc&&D.abc.length)?('<h3 style="margin:18px 0 6px">🔤 ABC-анализ парка</h3>'+
+      '<div class="note" style="margin-bottom:10px">A — топ-машины (до 80% выручки), B — средние (80–95%), C — слабые (хвост). Видно, на ком держится бизнес.</div>'+
+      rtable(['Модель','Выручка','Доля','Накопит.','Класс'], abctr)):'';
+    // 3) дни недели
+    var wdtr=(D.weekdays||[]).map(function(w){
+      var col=w.pct>=80?'var(--green)':(w.pct>=40?'var(--accent)':'#e0a23b');
+      return '<tr><td '+RT_TD+'><b>'+esc(w.d)+'</b></td>'+
+        '<td '+RT_TD+' style="text-align:center">'+esc(w.count||'0')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right">'+esc(w.revenue||'')+'</td>'+
+        '<td '+RT_TD+' style="width:55%"><div style="background:var(--panel2);border-radius:6px;height:10px;overflow:hidden"><div style="width:'+(w.pct||0)+'%;height:100%;background:'+col+'"></div></div></td></tr>';
+    }).join('');
+    var wdBlock=(D.weekdays&&D.weekdays.length)?('<h3 style="margin:18px 0 6px">📅 По дням недели</h3>'+
+      '<div class="note" style="margin-bottom:10px">Лучший день по выручке: <b>'+esc(D.best_weekday||'—')+'</b>. Когда машины уходят активнее — под это можно усиливать рекламу.</div>'+
+      rtable(['День','Аренд','Выручка','Загрузка'], wdtr)):'';
+    // 4) диаграмма по дням периода
+    var daily=D.daily||[], chart='';
+    if(daily.length){
+      var bars=daily.map(function(x){
+        var h=Math.max(3,Math.round((x.pct||0)*1.1));
+        var lbl=(x.pct>=55)?(Math.round((x.revenue||0)/1000)+'к'):'';
+        return '<div title="'+esc(x.date+': '+x.revenue_f+' сом')+'" style="display:flex;flex-direction:column;align-items:center;justify-content:flex-end;min-width:24px">'+
+          '<div style="font-size:9px;color:var(--muted);height:12px">'+lbl+'</div>'+
+          '<div style="width:18px;height:'+h+'px;background:var(--accent);border-radius:4px 4px 0 0"></div>'+
+          '<div style="font-size:10px;color:var(--muted);margin-top:4px">'+esc(x.day)+'</div></div>';
+      }).join('');
+      chart='<h3 style="margin:18px 0 6px">📈 Выручка по дням ('+esc(s.period||'')+')</h3>'+
+        '<div class="card" style="overflow-x:auto"><div style="display:flex;align-items:flex-end;gap:6px;min-height:150px;padding:6px 2px">'+bars+'</div></div>';
+    }
+    b.innerHTML='<div class="note" style="margin-bottom:12px">📊 <b>Анализ</b> — по машинам, ABC, дни недели и выручка по дням. Выбери период ниже. Суммы в сомах.</div>'+
+      _rentPerSel(s)+carTable+abcBlock+wdBlock+chart;
   }
 
   // ---------- ПЛАН ----------
@@ -4681,14 +4747,14 @@
         '<div style="font-size:12px;color:var(--muted);margin-top:8px">Дни и сумма посчитаются сами: дни = конец − начало, сумма = дни × цена, долг = сумма − получено.</div>';
     } else if(type==='expense'){
       html=
-        '<label>Дата *</label><input type="date" id="rf-date" value="'+ruToIso(rec&&rec.date)+'">'+
+        '<label>Дата *</label><input type="date" id="rf-date" value="'+((rec&&rec.date)?ruToIso(rec.date):todayIso())+'">'+
         '<label>Машина (необязательно)</label><select id="rf-model"><option value="">— не привязано —</option>'+_carOpts(rec&&rec.model)+'</select>'+
         '<label>Категория</label><select id="rf-cat">'+_selOpts(RENT_EXP_CATS,(rec&&rec.cat)||'Прочее')+'</select>'+
         '<label>Описание</label><input id="rf-desc" value="'+esc(rec&&rec.desc||'')+'" placeholder="за что">'+
         '<label>Сумма, сом *</label><input type="number" inputmode="numeric" id="rf-sum" value="'+((rec&&rec.sum_raw)||'')+'" placeholder="0">';
     } else if(type==='handed'){
       html=
-        '<label>Дата *</label><input type="date" id="rf-date" value="'+ruToIso(rec&&rec.date)+'">'+
+        '<label>Дата *</label><input type="date" id="rf-date" value="'+((rec&&rec.date)?ruToIso(rec.date):todayIso())+'">'+
         '<label>Сумма, сом *</label><input type="number" inputmode="numeric" id="rf-sum" value="'+((rec&&rec.sum_raw)||'')+'" placeholder="0">'+
         '<label>Комментарий (кому / за что)</label><input id="rf-comment" value="'+esc(rec&&rec.comment||'')+'" placeholder="напр. Сдано руководителю">';
     } else if(type==='car'){
@@ -4697,6 +4763,7 @@
         '<label>Госномер</label><input id="rf-plate" value="'+esc(rec&&rec.plate||'')+'" placeholder="напр. 01 925 AZN">'+
         '<div class="row"><div><label>Цена/сутки, сом</label><input type="number" inputmode="numeric" id="rf-price" value="'+((rec&&rnum(rec.price))||'')+'" placeholder="0"></div>'+
         '<div><label>Залог, сом</label><input type="number" inputmode="numeric" id="rf-deposit" value="'+((rec&&rnum(rec.deposit))||'')+'" placeholder="0"></div></div>'+
+        '<label>Стоимость покупки, сом</label><input type="number" inputmode="numeric" id="rf-cost" value="'+((rec&&rnum(rec.cost))||'')+'" placeholder="за сколько купили">'+
         '<label>Статус</label><select id="rf-status">'+_selOpts(['Свободна','В аренде','На ремонте'],(rec&&rec.status)||'Свободна')+'</select>';
     }
     document.getElementById('rentmodal').innerHTML='<h3>'+title+'</h3>'+html+
@@ -4724,7 +4791,7 @@
       if(!p.date){ msg.textContent='Укажите дату.'; return; }
       if(!p.sum){ msg.textContent='Укажите сумму.'; return; }
     } else if(type==='car'){
-      p.model=_v('rf-model'); p.plate=_v('rf-plate'); p.price=_v('rf-price'); p.deposit=_v('rf-deposit'); p.status=_v('rf-status');
+      p.model=_v('rf-model'); p.plate=_v('rf-plate'); p.price=_v('rf-price'); p.deposit=_v('rf-deposit'); p.cost=_v('rf-cost'); p.status=_v('rf-status');
       if(!p.model){ msg.textContent='Укажите модель.'; return; }
     }
     if(id) p.id=id;

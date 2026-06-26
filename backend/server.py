@@ -322,6 +322,7 @@ def _rent_key():
     return "rent_" + COMPANY_ID   # COMPANY_ID определён ниже; вызывается в рантайме
 RENT_MONTHS_RU = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
                   "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
+RENT_WEEKDAYS_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
 def _rnum(s):
     if isinstance(s, (int, float)):
@@ -461,11 +462,49 @@ def rent_build(period=None):
         cdays = sum(r["_days"] for r in cr if r["_days"] > 0)
         cexp = exp_by_model.get(md, 0)
         cprof = crev - cexp
+        ccost = _rnum(c.get("cost"))
         car_an.append({"id": c.get("id", ""), "model": md, "count": str(len(cr)), "days": str(cdays),
                        "revenue": _rmoney(crev), "debts": _rmoney(cdebt), "expenses": _rmoney(cexp),
                        "profit": _rmoney(cprof), "margin": (str(round(cprof / crev * 100)) + "%") if crev else "—",
-                       "_profit": cprof})
+                       "cost": _rmoney(ccost) if ccost else "", "payback": (str(round(crev / ccost * 100)) + "%") if ccost else "—",
+                       "_profit": cprof, "_rev": crev})
     car_an.sort(key=lambda x: x["_profit"], reverse=True)
+    # ABC-анализ парка по выручке (A ≤80%, B ≤95%, C — остальное)
+    abc = []
+    tot_rev_cars = sum(x["_rev"] for x in car_an) or 0
+    cum = 0
+    for c in sorted(car_an, key=lambda x: x["_rev"], reverse=True):
+        if c["_rev"] <= 0:
+            continue
+        share = c["_rev"] / tot_rev_cars * 100 if tot_rev_cars else 0
+        cum += share
+        cls = "A" if cum <= 80 else ("B" if cum <= 95 else "C")
+        abc.append({"model": c["model"], "revenue": c["revenue"], "share": str(round(share)) + "%",
+                    "cum": str(round(cum)) + "%", "cls": cls})
+    # выручка по дням недели (по дате старта аренды, за период)
+    wd = [{"d": RENT_WEEKDAYS_RU[i], "revenue": 0, "count": 0} for i in range(7)]
+    for r in frent:
+        sd = _rdate(r.get("start"))
+        if sd:
+            wd[sd.weekday()]["revenue"] += r["_got"]
+            wd[sd.weekday()]["count"] += 1
+    wd_max = max([x["revenue"] for x in wd]) if wd else 0
+    weekdays = [{"d": x["d"], "count": str(x["count"]), "revenue": _rmoney(x["revenue"]),
+                 "pct": (round(x["revenue"] / wd_max * 100) if wd_max else 0)} for x in wd]
+    best_wd = max(wd, key=lambda x: x["revenue"])["d"] if wd_max else "—"
+    # выручка по дням (для диаграммы по дням месяца), по дате старта
+    dd_map = {}
+    for r in frent:
+        sd = _rdate(r.get("start"))
+        if sd:
+            kk = "%04d-%02d-%02d" % (sd.year, sd.month, sd.day)
+            dd_map[kk] = dd_map.get(kk, 0) + r["_got"]
+    dd_max = max(dd_map.values()) if dd_map else 0
+    daily = []
+    for kk in sorted(dd_map.keys()):
+        y, mo, da = kk.split("-")
+        daily.append({"day": da, "date": "%s.%s" % (da, mo), "revenue": dd_map[kk],
+                      "revenue_f": _rmoney(dd_map[kk]), "pct": (round(dd_map[kk] / dd_max * 100) if dd_max else 0)})
     # план выручки: цель на месяц и % выполнения по каждому месяцу (по всем данным)
     plan_target = _rnum(d.get("plan_target")) or 400000
     plan_rows = []
@@ -508,7 +547,8 @@ def rent_build(period=None):
     return {"data": {"cars": cars, "rentals": [fr(r) for r in rentals], "expenses": [fe(e) for e in exps],
                      "handed": [fh(h) for h in handed], "salary": [fh(s) for s in salary],
                      "undercollect": [fh(u) for u in under], "months": months_list,
-                     "caranalysis": car_an, "plan": plan_block},
+                     "caranalysis": car_an, "plan": plan_block,
+                     "abc": abc, "weekdays": weekdays, "best_weekday": best_wd, "daily": daily},
             "summary": summary, "periods": periods, "synced": time.strftime("%d.%m.%Y %H:%M")}
 
 def rent_apply(action, p):
@@ -561,11 +601,12 @@ def rent_apply(action, p):
     elif action == "add_car":
         d["cars"].append({"id": _rent_newid(d, "M"), "ts": now_ms,
             "model": p.get("model", ""), "plate": p.get("plate", ""), "price": p.get("price", ""),
-            "deposit": p.get("deposit", ""), "status": (p.get("status") or "Свободна"), "note": p.get("note", "")})
+            "deposit": p.get("deposit", ""), "cost": p.get("cost", ""),
+            "status": (p.get("status") or "Свободна"), "note": p.get("note", "")})
     elif action == "edit_car":
         c = find(d["cars"], p.get("id"))
         if c:
-            for f in ("model", "plate", "price", "deposit", "status", "note"):
+            for f in ("model", "plate", "price", "deposit", "cost", "status", "note"):
                 if f in p:
                     c[f] = p[f]
     elif action == "del_car":
@@ -2499,15 +2540,45 @@ def market_search(q):
 ADS_GRAPH = "https://graph.facebook.com/v21.0"
 ADS_CUR_MULT = 100   # Meta принимает бюджет в «копейках» (minor units). Для сома/тенге/рубля = 100.
 
-# Цель «по-человечески» → настройки кампании/оптимизации Meta (новый формат ODAX)
+# Цель «по-человечески» → настройки кампании/оптимизации Meta (новый формат ODAX).
+# opts — допустимые цели оптимизации группы (первая = по умолчанию). dest=True → выбор Direct/WA/Messenger.
 ADS_OBJECTIVES = {
-    "messages": {"objective": "OUTCOME_ENGAGEMENT", "optimization_goal": "CONVERSATIONS",
-                 "billing_event": "IMPRESSIONS", "cta": "MESSAGE_PAGE", "label": "Сообщения в Direct"},
-    "traffic":  {"objective": "OUTCOME_TRAFFIC", "optimization_goal": "LINK_CLICKS",
-                 "billing_event": "IMPRESSIONS", "cta": "LEARN_MORE", "label": "Переходы / профиль"},
-    "reach":    {"objective": "OUTCOME_AWARENESS", "optimization_goal": "REACH",
-                 "billing_event": "IMPRESSIONS", "cta": "LEARN_MORE", "label": "Охват / узнаваемость"},
+    "awareness":  {"objective": "OUTCOME_AWARENESS", "label": "Узнаваемость / охват", "cta": "LEARN_MORE",
+                   "opts": ["REACH", "IMPRESSIONS", "THRUPLAY"]},
+    "traffic":    {"objective": "OUTCOME_TRAFFIC", "label": "Трафик / переходы", "cta": "LEARN_MORE",
+                   "opts": ["LINK_CLICKS", "LANDING_PAGE_VIEWS", "REACH", "IMPRESSIONS"]},
+    "engagement": {"objective": "OUTCOME_ENGAGEMENT", "label": "Вовлечённость", "cta": "LEARN_MORE",
+                   "opts": ["POST_ENGAGEMENT", "REACH", "IMPRESSIONS", "THRUPLAY"]},
+    "messages":   {"objective": "OUTCOME_ENGAGEMENT", "label": "Сообщения", "cta": "MESSAGE_PAGE", "dest": True,
+                   "opts": ["CONVERSATIONS", "LINK_CLICKS"]},
+    "leads":      {"objective": "OUTCOME_LEADS", "label": "Лиды / заявки", "cta": "SIGN_UP",
+                   "opts": ["CONVERSATIONS", "LINK_CLICKS", "LEAD_GENERATION"]},
+    "sales":      {"objective": "OUTCOME_SALES", "label": "Продажи", "cta": "SHOP_NOW",
+                   "opts": ["LINK_CLICKS", "CONVERSATIONS", "OFFSITE_CONVERSIONS"]},
 }
+OPT_LABELS = {"REACH": "Охват", "IMPRESSIONS": "Показы", "LINK_CLICKS": "Клики по ссылке",
+    "LANDING_PAGE_VIEWS": "Просмотры страницы", "POST_ENGAGEMENT": "Вовлечённость",
+    "THRUPLAY": "Просмотры видео", "CONVERSATIONS": "Переписки", "LEAD_GENERATION": "Заявки (форма)",
+    "OFFSITE_CONVERSIONS": "Конверсии (нужен пиксель)"}
+CTA_TYPES = [("LEARN_MORE", "Подробнее"), ("SHOP_NOW", "В магазин"), ("ORDER_NOW", "Заказать"),
+    ("SIGN_UP", "Регистрация"), ("MESSAGE_PAGE", "Написать"), ("WHATSAPP_MESSAGE", "Написать в WhatsApp"),
+    ("CONTACT_US", "Связаться"), ("SUBSCRIBE", "Подписаться"), ("GET_OFFER", "Получить предложение"),
+    ("BOOK_TRAVEL", "Забронировать"), ("CALL_NOW", "Позвонить"), ("DOWNLOAD", "Скачать"),
+    ("NO_BUTTON", "Без кнопки")]
+BID_STRATEGIES = [("LOWEST_COST_WITHOUT_CAP", "Минимальная цена (авто, рекомендуется)"),
+    ("LOWEST_COST_WITH_BID_CAP", "С предельной ставкой"), ("COST_CAP", "Контроль цены за результат")]
+# Плейсменты: где показывать (ручной режим). key → (платформа, позиция, подпись)
+PLACEMENTS = [
+    ("ig_stream", "instagram", "stream", "Instagram — лента"),
+    ("ig_story", "instagram", "story", "Instagram — сторис"),
+    ("ig_reels", "instagram", "reels", "Instagram — Reels"),
+    ("ig_explore", "instagram", "explore", "Instagram — интересное"),
+    ("fb_feed", "facebook", "feed", "Facebook — лента"),
+    ("fb_story", "facebook", "story", "Facebook — сторис"),
+    ("fb_reels", "facebook", "facebook_reels", "Facebook — Reels"),
+    ("fb_marketplace", "facebook", "marketplace", "Facebook — Маркетплейс"),
+    ("fb_video", "facebook", "video_feeds", "Facebook — видеолента"),
+]
 
 def _ads_cfg():
     return {"token": CFG.get("META_ADS_TOKEN", ""), "act": CFG.get("META_AD_ACCOUNT", ""),
@@ -2551,11 +2622,17 @@ def _ads_iso(ts):
     return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(int(ts)))
 
 def ads_status():
-    """Готовность рекламы: какие доступы заданы + данные аккаунта (валюта, статус, потрачено)."""
+    """Готовность рекламы: доступы + данные аккаунта + СПРАВОЧНИКИ для мастера (цели,
+    оптимизации, CTA, ставки, плейсменты) — чтобы фронт отрисовал полный Ads Manager."""
     c = _ads_cfg()
     st = {"configured": ads_on(), "has_token": bool(c["token"]), "has_account": bool(c["act"]),
-          "has_page": bool(c["page"]), "has_ig": bool(c["ig"]), "objectives": [
-              {"key": k, "label": v["label"]} for k, v in ADS_OBJECTIVES.items()]}
+          "has_page": bool(c["page"]), "has_ig": bool(c["ig"]),
+          "objectives": [{"key": k, "label": v["label"], "dest": bool(v.get("dest")),
+                          "opts": [{"key": o, "label": OPT_LABELS.get(o, o)} for o in v["opts"]]}
+                         for k, v in ADS_OBJECTIVES.items()],
+          "cta_types": [{"key": k, "label": l} for k, l in CTA_TYPES],
+          "bid_strategies": [{"key": k, "label": l} for k, l in BID_STRATEGIES],
+          "placements": [{"key": k, "label": lbl} for k, _pf, _pos, lbl in PLACEMENTS]}
     if not ads_on():
         return st
     try:
@@ -2630,6 +2707,22 @@ def ads_search_geo(q):
                     "region": x.get("region"), "country": x.get("country_name")})
     return {"items": out}
 
+def ads_search_locales(q):
+    """Поиск языков (locale) для таргетинга по языку аудитории."""
+    if not (q and ads_on()):
+        return {"items": []}
+    d = _ads_req("GET", "search", {"type": "adlocale", "q": q, "limit": 20})
+    return {"items": [{"key": x.get("key"), "name": x.get("name")} for x in (d.get("data") or [])]}
+
+def ads_search_behaviors(q):
+    """Поиск поведенческих характеристик аудитории."""
+    if not (q and ads_on()):
+        return {"items": []}
+    d = _ads_req("GET", "search", {"type": "adTargetingCategory", "class": "behaviors", "q": q, "limit": 20})
+    return {"items": [{"id": x.get("id"), "name": x.get("name"),
+                       "audience": x.get("audience_size_upper_bound") or x.get("audience_size")}
+                      for x in (d.get("data") or [])]}
+
 def ads_campaigns():
     if not ads_on():
         return {"campaigns": [], "configured": False}
@@ -2677,37 +2770,48 @@ def ads_upload_image(b64):
     raise RuntimeError("Не удалось загрузить изображение в Meta")
 
 def ads_create(p):
-    """Создать всю цепочку: Кампания → Группа объявлений → Креатив → Объявление.
+    """Полный мастер Ads Manager: Кампания → Группа объявлений → Креатив → Объявление.
+    Поддержка: цель+оптимизация, бюджет (дневной/на срок, на уровне кампании/группы), ставки,
+    категория рекламы, расписание, аудитория (гео/возраст/пол/языки/интересы/поведение/исключения),
+    плейсменты (авто/вручную), назначение лидов, креатив (готовый пост / фото+текст+заголовок+CTA).
     Всё создаётся в статусе ПАУЗА — деньги не тратятся, пока владелец не нажмёт «Включить»."""
     if not ads_on():
         raise RuntimeError("Реклама не настроена: нужны токен Meta, рекламный аккаунт и Страница.")
     c = _ads_cfg()
     spec = ADS_OBJECTIVES.get(p.get("goal"), ADS_OBJECTIVES["traffic"])
     name = (p.get("name") or "Кампания Штурвал").strip()
-    daily = int(round(_num(p.get("daily_budget", 0)) * ADS_CUR_MULT))
-    if daily < ADS_CUR_MULT:
-        raise RuntimeError("Укажите дневной бюджет (минимум 1).")
     if not c["page"]:
         raise RuntimeError("Не задан ID Страницы Facebook (META_PAGE_ID).")
-    # 1) Кампания (бюджет задаём на уровне группы, поэтому общий бюджет кампании выключаем)
-    camp = _ads_req("POST", _act() + "/campaigns",
-                    {"name": name, "objective": spec["objective"], "status": "PAUSED",
-                     "special_ad_categories": "[]", "is_adset_budget_sharing_enabled": "false"})
-    camp_id = camp.get("id")
+    # бюджет
+    amount = int(round(_num(p.get("budget") or p.get("daily_budget") or 0) * ADS_CUR_MULT))
+    if amount < ADS_CUR_MULT:
+        raise RuntimeError("Укажите бюджет (минимум 1).")
+    btype = p.get("budget_type") or "daily"            # daily | lifetime
+    blevel = p.get("budget_level") or "adset"          # adset | campaign
+    bfield = "daily_budget" if btype == "daily" else "lifetime_budget"
+    bid_strategy = p.get("bid_strategy") or "LOWEST_COST_WITHOUT_CAP"
+    cat = (p.get("special_ad_category") or "NONE").upper()
+    # 1) Кампания
+    camp_p = {"name": name, "objective": spec["objective"], "status": "PAUSED",
+              "special_ad_categories": json.dumps([] if cat in ("", "NONE") else [cat])}
+    if blevel == "campaign":
+        camp_p[bfield] = amount
+        camp_p["bid_strategy"] = bid_strategy
+    else:
+        camp_p["is_adset_budget_sharing_enabled"] = "false"
+    camp_id = _ads_req("POST", _act() + "/campaigns", camp_p).get("id")
     # 2) Таргетинг
     targeting = {"age_min": int(_num(p.get("age_min")) or 18),
                  "age_max": int(_num(p.get("age_max")) or 65),
-                 "publisher_platforms": ["instagram", "facebook"],
-                 # Meta требует явно указать Advantage-аудиторию: 0 = строго по нашему таргету
                  "targeting_automation": {"advantage_audience": 0}}
-    g = p.get("gender")
-    if g == "male":   targeting["genders"] = [1]
-    elif g == "female": targeting["genders"] = [2]
+    if cat in ("", "NONE"):       # для спец-категорий пол/возраст ограничены — не трогаем
+        g = p.get("gender")
+        if g == "male":   targeting["genders"] = [1]
+        elif g == "female": targeting["genders"] = [2]
     geo = {}
     cities = p.get("cities") or []
     countries = p.get("countries") or []
     if cities:
-        # Meta требует радиус города 17–80 км — подгоняем под границы, иначе ошибка
         geo["cities"] = [{"key": x.get("key"),
                           "radius": max(17, min(80, int(_num(x.get("radius")) or 25))),
                           "distance_unit": "kilometer"} for x in cities if x.get("key")]
@@ -2716,21 +2820,51 @@ def ads_create(p):
     if not geo:
         geo = {"countries": ["KG"]}
     targeting["geo_locations"] = geo
-    interests = [x for x in (p.get("interests") or []) if x.get("id")]
-    if interests:
-        targeting["flexible_spec"] = [{"interests": [{"id": x["id"], "name": x.get("name")}
-                                                     for x in interests]}]
+    locales = [int(_num(x.get("key"))) for x in (p.get("locales") or []) if x.get("key")]
+    if locales:
+        targeting["locales"] = locales
+    inc = {}
+    interests = [{"id": x["id"], "name": x.get("name")} for x in (p.get("interests") or []) if x.get("id")]
+    behaviors = [{"id": x["id"], "name": x.get("name")} for x in (p.get("behaviors") or []) if x.get("id")]
+    if interests: inc["interests"] = interests
+    if behaviors: inc["behaviors"] = behaviors
+    if inc:
+        targeting["flexible_spec"] = [inc]
+    exclusions = [{"id": x["id"], "name": x.get("name")} for x in (p.get("exclusions") or []) if x.get("id")]
+    if exclusions:
+        targeting["exclusions"] = {"interests": exclusions}
+    # плейсменты
+    pl_keys = p.get("placements") or []
+    if p.get("auto_placements", True) or not pl_keys:
+        targeting["publisher_platforms"] = ["instagram", "facebook"]
+    else:
+        plat, fbpos, igpos = set(), [], []
+        for k, pf, pos, _lbl in PLACEMENTS:
+            if k in pl_keys:
+                plat.add(pf)
+                (fbpos if pf == "facebook" else igpos).append(pos)
+        targeting["publisher_platforms"] = sorted(plat) or ["instagram", "facebook"]
+        if fbpos: targeting["facebook_positions"] = fbpos
+        if igpos: targeting["instagram_positions"] = igpos
     # 3) Группа объявлений
-    adset = {"name": name + " — группа", "campaign_id": camp_id, "daily_budget": daily,
-             "billing_event": spec["billing_event"], "optimization_goal": spec["optimization_goal"],
-             "bid_strategy": "LOWEST_COST_WITHOUT_CAP", "targeting": json.dumps(targeting),
-             "status": "PAUSED"}
+    opt = p.get("optimization_goal")
+    if opt not in spec["opts"]:
+        opt = spec["opts"][0]
+    adset = {"name": name + " — группа", "campaign_id": camp_id, "billing_event": "IMPRESSIONS",
+             "optimization_goal": opt, "targeting": json.dumps(targeting), "status": "PAUSED"}
+    if blevel == "adset":
+        adset[bfield] = amount
+        adset["bid_strategy"] = bid_strategy
+        if bid_strategy in ("LOWEST_COST_WITH_BID_CAP", "COST_CAP"):
+            adset["bid_amount"] = int(round(_num(p.get("bid_amount")) * ADS_CUR_MULT)) or 100
     if p.get("start_date"):
         try: adset["start_time"] = _ads_iso(_day_bounds(p["start_date"])[0])
         except Exception: pass
     if p.get("end_date"):
         try: adset["end_time"] = _ads_iso(_day_bounds(p["end_date"])[1])
         except Exception: pass
+    if btype == "lifetime" and "end_time" not in adset:
+        raise RuntimeError("Для бюджета «на весь срок» укажите дату окончания.")
     if p.get("goal") == "messages":
         dest_map = {"ig_direct": "INSTAGRAM_DIRECT", "messenger": "MESSENGER", "whatsapp": "WHATSAPP"}
         adset["destination_type"] = dest_map.get(p.get("dest"), "INSTAGRAM_DIRECT")
@@ -2739,30 +2873,27 @@ def ads_create(p):
     # 4) Креатив
     ig_id = ads_ig_id()
     if p.get("post_id"):
-        # Продвижение ГОТОВОГО поста инстаграма (лайки/комменты сохраняются).
-        # Рабочая формула: instagram_user_id + source_instagram_media_id напрямую (без object_story_spec).
+        # Продвижение ГОТОВОГО поста инстаграма: instagram_user_id + source_instagram_media_id напрямую.
         if not ig_id:
             raise RuntimeError("Не найден инстаграм-аккаунт для продвижения поста.")
-        creative_params = {"name": name + " — креатив",
-                           "instagram_user_id": str(ig_id),
+        creative_params = {"name": name + " — креатив", "instagram_user_id": str(ig_id),
                            "source_instagram_media_id": str(p["post_id"])}
     else:
-        # Новое объявление: фото + текст
         msg = (p.get("text") or "").strip()
-        link = (p.get("link") or "").strip()
-        if not link and CFG.get("IG_USERNAME"):
-            link = "https://instagram.com/" + CFG.get("IG_USERNAME")
+        headline = (p.get("headline") or "").strip()
+        desc = (p.get("description") or "").strip()
+        cta = p.get("cta_type") or spec["cta"]
+        link = (p.get("link") or "").strip() or ("https://instagram.com/" + CFG.get("IG_USERNAME") if CFG.get("IG_USERNAME") else "https://facebook.com/" + str(c["page"]))
         story = {"page_id": c["page"]}
         if ig_id:
             story["instagram_user_id"] = str(ig_id)
-        link_data = {"message": msg}
-        if p.get("image_hash"):
-            link_data["image_hash"] = p["image_hash"]
-        link_data["link"] = link or "https://facebook.com/" + str(c["page"])
-        if p.get("goal") != "messages":
-            link_data["call_to_action"] = {"type": spec["cta"], "value": {"link": link_data["link"]}}
-        else:
-            link_data["call_to_action"] = {"type": spec["cta"]}
+        link_data = {"message": msg, "link": link}
+        if p.get("image_hash"): link_data["image_hash"] = p["image_hash"]
+        if headline: link_data["name"] = headline
+        if desc: link_data["description"] = desc
+        if cta and cta != "NO_BUTTON":
+            link_data["call_to_action"] = ({"type": cta} if p.get("goal") == "messages"
+                                           else {"type": cta, "value": {"link": link}})
         story["link_data"] = link_data
         creative_params = {"name": name + " — креатив", "object_story_spec": json.dumps(story)}
     creative_id = _ads_req("POST", _act() + "/adcreatives", creative_params).get("id")
@@ -3410,6 +3541,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, ads_search_interests(q))
                 if self.path.startswith("/api/ads/geo"):
                     return self._send(200, ads_search_geo(q))
+                if self.path.startswith("/api/ads/locales"):
+                    return self._send(200, ads_search_locales(q))
+                if self.path.startswith("/api/ads/behaviors"):
+                    return self._send(200, ads_search_behaviors(q))
                 if self.path.startswith("/api/ads/posts"):
                     return self._send(200, ads_list_posts())
             except Exception as e:
