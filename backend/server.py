@@ -2723,7 +2723,8 @@ def ads_create(p):
         try: adset["end_time"] = _ads_iso(_day_bounds(p["end_date"])[1])
         except Exception: pass
     if p.get("goal") == "messages":
-        adset["destination_type"] = "INSTAGRAM_DIRECT"
+        dest_map = {"ig_direct": "INSTAGRAM_DIRECT", "messenger": "MESSENGER", "whatsapp": "WHATSAPP"}
+        adset["destination_type"] = dest_map.get(p.get("dest"), "INSTAGRAM_DIRECT")
         adset["promoted_object"] = json.dumps({"page_id": c["page"]})
     adset_id = _ads_req("POST", _act() + "/adsets", adset).get("id")
     # 4) Креатив

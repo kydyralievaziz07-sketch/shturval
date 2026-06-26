@@ -3803,7 +3803,8 @@
       +'<div class="card"><h3>🚀 Новая рекламная кампания</h3>'
       +'<div style="display:grid;gap:14px;max-width:640px">'
       +adsField('Название кампании','<input id="ad-name" class="inp" placeholder="Напр. Летняя распродажа" style="'+ADS_INP+'">')
-      +adsField('Цель рекламы','<select id="ad-goal" class="inp" style="'+ADS_INP+'">'+goals.map(g=>'<option value="'+g.key+'">'+esc(g.label)+'</option>').join('')+'</select>')
+      +adsField('Цель рекламы','<select id="ad-goal" class="inp" style="'+ADS_INP+'" onchange="adsToggleDest()">'+goals.map(g=>'<option value="'+g.key+'">'+esc(g.label)+'</option>').join('')+'</select>')
+      +'<div id="ad-dest-wrap" style="display:none">'+adsField('Куда писать клиентам','<select id="ad-dest" class="inp" style="'+ADS_INP+'"><option value="ig_direct">📩 Instagram Direct</option><option value="whatsapp">🟢 WhatsApp</option><option value="messenger">💬 Messenger</option></select><div style="font-size:12px;color:var(--muted);margin-top:4px">Куда придёт клиент, нажав «Написать». WhatsApp — нужен подключённый к Странице номер.</div>')+'</div>'
       +adsField('Дневной бюджет (в '+esc(_cur)+')','<input id="ad-budget" type="number" min="1" value="'+_budDef+'" class="inp" style="'+ADS_INP+'"><div style="font-size:12px;color:var(--muted);margin-top:4px">Валюта кабинета — '+esc(_cur)+'. Для теста начни с маленькой суммы (1–5 '+esc(_cur)+'/день).</div>')
       +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
         +adsField('Начало (необязательно)','<input id="ad-start" type="date" class="inp" style="'+ADS_INP+'">')
@@ -3815,7 +3816,9 @@
         +adsField('Возраст до','<input id="ad-agemax" type="number" min="13" max="65" value="55" class="inp" style="'+ADS_INP+'">')
         +adsField('Пол','<select id="ad-gender" class="inp" style="'+ADS_INP+'"><option value="all">Все</option><option value="female">Женщины</option><option value="male">Мужчины</option></select>')
       +'</div>'
-      +adsField('Интересы','<input id="ad-int" class="inp" placeholder="Напр. Мода, Красота, Дети — начни вводить" style="'+ADS_INP+'" oninput="adsSearch(\'int\',this.value)"><div id="ad-int-res" style="font-size:13px"></div><div id="ad-int-chips" style="margin-top:6px"></div>')
+      +adsField('Интересы','<input id="ad-int" class="inp" placeholder="Напр. Мода, Красота, Дети — начни вводить" style="'+ADS_INP+'" oninput="adsSearch(\'int\',this.value)"><div id="ad-int-res" style="font-size:13px"></div><div id="ad-int-chips" style="margin-top:6px"></div>'
+        +'<div style="margin-top:8px"><div style="font-size:12px;color:var(--muted);margin-bottom:4px">💡 Популярные (нажми, чтобы добавить):</div><div style="display:flex;gap:6px;flex-wrap:wrap">'
+        +['Мода','Женская одежда','Красота','Шопинг','Косметика','Дети','Обувь','Онлайн-покупки'].map(t=>'<button type="button" class="btn ghost" style="font-size:12px;padding:4px 9px" onclick="adsQuickInterest(this,\''+t+'\')">+ '+t+'</button>').join('')+'</div></div>')
       +'<div><div style="font-size:12px;color:var(--muted);margin-bottom:6px">Что показываем в рекламе</div>'
         +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
           +'<button type="button" class="btn" id="ad-mode-post" onclick="setAdsMode(\'post\')">📲 Готовый пост из инстаграма</button>'
@@ -3835,6 +3838,21 @@
       +'<div class="card" id="ads-camps"><h3>📊 Мои кампании</h3><div id="ads-camps-body" style="color:var(--muted)">Загрузка…</div></div>';
     adsRenderChips();
     setAdsMode(_adsMode);
+    adsToggleDest();
+    // убрать назойливое предложение браузера «введите сохранённый пароль» на полях рекламы
+    body.querySelectorAll('input,textarea,select').forEach(el=>{ el.setAttribute('autocomplete','off'); el.setAttribute('autocorrect','off'); });
+  }
+  function adsToggleDest(){
+    const g=document.getElementById('ad-goal'), w=document.getElementById('ad-dest-wrap');
+    if(g&&w) w.style.display=(g.value==='messages'?'':'none');
+  }
+  async function adsQuickInterest(btn,term){
+    if(btn){ btn.disabled=true; const t=btn.textContent; btn.textContent='…'; setTimeout(()=>{btn.disabled=false;btn.textContent=t;},1500); }
+    try{
+      const r=await apiFetch('/api/ads/interests?q='+encodeURIComponent(term),{},ONEC_BASE); const d=await r.json();
+      const it=(d.items||[])[0];
+      if(it && !_adsInterests.some(c=>c.id===it.id)){ _adsInterests.push({id:it.id,name:it.name}); adsRenderChips(); }
+    }catch(e){}
   }
   let _adsMode='post', _adsPostId='', _adsPosts=null;
   function setAdsMode(m){
@@ -3936,6 +3954,7 @@
       start_date:document.getElementById('ad-start').value||'', end_date:document.getElementById('ad-end').value||'',
       age_min:Number(document.getElementById('ad-agemin').value)||18, age_max:Number(document.getElementById('ad-agemax').value)||65,
       gender:document.getElementById('ad-gender').value||'all',
+      dest:(document.getElementById('ad-dest')?document.getElementById('ad-dest').value:'ig_direct'),
       cities:_adsCities, interests:_adsInterests,
       text:(document.getElementById('ad-text')?document.getElementById('ad-text').value:'').trim(),
       link:(document.getElementById('ad-link')?document.getElementById('ad-link').value:'').trim(),
