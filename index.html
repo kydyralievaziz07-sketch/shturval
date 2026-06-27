@@ -348,7 +348,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.72.0<br>«Авто Рент»: в карточке сотрудника поле «% за сдачу авто» (вместо ставки за видео) — выбираешь 10/15/20%</div>
+      Штурвал v3.73.0<br>«Авто Рент»: менеджеры без Расходов; админ ведёт явку/аванс/премию без правки сотрудников; Парк в Машинах; уведомления (должники+сдачи); фикс смены пароля владельца</div>
   </aside>
 
   <!-- MAIN -->
@@ -1348,6 +1348,20 @@
     const low=(window._invData&&window._invData.low)||[];
     low.slice(0,10).forEach(x=>items.push({cls:(x.qty<=0?'red':'warn'),
       html:'<b>'+(x.qty<=0?'Закончился товар.':'Заканчивается.')+'</b> «'+esc(x.title||'')+'» — '+(x.qty||0)+' шт.'}));
+    // --- АВТО РЕНТ: сдачи авто (сегодня/завтра/просрочка) + должники ---
+    try{
+      if(typeof RENT!=='undefined' && RENT && RENT.data){
+        var D=RENT.data;
+        (D.rentals||[]).forEach(function(r){
+          var u=(typeof rentUrg==='function')?rentUrg(r):null;
+          if(u) items.push({cls:(u.tag.indexOf('🔴')>=0?'red':'warn'),
+            html:'<b>'+u.tag+'.</b> '+esc(r.model||'')+(r.renter?' · '+esc(r.renter):'')+(r.phone?' · <a href="tel:'+esc((r.phone||'').replace(/[^0-9+]/g,''))+'" style="color:inherit">'+esc(r.phone)+'</a>':'')+' (сдача '+esc(r.end||'')+')'});
+        });
+        (D.rentals||[]).filter(function(r){ return rnum(r.debt)>0; }).forEach(function(r){
+          items.push({cls:'red',html:'<b>Долг '+esc(r.debt)+' сом.</b> '+esc(r.model||'')+(r.renter?' · '+esc(r.renter):'')+(r.phone?' · <a href="tel:'+esc((r.phone||'').replace(/[^0-9+]/g,''))+'" style="color:inherit">'+esc(r.phone)+'</a>':'')});
+        });
+      }
+    }catch(e){}
     const box=document.getElementById('notif-list');
     if(box) box.innerHTML=items.length
       ? items.map(n=>'<div class="notif '+(n.cls||'')+'">'+n.html+'</div>').join('')
@@ -1356,6 +1370,11 @@
     if(bc){ if(items.length){ bc.textContent=items.length; bc.style.display=''; } else bc.style.display='none'; }
   }
   function toggleDrawer(){
+    // если есть доступ к прокату, а данные ещё не загружены — подтянем для уведомлений
+    var rentAcc=canSee('rent')||(USER.sections||[]).some(function(s){return s.indexOf('rent')===0;});
+    if(rentAcc && (typeof RENT==='undefined'||!RENT)){
+      apiFetch('/api/rent?period=ИТОГО',{},ONEC_BASE).then(function(r){return r.json();}).then(function(d){ if(d&&!d.error){ RENT=d; renderNotifs(); } }).catch(function(){});
+    }
     renderNotifs();
     document.getElementById('drawer').classList.toggle('open');
     document.getElementById('overlay').classList.toggle('open');
@@ -1465,9 +1484,10 @@
     if(firstMod){ curModule=firstMod.key; const t=firstMod.tabs.filter(tabVisible); curTab=t[0]||'set'; }
     else { curModule='crm'; curTab='set'; }
     renderTopNav(); renderSubmenu(); openTab(curTab);
-    // колокольчик «Требует внимания» — только тем, кто видит торговлю
+    // колокольчик «Требует внимания» — торговля ИЛИ прокат (должники + сдачи авто)
     const bell=document.getElementById('bell-btn');
-    if(bell){ bell.style.display=(isOwner()||canSee('prod')||canSee('crm')||canSee('dash'))?'':'none'; }
+    const _rentAcc=canSee('rent')||(USER.sections||[]).some(function(s){return s.indexOf('rent')===0;});
+    if(bell){ bell.style.display=(isOwner()||canSee('prod')||canSee('crm')||canSee('dash')||_rentAcc)?'':'none'; }
     const u=document.querySelector('.user'); if(u&&u.childNodes[0]) u.childNodes[0].nodeValue=(USER.name||'Пользователь')+' ';
     const av=document.querySelector('.avatar'); if(av) av.textContent=(USER.name||'?').slice(0,1).toUpperCase();
     updateSettings();
@@ -4679,7 +4699,11 @@
   function jsn(s){ return (s||'').replace(/'/g,''); }
   const DEPT_ORDER=['Администраторы','Детский','1 этаж','Касса','Склад','Мужской','Женский','Онлайн','Маркетплейс','Обувь','Мобилограф'];
   // ===== управление командой: добавить / изменить / убрать сотрудника =====
-  function canManageTeam(){ return isOwner()||((USER.sections||[]).indexOf('hr')>=0); }
+  // Редактировать сотрудников (добавить/изменить/удалить/оклад): владелец кабинета; в магазине — и HR.
+  // В кабинете проката админ (hr, не владелец) НЕ редактирует — только аванс/премия/явка/календарь.
+  function canManageTeam(){ return isCabinetOwner() || ((USER.sections||[]).indexOf('hr')>=0 && !isRentCabinet()); }
+  // Операции HR (аванс, премия, отметка явки) — владелец и любой с разделом «Кадры».
+  function canHrOps(){ return isCabinetOwner() || (USER.sections||[]).indexOf('hr')>=0; }
   let empEditLogin=null;   // null = режим добавления
   function _deptOptions(){
     const set=new Set(); (HR_LIST||[]).forEach(v=>{ if(v.department) set.add(v.department); });
@@ -5275,7 +5299,10 @@
     var own=rentIsOwner();
     var note=own?'🚗 Автопарк — '+active.length+' машин. Цена/сутки, залог и стоимость покупки в сомах. ➕ добавить · ✏️ изменить · 💰 продать (в архив) · 🗑 удалить.'
                 :'🚗 Автопарк — '+active.length+' машин. 🔒 Изменять машины может только владелец — вам доступен просмотр.';
-    var main=(own?rAddBtn('car','Машина'):'')+'<div class="note" style="margin-bottom:12px">'+note+'</div>'+
+    var cnt=function(w){ return active.filter(function(c){ return (c.status||'').toLowerCase().indexOf(w)>=0; }).length; };
+    var park='<div class="card" style="margin-bottom:14px"><h3>🚗 Парк</h3><div class="kpis" style="grid-template-columns:repeat(4,1fr);margin:0">'+
+      kpiCard('Всего машин',active.length)+kpiCard('Свободно',cnt('свобод'))+kpiCard('В аренде',cnt('аренд'))+kpiCard('На ремонте',cnt('ремонт'))+'</div></div>';
+    var main=park+(own?rAddBtn('car','Машина'):'')+'<div class="note" style="margin-bottom:12px">'+note+'</div>'+
       rtable(head, active.map(function(c){ return _carRow(c,false); }).join(''));
     var arch='';
     if(sold.length){

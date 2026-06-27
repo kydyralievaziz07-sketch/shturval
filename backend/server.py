@@ -149,11 +149,16 @@ def load_users():
                 secs = ["myday"]
             if old and old.get("pw"):                      # убрать старую парольную запись
                 users.pop(old["pw"], None)
+            # ВАЖНО: флаг владельца сохраняем из env-записи (USERS_JSON), даже если строка из
+            # таблицы перекрывает (в employees колонки owner нет). Иначе смена пароля владельца
+            # из интерфейса стирала бы его права (он попадал в обычные сотрудники).
+            _owner_flag = bool(u.get("owner") or (old.get("owner") if old else False))
             _add((u.get("pw") or "").strip(),
                  {"name": u.get("name", "Сотрудник"), "sections": secs,
                   "role": u.get("role", ""), "department": u.get("department", ""),
                   "phone": u.get("phone", "") or "",
                   "company": (u.get("company_id") or COMPANY_ID),
+                  "owner": _owner_flag,
                   "plan_day": u.get("plan_day", 0),
                   "salary_month": u.get("salary_month", 0),
                   "daily_rate": u.get("daily_rate", 0),
@@ -4288,8 +4293,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"ok": True, "departments": dept_plan_all(co)})
         if self.path.startswith("/api/team"):
             u = self._user(); secs = u.get("sections", []) if u else []
-            if not (u and ("all" in secs or "hr" in secs)):   # команду ведёт владелец/HR
-                return self._send(403, {"error": "Управлять командой может только владелец или HR"})
+            _isown = bool(u and ("all" in secs or u.get("owner")))
+            _co_t = (u.get("company") if u else None) or COMPANY_ID
+            # Команду РЕДАКТИРУЕТ владелец; HR-менеджер магазина — тоже. В кабинете проката
+            # (другая компания) изменять сотрудников может ТОЛЬКО владелец (админ — нет).
+            if not (u and (_isown or (_co_t == COMPANY_ID and "hr" in secs))):
+                return self._send(403, {"error": "Изменять сотрудников может только владелец"})
             if not supa_on():
                 return self._send(503, {"error": "База не настроена — добавление недоступно"})
             try:
