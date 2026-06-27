@@ -358,7 +358,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.78.0<br>Экспорт Excel даёт готовый шаблон с заголовками даже без данных (для загрузки таблицей)</div>
+      Штурвал v3.79.0<br>Временно скрыта иконка «Авто Рент» у владельца-Бизмарта (у FREE WAYS остаётся)</div>
   </aside>
 
   <!-- MAIN -->
@@ -1296,7 +1296,18 @@
     if(tab==='sim') return isOwner()||canSee('ai')||canSee('analytics')||canSee('dash');
     return canSee(tab);
   }
-  function moduleVisible(m){ return m.tabs.some(tabVisible); }
+  // временно скрытые модули — прячем ИКОНКУ у тех, кто видит их только через «all» (владелец-Бизмарт).
+  // У кого есть ПРЯМОЙ доступ к разделу (напр. FREE WAYS с 'rent') — модуль остаётся.
+  // Чтобы вернуть «Авто Рент» владельцу — очистить массив: const HIDDEN_MODULES=[];
+  const HIDDEN_MODULES=['rent'];
+  function _explicitModule(key){
+    if(key==='rent') return (USER.sections||[]).some(function(s){ return s==='rent'||s.indexOf('rent_')===0; });
+    return (USER.sections||[]).indexOf(key)>=0;
+  }
+  function moduleVisible(m){
+    if(HIDDEN_MODULES.indexOf(m.key)>=0 && !_explicitModule(m.key)) return false;
+    return m.tabs.some(tabVisible);
+  }
   function dispatchTab(tab){
     if(tab==='crm') loadCRM();
     else if(tab==='myday') renderMyDay();
