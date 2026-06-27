@@ -1301,7 +1301,23 @@
   function setLg(l){ _mem[LG_KEY]=l||''; _lsSet(LG_KEY,l||''); _setCk(LG_KEY,l||''); }
   function getCachedUser(){ try{ var s=_lsGet(USER_KEY)||_getCk(USER_KEY)||_mem[USER_KEY]; return s?JSON.parse(s):null; }catch(e){ return null; } }
   function setCachedUser(d){ var s=JSON.stringify(d); _mem[USER_KEY]=s; _lsSet(USER_KEY,s); _setCk(USER_KEY,s); }
-  function clearPw(){ _mem={}; try{localStorage.removeItem(PW_KEY);localStorage.removeItem(LG_KEY);localStorage.removeItem(USER_KEY);}catch(e){} _delCk(PW_KEY); _delCk(LG_KEY); _delCk(USER_KEY); }
+  function clearPw(){ _mem={}; try{localStorage.removeItem(PW_KEY);localStorage.removeItem(LG_KEY);localStorage.removeItem(USER_KEY);}catch(e){} _delCk(PW_KEY); _delCk(LG_KEY); _delCk(USER_KEY); try{ history.replaceState(null,'',location.pathname); }catch(e){} }
+  // работает ли хранилище браузера (localStorage или cookie)?
+  function _storageWorks(){
+    try{ localStorage.setItem('_sw','1'); var a=localStorage.getItem('_sw')==='1'; localStorage.removeItem('_sw'); if(a) return true; }catch(e){}
+    try{ document.cookie='_sw=1;path=/;SameSite=Lax'; var b=document.cookie.indexOf('_sw=1')>=0; document.cookie='_sw=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/'; return b; }catch(e){}
+    return false;
+  }
+  // если браузер НЕ хранит вход — дописываем ключ прямо в адрес, чтобы обновление/перезапуск не выкидывали
+  function _syncUrlKey(){
+    try{
+      var pw=getPw(); if(!pw) return;
+      if(_storageWorks()) return;   // хранилище работает — адрес не трогаем
+      var lg=getLg(); var raw=lg?(lg+':'+pw):pw;
+      var tok=btoa(unescape(encodeURIComponent(raw)));
+      history.replaceState(null,'',location.pathname+'?key='+encodeURIComponent(tok));
+    }catch(e){}
+  }
   // обёртка над fetch: подставляет логин+пароль в заголовки, ловит 401 → показывает вход
   async function apiFetch(path,opts,base){
     opts=opts||{}; const h=Object.assign({},opts.headers||{}); const p=getPw(); const lg=getLg();
@@ -1457,7 +1473,7 @@
     try{
       const h={'X-Auth':val}; if(lg) h['X-Login']=lg;
       const r=await fetch(ONEC_BASE+'/api/auth',{headers:h});
-      if(r.ok){ const d=await r.json(); setPw(val); setLg(lg); applyUser(d); showLogin(false); if(canSee('crm')||canSee('dash')) loadCRM(); if(canSee('dash')) loadDashSales(); }
+      if(r.ok){ const d=await r.json(); setPw(val); setLg(lg); applyUser(d); showLogin(false); _syncUrlKey(); if(canSee('crm')||canSee('dash')) loadCRM(); if(canSee('dash')) loadDashSales(); }
       else { err.textContent='Неверный логин или пароль. Попробуй ещё раз.'; }
     }catch(e){ err.textContent='Нет связи с сервером. Обнови страницу.'; }
     btn.disabled=false; btn.textContent='Войти';
@@ -1483,6 +1499,7 @@
       const res=await checkAuth();
       if(res&&res.ok){ applyUser(res); applyAccess(); }   // тихо освежили имя/права, профиль запомнили
       else if(!cached){ /* профиля ещё нет, но сервер не ответил — покажем хотя бы Настройки */ applyUser({name:'',sections:['all']}); applyAccess(); }
+      _syncUrlKey();   // если хранилище заблокировано — закрепим вход в адресе, чтобы не выкидывало
       return;
     }
     // Сохранённого входа нет — обычная проверка
