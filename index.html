@@ -15,6 +15,16 @@
     --bg:#eef1f6; --panel:#ffffff; --panel2:#f1f4f9; --line:#dfe4ec;
     --text:#1b2030; --muted:#697586;
   }
+  /* фирменная тема (FREE WAYS — чёрный фон, красный акцент) */
+  body.brand{
+    --bg:#0a0a0a; --panel:#141414; --panel2:#1d1d1f; --line:#2c2c2e;
+    --text:#f5f5f7; --muted:#8d8d93; --accent:#e11d2a;
+    --red:#ff5b5b; --green:#37d39a; --amber:#ffb84d; --purple:#b08bff;
+  }
+  body.brand .topnav,body.brand .sidebar{background:#000}
+  /* переключатель темы — 3 кнопки */
+  .thsel button{padding:7px 12px;font-size:13px}
+  .thsel button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     background:var(--bg);color:var(--text);display:flex;flex-direction:column;height:100vh;overflow:hidden}
@@ -348,7 +358,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.74.0<br>«Мой профиль»: можно менять своё имя и должность (плюс аватар и тема)</div>
+      Штурвал v3.75.0<br>Темы: выбор из 3 (Тёмная / Светлая / Фирменная FREE WAYS — чёрный+красный) в Настройках</div>
   </aside>
 
   <!-- MAIN -->
@@ -871,8 +881,12 @@
         <h3>⚙️ Приложение</h3>
         <div class="note" id="set-info" style="margin-bottom:6px">—</div>
         <div class="set-row">
-          <span class="lbl">☀️ Светлая тема</span>
-          <label class="switch"><input type="checkbox" id="sw-theme" onchange="setTheme(this.checked?'light':'dark')"><span class="slider"></span></label>
+          <span class="lbl">🎨 Тема оформления</span>
+          <div class="thsel" style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn ghost" id="thbtn-dark" onclick="setTheme('dark')">🌙 Тёмная</button>
+            <button class="btn ghost" id="thbtn-light" onclick="setTheme('light')">☀️ Светлая</button>
+            <button class="btn ghost" id="thbtn-brand" onclick="setTheme('brand')">🏁 Фирменная</button>
+          </div>
         </div>
         <div class="set-row">
           <span class="lbl">💱 Показывать в долларах ($) <span id="fxnote" style="font-size:11px;color:var(--muted)"></span></span>
@@ -2767,9 +2781,12 @@
   }
   // --- ТЕМА (тумблер: выкл = тёмная, вкл = светлая) ---
   function setTheme(t){
-    document.body.classList.toggle('light', t==='light');
+    if(t!=='light'&&t!=='brand') t='dark';
+    document.body.classList.remove('light','brand');
+    if(t==='light') document.body.classList.add('light');
+    else if(t==='brand') document.body.classList.add('brand');
     try{ localStorage.setItem('shturval_theme', t); }catch(e){}
-    const sw=document.getElementById('sw-theme'); if(sw) sw.checked=(t==='light');
+    ['dark','light','brand'].forEach(function(x){ var b=document.getElementById('thbtn-'+x); if(b) b.classList.toggle('active', x===t); });
   }
   (function(){
     let th='dark'; try{ th=localStorage.getItem('shturval_theme')||'dark'; }catch(e){} setTheme(th);
