@@ -3026,41 +3026,87 @@
   let _igbot=null;
   function igbotToggleCard(){ const p=document.getElementById('igbot-panel'),b=document.getElementById('igbot-badge'); if(!p) return; const open=p.style.display==='none'; p.style.display=open?'':'none'; if(b&&_igbot) b.textContent=_igbot.enabled?'🟢 включён':'⚪ выключен'; if(open&&!_igbot) loadIgBot(); }
   function igbotBadge(){ const b=document.getElementById('igbot-badge'); if(b&&_igbot) b.textContent=_igbot.enabled?'🟢 включён':'⚪ выключен'; }
+  function igbotTs(u){ if(!u) return '—'; try{ return new Date(u*1000).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }catch(e){ return '—'; } }
   async function loadIgBot(){
     const el=document.getElementById('igbot-body'); if(!el) return;
     try{
       const r=await apiFetch('/api/ig/bot',{},ONEC_BASE); const d=await r.json();
       _igbot=d.settings||{}; igbotBadge();
+      const st=d.stats||{}, errs=d.errors||[], srcs=_igbot.sources||[];
       const SS='width:100%;padding:9px 11px;border:1px solid var(--line,#2a2f3a);border-radius:9px;background:var(--bg2,#161a22);color:inherit;font-size:14px';
+      const DIV='border-top:1px solid var(--line,#222);margin:14px 0;padding-top:14px';
+      const days=[[0,'выключено — обучаю вручную'],[1,'каждый день'],[3,'раз в 3 дня'],[7,'раз в неделю'],[14,'раз в 2 недели'],[30,'раз в месяц']];
       el.innerHTML=''
         +(d.has_key?'':'<div class="note" style="border-color:#ffb84d;margin-bottom:10px">🟠 Не задан ключ Claude (ANTHROPIC_API_KEY) — бот не сможет отвечать.</div>')
         +'<label style="display:flex;gap:10px;align-items:center;font-size:15px;margin-bottom:12px"><input type="checkbox" id="igbot-en" '+(_igbot.enabled?'checked':'')+' style="width:18px;height:18px"> <b>Бот включён</b> — Claude автоматически отвечает клиентам в Instagram Direct</label>'
-        +'<div style="font-size:12px;color:var(--muted);margin-bottom:4px">Как бот общается (роль и правила):</div>'
-        +'<textarea id="igbot-prompt" rows="7" style="'+SS+';resize:vertical;margin-bottom:10px">'+esc(_igbot.prompt||'')+'</textarea>'
-        +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">'
+        +'<div style="font-size:13px;font-weight:600;margin-bottom:6px">📋 Правила: как бот общается (роль, тон, воронка продаж)</div>'
+        +'<textarea id="igbot-prompt" rows="8" style="'+SS+';resize:vertical;margin-bottom:6px">'+esc(_igbot.prompt||'')+'</textarea>'
+        +'<div style="font-size:11px;color:var(--muted);margin-bottom:10px">✅ Грамотный кыргызский/русский и живой тон добавляются автоматически — их не нужно прописывать.</div>'
+        +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">'
           +'<div><div style="font-size:12px;color:var(--muted);margin-bottom:4px">Модель</div><select id="igbot-model" style="'+SS+'">'
             +['claude-haiku-4-5-20251001','claude-sonnet-4-6','claude-opus-4-8'].map(m=>'<option value="'+m+'"'+(_igbot.model===m?' selected':'')+'>'+m+'</option>').join('')
             +(['claude-haiku-4-5-20251001','claude-sonnet-4-6','claude-opus-4-8'].indexOf(_igbot.model)<0?'<option value="'+esc(_igbot.model)+'" selected>'+esc(_igbot.model)+'</option>':'')
           +'</select></div>'
           +'<div><div style="font-size:12px;color:var(--muted);margin-bottom:4px">Пауза после ответа человека (часов)</div><input id="igbot-hh" type="number" min="1" max="72" value="'+(_igbot.handoff_hours||6)+'" style="'+SS+'"></div>'
         +'</div>'
-        +'<div style="font-size:12px;color:var(--muted);margin-bottom:10px">💡 Если оператор ответит клиенту хоть раз (через Штурвал ИЛИ само приложение Instagram) — бот в этом диалоге больше не вмешивается. На свои же сообщения бот не отвечает.</div>'
-        +'<div style="border-top:1px solid var(--line,#222);margin:12px 0;padding-top:12px">'
-          +'<div style="font-size:13px;margin-bottom:6px">🧠 <b>База знаний из переписок</b> — '+(_igbot.kb&&_igbot.kb.length?('подключена ('+_igbot.kb.length+' символов)'):'<span style="color:#ffb84d">пока пустая</span>')+'</div>'
-          +'<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Бот анализирует прошлые чаты с клиентами и учится: цены, частые ответы, доставка, наличие. Обновляй раз в несколько дней.</div>'
-          +'<button class="btn ghost" id="igbot-learn" onclick="learnIgBot()">🧠 Обучить по перепискам</button>'
+        +'<div style="font-size:12px;color:var(--muted);margin-bottom:6px">💡 Если оператор ответит клиенту хоть раз (через Штурвал ИЛИ само приложение Instagram) — бот в этом диалоге больше не вмешивается. На свои же сообщения бот не отвечает.</div>'
+        +'<div id="igbot-msg" style="font-size:13px;margin-bottom:8px"></div>'
+        +'<button class="btn" id="igbot-save" onclick="saveIgBot()">💾 Сохранить правила</button>'
+        +'<div style="'+DIV+'">'
+          +'<div style="font-size:13px;font-weight:600;margin-bottom:4px">🧠 Обучение на диалогах</div>'
+          +'<div style="font-size:13px;margin-bottom:6px">База знаний: '+(_igbot.kb&&_igbot.kb.length?('<b style="color:#39d98a">подключена</b> ('+_igbot.kb.length+' символов)'):'<span style="color:#ffb84d">пока пустая</span>')+'</div>'
+          +'<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Бот читает прошлые чаты с клиентами и учится: цены, частые ответы, доставка, наличие.</div>'
+          +'<div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end;margin-bottom:8px">'
+            +'<div><div style="font-size:12px;color:var(--muted);margin-bottom:4px">⏰ Авто-обучение по расписанию</div><select id="igbot-learnevery" style="'+SS+'">'
+              +days.map(x=>'<option value="'+x[0]+'"'+(Number(_igbot.learn_every_days||0)===x[0]?' selected':'')+'>'+x[1]+'</option>').join('')
+            +'</select></div>'
+            +'<button class="btn ghost" id="igbot-learn" onclick="learnIgBot()" style="white-space:nowrap">🧠 Обучить сейчас</button>'
+          +'</div>'
+          +'<div style="font-size:11px;color:var(--muted)">Последнее обучение: '+igbotTs(_igbot.learn_last)+(Number(_igbot.learn_every_days||0)&&_igbot.learn_next?(' · следующее: '+igbotTs(_igbot.learn_next)):'')+'</div>'
           +'<div id="igbot-learn-msg" style="font-size:13px;margin-top:6px"></div>'
         +'</div>'
-        +'<div id="igbot-msg" style="font-size:13px;margin-bottom:8px"></div>'
-        +'<button class="btn" id="igbot-save" onclick="saveIgBot()">💾 Сохранить</button>';
+        +'<div style="'+DIV+'">'
+          +'<div style="font-size:13px;font-weight:600;margin-bottom:4px">🎥 Видео и посты Instagram в базу знаний</div>'
+          +'<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Вставь ссылку на свой пост/Reels — бот возьмёт его <b>описание</b> (товары, цены, акции). Видео бот не смотрит, использует текст под постом.</div>'
+          +'<div style="display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:8px">'
+            +'<input id="igbot-srcurl" placeholder="https://www.instagram.com/reel/..." style="'+SS+'" autocomplete="off">'
+            +'<button class="btn ghost" id="igbot-srcadd" onclick="igbotAddSource()" style="white-space:nowrap">➕ Добавить</button>'
+          +'</div>'
+          +'<div id="igbot-src-msg" style="font-size:13px;margin-bottom:8px"></div>'
+          +'<div id="igbot-src-list">'+igbotSourcesHtml(srcs)+'</div>'
+        +'</div>'
+        +'<div style="'+DIV+'">'
+          +'<div style="font-size:13px;font-weight:600;margin-bottom:8px">📊 Работа бота</div>'
+          +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center">'
+            +'<div style="background:var(--bg2,#161a22);border-radius:9px;padding:10px"><div style="font-size:20px;font-weight:700;color:#39d98a">'+(st.replies||0)+'</div><div style="font-size:11px;color:var(--muted)">ответов клиентам</div></div>'
+            +'<div style="background:var(--bg2,#161a22);border-radius:9px;padding:10px"><div style="font-size:20px;font-weight:700;color:#5b9dff">'+(st.handoffs||0)+'</div><div style="font-size:11px;color:var(--muted)">передано людям</div></div>'
+            +'<div style="background:var(--bg2,#161a22);border-radius:9px;padding:10px"><div style="font-size:20px;font-weight:700;color:'+(errs.length?'#ff6b6b':'#39d98a')+'">'+errs.length+'</div><div style="font-size:11px;color:var(--muted)">ошибок</div></div>'
+          +'</div>'
+          +'<div style="font-size:11px;color:var(--muted);margin-top:6px">Последний ответ бота: '+igbotTs(st.last_replies)+'</div>'
+        +'</div>'
+        +'<div style="'+DIV+'">'
+          +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="font-size:13px;font-weight:600">⚠️ Журнал ошибок бота</div>'+(errs.length?'<button class="btn ghost" style="padding:4px 10px;font-size:12px" onclick="clearIgErrors()">Очистить</button>':'')+'</div>'
+          +(errs.length?('<div style="max-height:200px;overflow:auto;font-size:12px">'+errs.map(e=>'<div style="padding:6px 8px;border-bottom:1px solid var(--line,#222)"><span style="color:var(--muted)">'+igbotTs(e.t)+'</span> · <b>'+esc(e.stage||'')+'</b><br><span style="color:#ff8a8a">'+esc(e.msg||'')+'</span></div>').join('')+'</div>'):'<div style="font-size:12px;color:var(--muted)">Ошибок нет — бот работает чисто ✅</div>')
+        +'</div>';
     }catch(e){ el.innerHTML='🔴 Не удалось загрузить настройки бота'; }
+  }
+  function igbotSourcesHtml(srcs){
+    if(!srcs||!srcs.length) return '<div style="font-size:12px;color:var(--muted)">Пока ничего не прикреплено.</div>';
+    return srcs.map(s=>'<div style="display:flex;justify-content:space-between;gap:8px;align-items:start;padding:8px;background:var(--bg2,#161a22);border-radius:8px;margin-bottom:6px">'
+      +'<div style="min-width:0"><div style="font-size:12px;font-weight:600">'+esc(s.title||'Пост')+'</div>'
+      +'<div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><a href="'+esc(s.url)+'" target="_blank" style="color:#5b9dff">'+esc(s.url)+'</a></div>'
+      +'<div style="font-size:11px;color:var(--muted);margin-top:3px;max-height:34px;overflow:hidden">'+esc((s.text||'').slice(0,120))+'</div></div>'
+      +'<button class="btn ghost" style="padding:3px 9px;font-size:12px" onclick="igbotDelSource('+JSON.stringify(s.url).replace(/"/g,'&quot;')+')">✕</button></div>').join('');
   }
   async function saveIgBot(){
     const msg=document.getElementById('igbot-msg'), btn=document.getElementById('igbot-save');
     const body={enabled:document.getElementById('igbot-en').checked,
       prompt:(document.getElementById('igbot-prompt').value||'').trim(),
       model:document.getElementById('igbot-model').value,
-      handoff_hours:Number(document.getElementById('igbot-hh').value)||6};
+      handoff_hours:Number(document.getElementById('igbot-hh').value)||6,
+      learn_every_days:Number(document.getElementById('igbot-learnevery').value)||0};
+    if(body.learn_every_days){ const base=(_igbot.learn_last||Math.floor(Date.now()/1000)); body.learn_next=base+body.learn_every_days*86400; }
+    else body.learn_next=0;
     if(body.enabled && !confirm('Включить ИИ-бота? Claude начнёт САМ отвечать клиентам в Instagram. Убедись, что роль и правила заданы верно.')){ return; }
     btn.disabled=true; const o=btn.textContent; btn.textContent='Сохраняю…';
     try{
@@ -3073,7 +3119,7 @@
   }
   async function learnIgBot(){
     const msg=document.getElementById('igbot-learn-msg'), btn=document.getElementById('igbot-learn');
-    btn.disabled=true; const o=btn.textContent; btn.textContent='Анализирую переписки…';
+    btn.disabled=true; const o=btn.textContent; btn.textContent='Анализирую…';
     msg.innerHTML='⏳ Читаю чаты и собираю базу знаний (может занять до минуты)…';
     try{
       const r=await apiFetch('/api/ig/bot/learn',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'},ONEC_BASE);
@@ -3082,6 +3128,24 @@
       else msg.innerHTML='🔴 '+esc(d.error||'не удалось обучить');
     }catch(e){ msg.innerHTML='🔴 Ошибка анализа'; }
     btn.disabled=false; btn.textContent=o;
+  }
+  async function igbotAddSource(){
+    const inp=document.getElementById('igbot-srcurl'), msg=document.getElementById('igbot-src-msg'), btn=document.getElementById('igbot-srcadd');
+    const url=(inp.value||'').trim(); if(!url){ msg.innerHTML='🟠 Вставь ссылку на пост'; return; }
+    btn.disabled=true; const o=btn.textContent; btn.textContent='Читаю…'; msg.innerHTML='⏳ Беру описание поста…';
+    try{
+      const r=await apiFetch('/api/ig/bot/source',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})},ONEC_BASE);
+      const d=await r.json();
+      if(d.ok){ inp.value=''; msg.innerHTML='✅ Добавлено: '+esc((d.text||'').slice(0,80))+'…'; loadIgBot(); }
+      else msg.innerHTML='🔴 '+esc(d.error||'не удалось');
+    }catch(e){ msg.innerHTML='🔴 Ошибка'; }
+    btn.disabled=false; btn.textContent=o;
+  }
+  async function igbotDelSource(url){
+    try{ await apiFetch('/api/ig/bot/source/del',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})},ONEC_BASE); loadIgBot(); }catch(e){}
+  }
+  async function clearIgErrors(){
+    try{ await apiFetch('/api/ig/bot/errors/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'},ONEC_BASE); loadIgBot(); }catch(e){}
   }
   async function loadIgInbox(){
     loadIgBot();
