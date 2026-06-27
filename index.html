@@ -1350,7 +1350,7 @@
     // а НЕ «показать всё». ['all'] ставим только если поле sections вообще не пришло.
     USER={name:(d&&d.name)||'', sections:(d&&Array.isArray(d.sections))?d.sections:['all'],
           role:(d&&d.role)||'', department:(d&&d.department)||'', plan_day:(d&&d.plan_day)||0};
-    if(d&&d.ok) setCachedUser(d);   // запомним профиль, чтобы войти даже когда сервер спит
+    if(d&&d.ok){ try{ d._lg=getLg(); }catch(e){} setCachedUser(d); }   // запомним профиль (+ под каким входом) — чтобы войти даже когда сервер спит
     applyAccess();
     loadCrmCloud();                 // подтянуть CRM из облака (общие данные на всех устройствах)
   }
@@ -1502,7 +1502,9 @@
         try{ sessionStorage.removeItem(USER_KEY); }catch(e){}   // профиль перезапросим под этот вход
       }
     }catch(e){}
-    const hasCreds=!!getPw(); const cached=getCachedUser();
+    const hasCreds=!!getPw(); let cached=getCachedUser();
+    // защита от «каши»: если запомненный профиль был под ДРУГИМ входом — не показываем его (перезапросим свежий)
+    if(cached && (cached._lg||'').toLowerCase()!==(getLg()||'').toLowerCase()) cached=null;
     // Вход уже сохранён на этом устройстве → СРАЗУ показываем сайт, НЕ заставляя логиниться.
     // Сами НИКОГДА не выкидываем (даже если сервер моргнул/спит) — выход только кнопкой «Выход».
     if(hasCreds){
