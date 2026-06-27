@@ -111,6 +111,7 @@ def load_users():
                           "role": u.get("role", ""),
                           "department": u.get("department", ""),
                           "company": (u.get("company") or COMPANY_ID),
+                          "owner": bool(u.get("owner")),
                           "plan_day": u.get("plan_day", 0),
                           "salary_month": u.get("salary_month", 0),
                           "daily_rate": u.get("daily_rate", 0),
@@ -2422,7 +2423,7 @@ def payroll_all(company=None):
             recs = None                     # не вышло — откат на поштучный режим
     seen = set(); out = []
     for v in company_users(co):
-        if "all" in v.get("sections", []):  # владельца не показываем
+        if "all" in v.get("sections", []) or v.get("owner"):  # владельца не показываем
             continue
         key = _pkey(v)
         if not key or key in seen:
@@ -2441,7 +2442,7 @@ DEFAULT_DEPT_PLAN = 250000   # план по умолчанию на отдел 
 def _dept_list(company=None):
     out = []
     for v in company_users(company):
-        if "all" in v.get("sections", []):
+        if "all" in v.get("sections", []) or v.get("owner"):
             continue
         d = (v.get("department") or "").strip()
         if d and d not in out:
@@ -2450,7 +2451,8 @@ def _dept_list(company=None):
 
 def _dept_count(dep, company=None):
     return sum(1 for v in company_users(company)
-               if (v.get("department") or "").strip() == dep and "all" not in v.get("sections", []))
+               if (v.get("department") or "").strip() == dep
+               and "all" not in v.get("sections", []) and not v.get("owner"))
 
 def dept_plan_rec(dep, company=None):
     co = company or COMPANY_ID
@@ -3726,7 +3728,7 @@ class Handler(BaseHTTPRequestHandler):
                       "sections": v.get("sections", []),
                       "role": v.get("role", ""), "department": v.get("department", ""),
                       "plan_day": v.get("plan_day", 0)}
-                     for v in company_users(u.get("company") or COMPANY_ID) if "all" not in v.get("sections", [])]
+                     for v in company_users(u.get("company") or COMPANY_ID) if "all" not in v.get("sections", []) and not v.get("owner")]
             return self._send(200, {"staff": staff, "total": len(staff)})
         if self.path.startswith("/api/rent"):
             # доступ уже проверен общим шлюзом выше (раздел "rent")
