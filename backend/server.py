@@ -5,7 +5,7 @@
 Токен хранится здесь, на сервере, и НЕ попадает в код сайта.
 Запуск: python3 server.py   (или двойной клик по «Запустить-сервер.command»)
 """
-import os, json, time, threading, urllib.request, urllib.error, urllib.parse, hmac, hashlib, gzip
+import os, json, time, threading, urllib.request, urllib.error, urllib.parse, hmac, hashlib, gzip, re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # Часовой пояс — Бишкек (UTC+6). Чтобы «сегодня», время сообщений, явка, касса
@@ -1247,6 +1247,36 @@ def _igbot_history(account, customer, n=12):
     except Exception:
         return []
 
+def igbot_find_products(text, limit=15):
+    """Поиск реальных товаров в каталоге 1С по словам из сообщения клиента (наличие+цена).
+    Это «синхронизация с Товарами» — бот называет настоящие позиции и цены."""
+    try:
+        goods = get_goods() or []
+    except Exception:
+        return []
+    words = [w for w in re.findall(r"[а-яёa-z0-9]+", (text or "").lower()) if len(w) >= 4]
+    if not words or not goods:
+        return []
+    stems = set()
+    for w in words:
+        stems.add(w)
+        if len(w) >= 5: stems.add(w[:-1])     # бассейны → бассейн
+        if len(w) >= 6: stems.add(w[:-2])
+    found = []
+    for g in goods:
+        title = (g.get("TITLE") or "").lower()
+        if title and any(s in title for s in stems):
+            found.append(g)
+            if len(found) >= limit * 4:
+                break
+    # сначала то, что в наличии, затем по убыванию остатка
+    found.sort(key=lambda g: (0 if _num(g.get("QUANTITY")) > 0 else 1, -_num(g.get("QUANTITY"))))
+    out = []
+    for g in found[:limit]:
+        out.append({"name": (g.get("TITLE") or "").strip(),
+                    "price": round(_num(g.get("PRICE"))), "qty": int(_num(g.get("QUANTITY")))})
+    return out
+
 def _igbot_generate(history, settings):
     key = CFG.get("ANTHROPIC_API_KEY", "")
     if not key:
@@ -1270,6 +1300,17 @@ def _igbot_generate(history, settings):
     if settings.get("kb"):
         system += ("\n\n=== ЗНАНИЯ ИЗ ПРОШЛЫХ ПЕРЕПИСОК (реальные товары, цены, ответы, политика — "
                    "опирайся на них; если тут есть цена/факт — отвечай уверенно) ===\n" + settings["kb"])
+    # ЖИВАЯ СИНХРОНИЗАЦИЯ С ТОВАРАМИ 1С — товары по запросу клиента (наличие + цена)
+    try:
+        prods = igbot_find_products(merged[-1]["content"])
+    except Exception:
+        prods = []
+    if prods:
+        plist = "\n".join("• %s — %s сом — %s" % (
+            p["name"], p["price"], ("в наличии: %d шт" % p["qty"] if p["qty"] > 0 else "под заказ"))
+            for p in prods)
+        system += ("\n\n=== ТОВАРЫ ИЗ КАТАЛОГА (1С, по запросу клиента — РЕАЛЬНЫЕ наличие и цены, "
+                   "называй их уверенно, предлагай конкретные позиции) ===\n" + plist)
     body = json.dumps({"model": settings["model"], "max_tokens": 400,
                        "system": system, "messages": merged}).encode("utf-8")
     req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, headers={
