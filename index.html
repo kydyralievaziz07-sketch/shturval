@@ -348,7 +348,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.73.0<br>«Авто Рент»: менеджеры без Расходов; админ ведёт явку/аванс/премию без правки сотрудников; Парк в Машинах; уведомления (должники+сдачи); фикс смены пароля владельца</div>
+      Штурвал v3.74.0<br>«Мой профиль»: можно менять своё имя и должность (плюс аватар и тема)</div>
   </aside>
 
   <!-- MAIN -->
@@ -830,6 +830,17 @@
             <button class="btn ghost" style="font-size:12px;padding:5px 10px;margin-top:8px" onclick="openAvatar()">🖼 Сменить аватар</button>
           </div>
         </div>
+        <div class="row" style="display:flex;gap:14px;flex-wrap:wrap;margin-top:14px">
+          <div style="flex:1;min-width:200px">
+            <label style="font-size:12px;color:var(--muted)">Имя (как показывать)</label>
+            <input type="text" id="set-pname" placeholder="напр. Авто Рент" style="width:100%;margin-top:4px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--text)">
+          </div>
+          <div style="flex:1;min-width:200px">
+            <label style="font-size:12px;color:var(--muted)">Должность</label>
+            <input type="text" id="set-prole" placeholder="напр. Владелец" style="width:100%;margin-top:4px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--text)">
+          </div>
+        </div>
+        <div style="margin-top:12px"><button class="btn" onclick="saveProfile()">💾 Сохранить профиль</button> <span id="set-prof-msg" style="font-size:13px;margin-left:8px;min-height:16px"></span></div>
       </div>
 
       <!-- Вход -->
@@ -1501,6 +1512,8 @@
     const sn=document.getElementById('set-name'); if(sn) sn.textContent=USER.name||'Пользователь';
     const sr=document.getElementById('set-role'); if(sr) sr.textContent=(all?'Владелец':(USER.role||'Сотрудник'))+(USER.department?(' · '+USER.department):'');
     const sl=document.getElementById('set-login'); if(sl) sl.value=getLg()||'';
+    const pn=document.getElementById('set-pname'); if(pn) pn.value=USER.name||'';
+    const pr=document.getElementById('set-prole'); if(pr) pr.value=(all?'Владелец':(USER.role||''));
     // авто-воронка по переписке — только для кабинетов с CRM/чатами (в прокате прячем)
     var ra=document.getElementById('set-row-auto');
     if(ra) ra.style.display=(all||canSee('crm')||canSee('deals')||canSee('chats'))?'':'none';
@@ -1599,6 +1612,22 @@
       setPw(p1);                              // обновим сохранённый пароль, чтобы не разлогинило
       document.getElementById('set-pw1').value=''; document.getElementById('set-pw2').value='';
       m.style.color='var(--green)'; m.textContent='✅ Пароль изменён';
+    }catch(e){ m.style.color='var(--red)'; m.textContent='Не удалось: '+(e.message||e); }
+  }
+  async function saveProfile(){
+    const m=document.getElementById('set-prof-msg');
+    const nm=(document.getElementById('set-pname').value||'').trim();
+    const rl=(document.getElementById('set-prole').value||'').trim();
+    if(!nm){ m.style.color='var(--red)'; m.textContent='Впишите имя'; return; }
+    m.style.color='var(--muted)'; m.textContent='Сохраняю…';
+    try{
+      const r=await apiFetch('/api/account',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_profile',name:nm,role:rl})},ONEC_BASE);
+      const d=await r.json(); if(d.error) throw new Error(d.error);
+      USER.name=nm; USER.role=rl;
+      const sn=document.getElementById('set-name'); if(sn) sn.textContent=nm;
+      const sr=document.getElementById('set-role'); if(sr) sr.textContent=rl||'Сотрудник';
+      const uu=document.querySelector('.user'); if(uu&&uu.childNodes[0]) uu.childNodes[0].nodeValue=nm+' ';
+      m.style.color='var(--green)'; m.textContent='✅ Профиль сохранён';
     }catch(e){ m.style.color='var(--red)'; m.textContent='Не удалось: '+(e.message||e); }
   }
   async function changeLogin(){

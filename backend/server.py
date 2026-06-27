@@ -4418,6 +4418,21 @@ class Handler(BaseHTTPRequestHandler):
                     if newlogin.lower() != login.lower():
                         team_save(_emp_row(login, active=False))   # спрятать старый логин
                     return self._send(200, {"ok": True, "login": newlogin})
+                elif action == "set_profile":
+                    over = {}
+                    if "name" in body:
+                        nm = (body.get("name") or "").strip()
+                        if not nm:
+                            return self._send(400, {"error": "Имя не может быть пустым"})
+                        over["name"] = nm
+                    if "role" in body:
+                        over["role"] = (body.get("role") or "").strip()
+                    if "phone" in body:
+                        over["phone"] = (body.get("phone") or "").strip()
+                    if not over:
+                        return self._send(400, {"error": "нечего сохранять"})
+                    team_save(_emp_row(login, **over))
+                    return self._send(200, {"ok": True, "name": over.get("name", "")})
                 else:
                     return self._send(400, {"error": "неизвестное действие"})
             except Exception as e:
