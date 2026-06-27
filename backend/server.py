@@ -2455,52 +2455,55 @@ def _ai_context_rent(company):
         parts.append("Топ клиентов: " + "; ".join("%s (%s аренд, %s сом, долг %s)" % (c["name"], c["count"], c["revenue"], c["debt"]) for c in cl[:6]))
     return "\n".join(parts)
 
-def ai_answer(question, crm, history, user=None):
-    key = CFG.get("ANTHROPIC_API_KEY", "")
-    if not key:
-        return {"free_mode": True, "answer": ai_local_answer(question, crm)}
-    co = (user or {}).get("company") or COMPANY_ID
-    if co != COMPANY_ID:                      # не Бизмарт → компания-прокат: контекст и промпт про аренду
-        system = AI_SYSTEM_RENT
-        ctx = "ДАННЫЕ ПРОКАТА (на сейчас):\n" + _ai_context_rent(co)
-    else:
-        ql = (question or "").lower()
-        want_chats = any(w in ql for w in ["перепис", "диалог", "чат", "клиент", "сливают", "сливаются",
-                                           "уход", "отказ", "почему не", "возраж"])
-        system = AI_SYSTEM
-        ctx = "ДАННЫЕ МАГАЗИНА (на сейчас):\n" + _ai_context(crm, want_chats)
-    msgs = []
-    for h in (history or [])[-6:]:
-        role = h.get("role"); content = h.get("content")
-        if role in ("user", "assistant") and content:
-            msgs.append({"role": role, "content": str(content)})
-    msgs.append({"role": "user", "content": ctx + "\n\nВОПРОС: " + question})
-    body = json.dumps({
-        "model": CFG.get("ANTHROPIC_MODEL"),
-        "max_tokens": 1024,
-        "system": system,
-        "messages": msgs,
-    }).encode("utf-8")
-    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, headers={
-        "x-api-key": key,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-        "User-Agent": "Shturval/1.0",
-    })
+def ai_local_rent(question, company):
+    """Бесплатный режим для проката: ответы по данным аренды без ИИ-движка (без токенов)."""
+    q = (question or "").lower()
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            resp = json.loads(r.read().decode("utf-8"))
-        text = "".join(b.get("text", "") for b in resp.get("content", []) if b.get("type") == "text")
-        return {"answer": text or "Пустой ответ от ИИ."}
-    except urllib.error.HTTPError as e:
-        detail = ""
-        try:
-            detail = e.read().decode("utf-8")[:300]
-        except Exception:
-            pass
-        return {"error": "ИИ вернул ошибку HTTP {}. {}".format(e.code, detail)}
-    except Exception as e:
-        return {"error": "Не удалось обратиться к ИИ: %s" % e}
+        b = rent_build(None, company)
+    except Exception:
+        return "Пока не могу получить данные по аренде — попробуй позже."
+    s = b.get("summary", {}); d = b.get("data", {})
+    has = lambda *ws: any(w in q for w in ws)
+    ca = d.get("caranalysis") or []
+    cl = d.get("clients") or []
+    months = d.get("months") or []
+    cur_m = months[0] if months else None
+    if has("выгодн", "больше всего", "лучш", "топ", "прибыльн", "зарабат") and ca:
+        return "\n".join(["🏆 Самые прибыльные машины:"] +
+            ["• %s — прибыль %s сом (выручка %s, маржа %s)" % (c["model"], c["profit"], c["revenue"], c["margin"]) for c in ca[:5]])
+    if has("долг", "должн", "задолж", "не заплат", "недоплат"):
+        deb = [c for c in cl if c.get("_debt", 0) > 0]
+        if not deb:
+            return "Долгов клиентов нет 👍 (итого долгов: %s сом)." % s.get("debts", "0")
+        return "\n".join(["📕 Должники (итого %s сом):" % s.get("debts", "0")] +
+            ["• %s%s — %s сом" % (c["name"], (" " + c["phone"]) if c["phone"] else "", c["debt"]) for c in deb[:15]])
+    if has("свобод", "простаив", "простой", "доступн"):
+        free = [c for c in (d.get("cars") or []) if "свобод" in (c.get("status") or "").lower()]
+        head = "🅿️ Свободно: %s из %s машин." % (s.get("cars_free"), s.get("cars_total"))
+        return "\n".join([head] + ["• %s" % c.get("model") for c in free[:20]]) if free else head
+    if has("заработал", "выручк", "прибыл", "доход", "касса", "оборот", "сколько денег"):
+        if has("месяц") and cur_m:
+            return "За %s: выручка %s сом, расходы %s, прибыль %s (маржа %s)." % (cur_m["month"], cur_m["revenue"], cur_m["expenses"], cur_m["profit"], cur_m["margin"])
+        return "ИТОГО: выручка (касса) %s сом, прибыль %s, расходы %s, остаток %s. Долги клиентов %s." % (s.get("revenue"), s.get("profit"), s.get("expenses"), s.get("balance"), s.get("debts"))
+    if has("клиент", "арендатор", "кто брал"):
+        if not cl:
+            return "Пока нет клиентов с именем/телефоном."
+        return "\n".join(["🧑 Топ клиентов:"] +
+            ["• %s — %s аренд, %s сом%s" % (c["name"], c["count"], c["revenue"], (", долг " + c["debt"]) if c.get("_debt", 0) > 0 else "") for c in cl[:8]])
+    if has("динамик", "рост", "по месяц", "помесяч"):
+        return "\n".join(["📅 По месяцам:"] + ["• %s — выручка %s, прибыль %s" % (m["month"], m["revenue"], m["profit"]) for m in months[:8]])
+    if has("машин", "парк", "авто"):
+        return "🚗 Парк: всего %s, в аренде %s, свободно %s, на ремонте %s. Аренд %s, активных %s." % (s.get("cars_total"), s.get("cars_rented"), s.get("cars_free"), s.get("cars_repair"), s.get("rentals_total"), s.get("rentals_active"))
+    return ("📊 Кратко по прокату: выручка %s сом, прибыль %s, машин %s (в аренде %s), долги клиентов %s.\n"
+            "Спроси: «какая машина выгоднее?», «кто должен денег?», «сколько заработали в этом месяце?», «какие машины простаивают?»."
+            ) % (s.get("revenue"), s.get("profit"), s.get("cars_total"), s.get("cars_rented"), s.get("debts"))
+
+def ai_answer(question, crm, history, user=None):
+    # БЕСПЛАТНЫЙ режим: отвечаем локально по данным компании, БЕЗ обращения к платному ИИ (токены не тратятся).
+    co = (user or {}).get("company") or COMPANY_ID
+    if co != COMPANY_ID:
+        return {"free_mode": True, "answer": ai_local_rent(question, co)}
+    return {"free_mode": True, "answer": ai_local_answer(question, crm)}
 
 
 # ====== БАЗА ДАННЫХ (Supabase / Postgres, REST API) ======
