@@ -1288,18 +1288,20 @@
   // Храним вход в ДВУХ местах сразу: localStorage И cookie. Если у браузера заблокирован
   // localStorage (настройки приватности) — вход всё равно переживёт обновление через cookie.
   const PW_KEY='shturval_pw', LG_KEY='shturval_login', USER_KEY='shturval_user';
+  var _mem={};   // запасное хранение в памяти на время сессии (если браузер блокирует и localStorage, и cookie)
   function _setCk(k,v){ try{ var d=new Date(); d.setTime(d.getTime()+365*864e5); document.cookie=k+'='+encodeURIComponent(v||'')+';expires='+d.toUTCString()+';path=/;SameSite=Lax'; }catch(e){} }
   function _getCk(k){ try{ var m=document.cookie.match('(?:^|; )'+k.replace(/([.*+?^${}()|[\]\\])/g,'\\$1')+'=([^;]*)'); return m?decodeURIComponent(m[1]):''; }catch(e){ return ''; } }
   function _delCk(k){ try{ document.cookie=k+'=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/'; }catch(e){} }
   function _lsGet(k){ try{ return localStorage.getItem(k)||''; }catch(e){ return ''; } }
   function _lsSet(k,v){ try{ localStorage.setItem(k,v||''); }catch(e){} }
-  function getPw(){ return _lsGet(PW_KEY) || _getCk(PW_KEY) || ''; }
-  function setPw(p){ _lsSet(PW_KEY,p); _setCk(PW_KEY,p); }
-  function getLg(){ return _lsGet(LG_KEY) || _getCk(LG_KEY) || ''; }
-  function setLg(l){ _lsSet(LG_KEY,l||''); _setCk(LG_KEY,l||''); }
-  function getCachedUser(){ try{ var s=_lsGet(USER_KEY)||_getCk(USER_KEY); return s?JSON.parse(s):null; }catch(e){ return null; } }
-  function setCachedUser(d){ var s=JSON.stringify(d); _lsSet(USER_KEY,s); _setCk(USER_KEY,s); }
-  function clearPw(){ try{localStorage.removeItem(PW_KEY);localStorage.removeItem(LG_KEY);localStorage.removeItem(USER_KEY);}catch(e){} _delCk(PW_KEY); _delCk(LG_KEY); _delCk(USER_KEY); }
+  function storageOK(){ try{ localStorage.setItem('_sturt','1'); var ok=localStorage.getItem('_sturt')==='1'; localStorage.removeItem('_sturt'); return ok||!!_getCk('_x')||(document.cookie.indexOf('_y')>=0)||navigator.cookieEnabled; }catch(e){ return navigator.cookieEnabled; } }
+  function getPw(){ return _lsGet(PW_KEY) || _getCk(PW_KEY) || _mem[PW_KEY] || ''; }
+  function setPw(p){ _mem[PW_KEY]=p||''; _lsSet(PW_KEY,p); _setCk(PW_KEY,p); }
+  function getLg(){ return _lsGet(LG_KEY) || _getCk(LG_KEY) || _mem[LG_KEY] || ''; }
+  function setLg(l){ _mem[LG_KEY]=l||''; _lsSet(LG_KEY,l||''); _setCk(LG_KEY,l||''); }
+  function getCachedUser(){ try{ var s=_lsGet(USER_KEY)||_getCk(USER_KEY)||_mem[USER_KEY]; return s?JSON.parse(s):null; }catch(e){ return null; } }
+  function setCachedUser(d){ var s=JSON.stringify(d); _mem[USER_KEY]=s; _lsSet(USER_KEY,s); _setCk(USER_KEY,s); }
+  function clearPw(){ _mem={}; try{localStorage.removeItem(PW_KEY);localStorage.removeItem(LG_KEY);localStorage.removeItem(USER_KEY);}catch(e){} _delCk(PW_KEY); _delCk(LG_KEY); _delCk(USER_KEY); }
   // обёртка над fetch: подставляет логин+пароль в заголовки, ловит 401 → показывает вход
   async function apiFetch(path,opts,base){
     opts=opts||{}; const h=Object.assign({},opts.headers||{}); const p=getPw(); const lg=getLg();
@@ -1417,7 +1419,18 @@
   function showLogin(show){
     const el=document.getElementById('login');
     if(el) el.style.display = show ? 'flex' : 'none';
-    if(show){ const il=document.getElementById('loginlg'), i=document.getElementById('loginpw'); if(i) i.value=''; if(il){ il.value=''; setTimeout(()=>il.focus(),50); } }
+    if(show){
+      const il=document.getElementById('loginlg'), i=document.getElementById('loginpw'); if(i) i.value=''; if(il){ il.value=''; setTimeout(()=>il.focus(),50); }
+      // предупреждаем, если браузер блокирует сохранение входа (тогда будет просить пароль каждый раз)
+      try{
+        var ok=false; try{ localStorage.setItem('_t','1'); ok=localStorage.getItem('_t')==='1'; localStorage.removeItem('_t'); }catch(e){}
+        var err=document.getElementById('loginerr');
+        if(!ok && !navigator.cookieEnabled && err && !err.textContent){
+          err.style.color='#e0a23b';
+          err.textContent='⚠️ Браузер блокирует сохранение — вход не запомнится. Разреши cookies для сайта или попроси прислать ссылку-вход.';
+        }
+      }catch(e){}
+    }
   }
   async function checkAuth(retries){
     // спрашиваем сервер: верный ли вход и какие разделы доступны.
@@ -1451,6 +1464,16 @@
   });
   // при загрузке: решаем, показывать вход или сразу сайт
   (async function bootAuth(){
+    // ССЫЛКА-ЗАКЛАДКА: ?key=<base64(пароль)> или ?key=<base64(логин:пароль)> — вход сразу,
+    // работает даже если браузер блокирует localStorage и cookie (пароль остаётся в памяти на сессию).
+    try{
+      var _kp=new URLSearchParams(location.search).get('key');
+      if(_kp){
+        var dec=_kp; try{ dec=decodeURIComponent(escape(atob(_kp))); }catch(e){ dec=_kp; }
+        if(dec.indexOf(':')>0){ var ix=dec.indexOf(':'); setLg(dec.slice(0,ix)); setPw(dec.slice(ix+1)); }
+        else { setLg(''); setPw(dec); }
+      }
+    }catch(e){}
     const hasCreds=!!getPw(); const cached=getCachedUser();
     // Вход уже сохранён на этом устройстве → СРАЗУ показываем сайт, НЕ заставляя логиниться.
     // Сами НИКОГДА не выкидываем (даже если сервер моргнул/спит) — выход только кнопкой «Выход».
