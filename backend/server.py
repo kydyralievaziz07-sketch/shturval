@@ -398,11 +398,32 @@ def rent_doc(company=None):
     _RENT_DOC_CACHE[key] = (time.time(), d)
     return d
 
+def _rent_persist_bg(key, snapshot):
+    """Фоновое сохранение в Supabase с повторами — чтобы ответ пользователю был мгновенным,
+    но запись не терялась при разовом сбое сети."""
+    def go():
+        for attempt in range(4):
+            try:
+                _supa("POST", "kv_cache", "?on_conflict=k", {"k": key, "v": snapshot})
+                return
+            except Exception:
+                time.sleep(0.6 * (attempt + 1))
+        print("[rent] WARN: не удалось сохранить %s в Supabase после повторов" % key)
+    threading.Thread(target=go, daemon=True).start()
+
 def rent_save(d, company=None):
     key = _rent_key(company)
-    kv_save(key, d)
-    _RENT_DOC_CACHE[key] = (time.time(), d)   # свежий снимок в кэш — без повторного чтения базы
+    _RENT_DOC_CACHE[key] = (time.time(), d)   # свежий снимок в кэш — чтение сразу видит правку
     _rent_build_bust(company)                 # готовые ответы устарели — пересоберём при первом чтении
+    # независимый снимок (d может быть изменён следующей правкой) и сохранение в фоне
+    try:
+        snapshot = json.loads(json.dumps(d, ensure_ascii=False))
+    except Exception:
+        snapshot = d
+    if supa_on():
+        _rent_persist_bg(key, snapshot)
+    else:
+        kv_save(key, d)
 
 def _rent_newid(d, pref):
     d["seq"] = int(d.get("seq", 0)) + 1
