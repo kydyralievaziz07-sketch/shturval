@@ -523,6 +523,31 @@ def rent_build(period=None, company=None):
         y, mo, da = kk.split("-")
         daily.append({"day": da, "date": "%s.%s" % (da, mo), "revenue": dd_map[kk],
                       "revenue_f": _rmoney(dd_map[kk]), "pct": (round(dd_map[kk] / dd_max * 100) if dd_max else 0)})
+    # КЛИЕНТЫ (арендаторы) — агрегат из аренд за период: кто, телефон, сколько раз, выручка, долг, последняя
+    cl_map = {}
+    for r in frent:
+        nm = (r.get("renter") or "").strip()
+        ph = (r.get("phone") or "").strip()
+        if not nm and not ph:
+            continue
+        key = (nm.lower() + "|" + ph)
+        c = cl_map.get(key)
+        if not c:
+            c = {"name": nm, "phone": ph, "count": 0, "rev": 0, "debt": 0, "last": "", "_ord": None, "cars": set()}
+            cl_map[key] = c
+        c["count"] += 1
+        c["rev"] += r["_got"]
+        c["debt"] += r["_debt"]
+        if r.get("model"):
+            c["cars"].add(r.get("model"))
+        sd = _rdate(r.get("start"))
+        if sd and (c["_ord"] is None or sd > c["_ord"]):
+            c["_ord"] = sd
+            c["last"] = r.get("start", "")
+    clients = [{"name": c["name"] or "—", "phone": c["phone"], "count": str(c["count"]),
+                "revenue": _rmoney(c["rev"]), "debt": _rmoney(c["debt"]), "_debt": c["debt"],
+                "last": c["last"], "cars": ", ".join(sorted(c["cars"]))}
+               for c in sorted(cl_map.values(), key=lambda x: x["rev"], reverse=True)]
     # план выручки: цель на месяц и % выполнения по каждому месяцу (по всем данным)
     plan_target = _rnum(d.get("plan_target")) or 400000
     plan_rows = []
@@ -567,7 +592,8 @@ def rent_build(period=None, company=None):
                      "handed": [fh(h) for h in handed], "salary": [fh(s) for s in salary],
                      "undercollect": [fh(u) for u in under], "months": months_list,
                      "caranalysis": car_an, "plan": plan_block,
-                     "abc": abc, "weekdays": weekdays, "best_weekday": best_wd, "daily": daily},
+                     "abc": abc, "weekdays": weekdays, "best_weekday": best_wd, "daily": daily,
+                     "clients": clients},
             "summary": summary, "periods": periods, "synced": time.strftime("%d.%m.%Y %H:%M")}
 
 def rent_apply(action, p, company=None):
