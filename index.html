@@ -4358,9 +4358,20 @@
     document.getElementById('emp-depts').innerHTML=[...set].map(d=>'<option value="'+esc(d)+'">').join('');
   }
   const EMP_SECS=[['deals','Сделки и переписка'],['crmdash','CRM рабочий стол'],['prod','Товары'],['sales','Продажи'],['clients','Клиенты'],['analytics','Аналитика'],['fin','Финансы'],['supl','Поставщики'],['hr','Кадры'],['rent','Авто Рент'],['ai','ИИ-помощник'],['dash','Дашборд Магазина']];
+  // разделы, доступные ЭТОЙ компании = разделы её владельца (у Бизмарта «all» = все).
+  // Чтобы в прокатной компании сотруднику нельзя было выдать Сделки/CRM/Товары и т.п.
+  function _companySecs(){
+    if(isOwner()) return EMP_SECS;                       // владелец «всё» (Бизмарт) — все разделы
+    const allow=new Set(USER.sections||[]);
+    return EMP_SECS.filter(([k])=>allow.has(k));
+  }
   function renderEmpSecs(active){
     const set=new Set(active||[]);
-    document.getElementById('emp-secs').innerHTML=EMP_SECS.map(([k,l])=>'<label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" value="'+k+'"'+(set.has(k)?' checked':'')+'> '+esc(l)+'</label>').join('');
+    const opts=_companySecs();
+    const el=document.getElementById('emp-secs');
+    el.innerHTML=opts.length
+      ? opts.map(([k,l])=>'<label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" value="'+k+'"'+(set.has(k)?' checked':'')+'> '+esc(l)+'</label>').join('')
+      : '<span style="font-size:12px;color:var(--muted)">Все сотрудники видят «Мой день» и «Кадры».</span>';
   }
   function readEmpSecs(){
     const s=[...document.querySelectorAll('#emp-secs input:checked')].map(i=>i.value);
