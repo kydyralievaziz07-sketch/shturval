@@ -377,18 +377,31 @@ def _rdate(s):
 def _rmoney(n):
     return "{:,}".format(int(n)).replace(",", " ")
 
+# кэш документа аренды в памяти: убирает поход в Supabase на каждый запрос/действие.
+# Запись (rent_save) обновляет кэш сразу, поэтому правки видны мгновенно; TTL — на случай
+# внешних изменений базы.
+_RENT_DOC_CACHE = {}
+_RENT_DOC_TTL = 60
+
 def rent_doc(company=None):
-    d = kv_load(_rent_key(company))
+    key = _rent_key(company)
+    ent = _RENT_DOC_CACHE.get(key)
+    if ent and (time.time() - ent[0]) < _RENT_DOC_TTL:
+        return ent[1]
+    d = kv_load(key)
     if not isinstance(d, dict):
         d = {}
     for k in ("cars", "rentals", "expenses", "handed", "salary", "undercollect"):
         if not isinstance(d.get(k), list):
             d[k] = []
     d.setdefault("seq", 0)
+    _RENT_DOC_CACHE[key] = (time.time(), d)
     return d
 
 def rent_save(d, company=None):
-    kv_save(_rent_key(company), d)
+    key = _rent_key(company)
+    kv_save(key, d)
+    _RENT_DOC_CACHE[key] = (time.time(), d)   # свежий снимок в кэш — без повторного чтения базы
 
 def _rent_newid(d, pref):
     d["seq"] = int(d.get("seq", 0)) + 1
@@ -3930,12 +3943,25 @@ def ads_create(p):
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        # сжатие: крупные JSON (дашборд аренды ~750 КБ) ужимаются в ~10 раз → ответ резче
+        gz = False
+        try:
+            ae = self.headers.get("Accept-Encoding") or ""
+        except Exception:
+            ae = ""
+        if "gzip" in ae and len(body) > 1024:
+            body = gzip.compress(body, 5)
+            gz = True
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "*")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
         self.send_header("Cache-Control", "no-store")
+        if gz:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
