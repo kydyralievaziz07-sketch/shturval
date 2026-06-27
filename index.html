@@ -348,7 +348,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.65.0<br>«Авто Рент»: выбор периода на дашборде (ИТОГО + по месяцам) — цифры считаются за выбранный месяц</div>
+      Штурвал v3.66.0<br>«Авто Рент»: долги клиентов считаются автоматически по просрочке (дни просрочки × цена в день)</div>
   </aside>
 
   <!-- MAIN -->
@@ -5083,7 +5083,7 @@
         '<td '+RT_TD+' style="white-space:nowrap">'+esc(r.start||'')+'</td><td '+RT_TD+' style="white-space:nowrap">'+endCell+'</td>'+
         '<td '+RT_TD+' style="text-align:center">'+esc(r.days||'')+'</td><td '+RT_TD+' style="text-align:right">'+esc(r.sum||'')+'</td>'+
         '<td '+RT_TD+' style="text-align:right">'+esc(r.got||'')+'</td>'+
-        '<td '+RT_TD+' style="text-align:right;color:'+(debt>0?'var(--red)':'var(--muted)')+'">'+(debt>0?esc(r.debt):'0')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right;color:'+(debt>0?'var(--red)':'var(--muted)')+'">'+(debt>0?esc(r.debt):'0')+(r.overdue_days>0?'<div style="font-size:11px;color:var(--red)">просрочка '+r.overdue_days+' дн</div>':'')+'</td>'+
         '<td '+RT_TD+'>'+rstatusChip(r.status)+'</td>'+rActs('rental',r.id)+'</tr>';
     }).join('');
     var foot='<tfoot><tr><td '+RT_TD+' colspan="6" style="text-align:right;color:var(--muted)">Итого ('+list.length+'):</td>'+

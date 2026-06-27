@@ -386,6 +386,9 @@ def rent_build(period=None, company=None):
     за выбранный период (period='YYYY-MM' или None/'ИТОГО'). Списки — новые сверху."""
     d = rent_doc(company)
     cars = d["cars"]
+    import datetime
+    _lt = time.localtime()
+    today = datetime.date(_lt.tm_year, _lt.tm_mon, _lt.tm_mday)
     rentals = []
     for r in d["rentals"]:
         x = dict(r)
@@ -394,10 +397,16 @@ def rent_build(period=None, company=None):
         price = _rnum(x.get("price"))
         got = _rnum(x.get("got"))
         summ = days * price if (days and price) else _rnum(x.get("sum"))
+        # просрочка: активная аренда, дата сдачи прошла → автодолг = дни просрочки × цена
+        active = "заверш" not in (str(x.get("status") or "").lower())
+        odays = (today - ed).days if (active and ed and ed < today) else 0
+        overdue = odays * price if (odays > 0 and price) else 0
         x["_days"] = days
         x["_sum"] = summ
         x["_got"] = got
-        x["_debt"] = max(summ - got, 0)
+        x["_overdue_days"] = odays
+        x["_overdue"] = overdue
+        x["_debt"] = max(summ - got, 0) + overdue
         rentals.append(x)
     ts = lambda r: r.get("ts", 0)
     rentals.sort(key=ts, reverse=True)
@@ -580,6 +589,7 @@ def rent_build(period=None, company=None):
                 "days": str(r["_days"] or ""), "price": _rmoney(_rnum(r.get("price"))) if _rnum(r.get("price")) else "",
                 "sum": _rmoney(r["_sum"]), "got": _rmoney(r["_got"]) if r.get("got") not in (None, "") else "",
                 "debt": _rmoney(r["_debt"]), "status": r.get("status", ""), "note": r.get("note", ""),
+                "overdue": _rmoney(r["_overdue"]) if r["_overdue"] else "", "overdue_days": r["_overdue_days"],
                 "price_raw": _rnum(r.get("price")), "got_raw": _rnum(r.get("got"))}
     def fe(e):
         return {"id": e.get("id", ""), "date": e.get("date", ""), "model": e.get("model", ""),
