@@ -358,7 +358,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.75.0<br>Темы: выбор из 3 (Тёмная / Светлая / Фирменная FREE WAYS — чёрный+красный) в Настройках</div>
+      Штурвал v3.76.0<br>Прокат: «Мой день» менеджера (сдал сегодня/заработок/средний чек); «Требует внимания» поднято на дашборде</div>
   </aside>
 
   <!-- MAIN -->
@@ -3777,9 +3777,56 @@
         '<div style="font-size:11px;color:var(--muted)">'+esc(x.lbl)+'</div></div>').join('')+'</div>';
   }
   function renderMydayCharts(){ renderMyday7(); renderMydayTrend(); }
+  // «Мой день» для проката: личная статистика менеджера (сдал сегодня / сумма / заработок / средний чек) + зарплата
+  function renderMyDayRent(){
+    var box=document.getElementById('myday-body'); if(!box) return;
+    box.innerHTML='<div class="card"><span style="color:var(--muted)">⏳ Загружаю…</span></div>';
+    var meRec={};
+    function ensureRent(cb){ if(typeof RENT!=='undefined'&&RENT) return cb(); apiFetch('/api/rent?period=ИТОГО',{},ONEC_BASE).then(function(r){return r.json();}).then(function(d){ if(d&&!d.error) RENT=d; cb(); }).catch(cb); }
+    apiFetch('/api/payroll',{},ONEC_BASE).then(function(r){return r.json();}).then(function(d){
+      var myLg=(getLg()||'').toLowerCase();
+      meRec=d.me || (myLg?(d.all||[]).find(function(x){return (x.login||'').toLowerCase()===myLg;}):null) || {};
+    }).catch(function(){ meRec={}; }).then(function(){ ensureRent(draw); });
+    function draw(){
+      var cur=(typeof MUNIT==='function')?MUNIT():'сом'; var v=meRec||{};
+      var D=(RENT&&RENT.data)||{rentals:[]};
+      var me=(USER.name||'').trim(), lg=(getLg()||'').toLowerCase();
+      var t=new Date(); var todayRu=('0'+t.getDate()).slice(-2)+'.'+('0'+(t.getMonth()+1)).slice(-2)+'.'+t.getFullYear();
+      var mine=(D.rentals||[]).filter(function(r){ var by=(r.by||''); return by===me || (lg&&by.toLowerCase()===lg); });
+      var todayR=mine.filter(function(r){ return (r.start||'')===todayRu; });
+      var sumToday=todayR.reduce(function(s,r){ return s+rnum(r.got); },0);
+      var cntToday=todayR.length, avgToday=cntToday?Math.round(sumToday/cntToday):0;
+      var pct=(v.commission_pct!=null)?v.commission_pct:((RENT&&RENT.summary&&RENT.summary.commission_pct)||10);
+      var earnToday=Math.round(sumToday*pct/100);
+      var sal='';
+      if(v.to_receive!=null){
+        sal='<div class="card" style="margin-top:16px"><h3>💼 Моя зарплата за месяц</h3>'+
+          payBar('💰 Оклад (накоплено)',v.accrued||0,v.salary_month||0,'#39d98a')+
+          ((v.commission>0)?('<div style="display:flex;justify-content:space-between;font-size:14px;margin:4px 0"><span>🚗 Комиссия с аренд ('+(v.commission_pct||pct)+'%)</span><b style="color:#39d98a">'+fmt(v.commission)+' '+cur+'</b></div>'):'')+
+          ((v.bonus>0)?payBar('🎁 Премия',v.bonus,v.bonus_month||0,'#a78bfa'):'')+
+          ((v.advance>0)?payBar('💸 Аванс (взято)',v.advance,v.salary_month||0,'#ffb84d'):'')+
+          '<div style="border-top:1px solid var(--line);margin-top:6px;padding-top:12px;display:flex;justify-content:space-between;font-size:15px"><span>К выплате сейчас:</span><b>'+fmt(v.to_receive)+' '+cur+'</b></div></div>';
+      }
+      box.innerHTML=
+        '<div class="card" style="margin-bottom:16px"><div style="font-size:18px;font-weight:700">👋 Привет, '+esc(USER.name||'коллега')+'!</div>'+
+          '<div style="color:var(--muted);font-size:13px;margin-top:3px">Сегодня '+todayRu+(USER.role?' · '+esc(USER.role):'')+'</div></div>'+
+        '<div class="kpis" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">'+
+          kpiCard('🔑 Сдал авто сегодня',cntToday)+
+          kpiCard('💵 На сумму сегодня',fmt(sumToday)+' '+cur)+
+          kpiCard('🤑 Заработал сегодня',fmt(earnToday)+' '+cur)+
+          kpiCard('🧾 Средний чек',fmt(avgToday)+' '+cur)+
+        '</div>'+
+        '<div class="card"><h3>📅 Мои аренды сегодня</h3>'+
+          (todayR.length?todayR.map(function(r){ return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px"><span><b>'+esc(r.model||'')+'</b>'+(r.renter?' · '+esc(r.renter):'')+'</span><span>'+esc(r.got||'')+' '+cur+'</span></div>'; }).join(''):'<div style="color:var(--muted);font-size:13px">Сегодня ещё не оформлял аренд.</div>')+
+        '</div>'+sal;
+      renderMoney();
+    }
+  }
   function renderMyDay(){
-    if(!_salesHist) loadSalesHistory();         // подтянуть продажи 1С для графиков
     const box=document.getElementById('myday-body'); if(!box) return;
+    // КАБИНЕТ ПРОКАТА: свой «Мой день» — личная статистика по аренде (без магазина/1С)
+    if(typeof isRentCabinet==='function' && isRentCabinet()){ renderMyDayRent(); return; }
+    if(!_salesHist) loadSalesHistory();         // подтянуть продажи 1С для графиков
     // HR-менеджер и администраторы не продают — показываем только зарплату/дни
     const isHR=(USER.role==='hr')||((USER.sections||[]).indexOf('hr')>=0 && !isOwner());
     const isAdmin=(USER.department==='Администраторы');
@@ -5340,7 +5387,7 @@
         (debtors.length?('<div style="margin-top:10px;font-size:13px;color:var(--muted)">Должники ('+debtors.length+'):</div>'+debtRows):'')+
         '</div>';
     }
-    b.innerHTML=note+rentExcelToolbar()+_rentPerSel(s)+row1+row2+att+park+eff+months;
+    b.innerHTML=note+att+rentExcelToolbar()+_rentPerSel(s)+row1+row2+park+eff+months;
     if(typeof renderMoney==='function') renderMoney();
   }
 
