@@ -3028,7 +3028,13 @@
           +'</select></div>'
           +'<div><div style="font-size:12px;color:var(--muted);margin-bottom:4px">Пауза после ответа человека (часов)</div><input id="igbot-hh" type="number" min="1" max="72" value="'+(_igbot.handoff_hours||6)+'" style="'+SS+'"></div>'
         +'</div>'
-        +'<div style="font-size:12px;color:var(--muted);margin-bottom:10px">💡 Если оператор сам ответит клиенту — бот замолчит в этом диалоге на указанное время (передача человеку). Бот не отвечает на свои же сообщения.</div>'
+        +'<div style="font-size:12px;color:var(--muted);margin-bottom:10px">💡 Если оператор ответит клиенту хоть раз (через Штурвал ИЛИ само приложение Instagram) — бот в этом диалоге больше не вмешивается. На свои же сообщения бот не отвечает.</div>'
+        +'<div style="border-top:1px solid var(--line,#222);margin:12px 0;padding-top:12px">'
+          +'<div style="font-size:13px;margin-bottom:6px">🧠 <b>База знаний из переписок</b> — '+(_igbot.kb&&_igbot.kb.length?('подключена ('+_igbot.kb.length+' символов)'):'<span style="color:#ffb84d">пока пустая</span>')+'</div>'
+          +'<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Бот анализирует прошлые чаты с клиентами и учится: цены, частые ответы, доставка, наличие. Обновляй раз в несколько дней.</div>'
+          +'<button class="btn ghost" id="igbot-learn" onclick="learnIgBot()">🧠 Обучить по перепискам</button>'
+          +'<div id="igbot-learn-msg" style="font-size:13px;margin-top:6px"></div>'
+        +'</div>'
         +'<div id="igbot-msg" style="font-size:13px;margin-bottom:8px"></div>'
         +'<button class="btn" id="igbot-save" onclick="saveIgBot()">💾 Сохранить</button>';
     }catch(e){ el.innerHTML='🔴 Не удалось загрузить настройки бота'; }
@@ -3047,6 +3053,18 @@
       if(d.ok){ _igbot=d.settings; igbotBadge(); msg.innerHTML='✅ Сохранено. Бот '+(_igbot.enabled?'<b style="color:#39d98a">включён</b>':'выключен')+'.'; }
       else msg.innerHTML='🔴 '+esc(d.error||'не удалось');
     }catch(e){ msg.innerHTML='🔴 Ошибка'; }
+    btn.disabled=false; btn.textContent=o;
+  }
+  async function learnIgBot(){
+    const msg=document.getElementById('igbot-learn-msg'), btn=document.getElementById('igbot-learn');
+    btn.disabled=true; const o=btn.textContent; btn.textContent='Анализирую переписки…';
+    msg.innerHTML='⏳ Читаю чаты и собираю базу знаний (может занять до минуты)…';
+    try{
+      const r=await apiFetch('/api/ig/bot/learn',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'},ONEC_BASE);
+      const d=await r.json();
+      if(d.ok){ msg.innerHTML='✅ Готово! Проанализировано сообщений: '+(d.msgs_analyzed||0)+', база знаний '+(d.kb_len||0)+' символов. Бот стал умнее.'; loadIgBot(); }
+      else msg.innerHTML='🔴 '+esc(d.error||'не удалось обучить');
+    }catch(e){ msg.innerHTML='🔴 Ошибка анализа'; }
     btn.disabled=false; btn.textContent=o;
   }
   async function loadIgInbox(){

@@ -1037,7 +1037,23 @@ def ig_store_event(evt):
     for entry in (evt.get("entry") or []):
         for m in (entry.get("messaging") or []):
             msg = m.get("message") or {}
-            if not msg or msg.get("is_echo"):       # echo = наши же отправленные, пропускаем
+            if not msg:
+                continue
+            if msg.get("is_echo"):
+                # ИСХОДЯЩЕЕ от нас. sender=наш аккаунт, recipient=клиент. Если это НЕ эхо нашего бота —
+                # значит ответил оператор (через приложение Instagram/др.) → сохраняем как ответ человека,
+                # и бот в этом диалоге дальше молчит (передача человеку).
+                acct = str((m.get("sender") or {}).get("id", ""))
+                cust = str((m.get("recipient") or {}).get("id", ""))
+                etext = msg.get("text", "")
+                if etext and cust and not _igbot_is_own_echo(cust, etext):
+                    try:
+                        _supa("POST", "ig_inbox", "",
+                              {"company_id": COMPANY_ID, "sender_id": acct, "recipient_id": cust,
+                               "text": etext, "ts": int(m.get("timestamp") or time.time() * 1000),
+                               "direction": "out", "raw": {"by": "human"}})
+                    except Exception:
+                        pass
                 continue
             sender = str((m.get("sender") or {}).get("id", ""))
             recipient = str((m.get("recipient") or {}).get("id", ""))  # наш аккаунт
@@ -1206,11 +1222,12 @@ def _igbot_get():
     s = kv_load("igbot_settings") or {}
     return {"enabled": bool(s.get("enabled")), "prompt": s.get("prompt") or IGBOT_DEFAULT_PROMPT,
             "model": s.get("model") or CFG.get("ANTHROPIC_MODEL"),
-            "handoff_hours": int(s.get("handoff_hours") or 6)}
+            "handoff_hours": int(s.get("handoff_hours") or 6),
+            "kb": s.get("kb") or ""}
 
 def _igbot_set(patch):
     cur = _igbot_get()
-    for k in ("enabled", "prompt", "model", "handoff_hours"):
+    for k in ("enabled", "prompt", "model", "handoff_hours", "kb"):
         if k in patch:
             cur[k] = patch[k]
     cur["enabled"] = bool(cur["enabled"])
@@ -1249,8 +1266,12 @@ def _igbot_generate(history, settings):
             merged.append(dict(m))
     if not merged or merged[-1]["role"] != "user":
         return None
+    system = settings["prompt"]
+    if settings.get("kb"):
+        system += ("\n\n=== ЗНАНИЯ ИЗ ПРОШЛЫХ ПЕРЕПИСОК (реальные товары, цены, ответы, политика — "
+                   "опирайся на них; если тут есть цена/факт — отвечай уверенно) ===\n" + settings["kb"])
     body = json.dumps({"model": settings["model"], "max_tokens": 400,
-                       "system": settings["prompt"], "messages": merged}).encode("utf-8")
+                       "system": system, "messages": merged}).encode("utf-8")
     req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, headers={
         "x-api-key": key, "anthropic-version": "2023-06-01",
         "content-type": "application/json", "User-Agent": "Shturval/1.0"})
@@ -1261,25 +1282,34 @@ def _igbot_generate(history, settings):
     except Exception:
         return None
 
+_bot_sent = {}   # (customer, text) -> ts: что бот отправлял (чтобы отличить эхо бота от ответа человека)
+def _igbot_mark_sent(customer, text):
+    now = time.time()
+    _bot_sent[(str(customer), (text or "").strip())] = now
+    for k, t in list(_bot_sent.items()):   # чистим старше 10 мин
+        if now - t > 600:
+            _bot_sent.pop(k, None)
+
+def _igbot_is_own_echo(customer, text):
+    return (str(customer), (text or "").strip()) in _bot_sent
+
 def igbot_handle(sender, recipient, text):
     """Сгенерировать и отправить ответ ИИ клиенту. sender = клиент, recipient = наш аккаунт.
-    Молчит, если бот выключен ИЛИ в диалоге недавно отвечал человек (передача оператору)."""
+    Молчит, если бот выключен ИЛИ в диалоге УЖЕ отвечал человек-оператор (передача человеку — навсегда
+    для этого диалога: менеджер ответил хоть раз → бот больше не вмешивается)."""
     try:
         s = _igbot_get()
         if not s["enabled"] or not (CFG.get("ANTHROPIC_API_KEY") and supa_on()):
             return
-        hist = _igbot_history(recipient, sender, 14)
-        # передача человеку: если последний исходящий — от оператора в пределах окна, бот молчит
-        for r in reversed(hist):
-            if r.get("direction") == "out":
-                by = (r.get("raw") or {}).get("by")
-                ts = r.get("ts") or 0; ts_sec = ts / 1000.0 if ts > 1e12 else ts
-                if by != "bot" and (time.time() - ts_sec) < s["handoff_hours"] * 3600:
-                    return
-                break
+        hist = _igbot_history(recipient, sender, 40)
+        # передача человеку: если в диалоге есть хоть один ответ ОПЕРАТORA — бот молчит
+        for r in hist:
+            if r.get("direction") == "out" and (r.get("raw") or {}).get("by") == "human":
+                return
         reply = _igbot_generate(hist, s)
         if not reply:
             return
+        _igbot_mark_sent(sender, reply)
         ig_send(sender, reply, recipient)
         try:
             _supa("POST", "ig_inbox", "",
@@ -1289,6 +1319,55 @@ def igbot_handle(sender, recipient, text):
             pass
     except Exception:
         pass
+
+def igbot_learn(limit_msgs=2000):
+    """Проанализировать прошлые переписки и собрать БАЗУ ЗНАНИЙ (товары, цены, частые ответы,
+    политика) через Claude — подключается к боту как справочник для точных ответов."""
+    if not (CFG.get("ANTHROPIC_API_KEY") and supa_on()):
+        return {"ok": False, "error": "Нет ключа Claude или базы данных"}
+    try:
+        rows = _supa("GET", "ig_inbox", "?company_id=eq.%s&order=ts.desc&limit=%d&select=text,direction"
+                     % (_q(COMPANY_ID), int(limit_msgs))) or []
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    rows = list(reversed(rows))
+    lines = []
+    for r in rows:
+        t = (r.get("text") or "").strip()
+        if not t or t.startswith(("📷", "🎬", "📎")):
+            continue
+        lines.append(("Клиент: " if r.get("direction") == "in" else "Магазин: ") + t)
+    transcript = "\n".join(lines)
+    if len(transcript) > 70000:
+        transcript = transcript[-70000:]
+    if not transcript.strip():
+        return {"ok": False, "error": "Нет переписок для анализа"}
+    instr = (
+        "Ниже — реальные переписки магазина BIZMART (Бишкек) с клиентами в Instagram. "
+        "Извлеки компактный СПРАВОЧНИК для бота-консультанта. Разделы:\n"
+        "1) ТОВАРЫ И ЦЕНЫ — конкретные товары и реально названные цены (с валютой, как в переписках).\n"
+        "2) ЧАСТЫЕ ВОПРОСЫ → ЛУЧШИЕ ОТВЕТЫ (доставка, оплата, размеры, наличие, бронь, возврат, гарантия).\n"
+        "3) ПОЛИТИКА И ФАКТЫ (доставка, оплата, бонусы, приложение, часы, адрес).\n"
+        "4) ВОЗРАЖЕНИЯ и как магазин их закрывает.\n"
+        "Только факты из переписок, НЕ выдумывай. По-русски, кратко, списками. Это пойдёт в подсказку боту.\n\n"
+        "ПЕРЕПИСКИ:\n" + transcript)
+    body = json.dumps({"model": "claude-sonnet-4-6", "max_tokens": 3500,
+                       "messages": [{"role": "user", "content": instr}]}).encode("utf-8")
+    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, headers={
+        "x-api-key": CFG.get("ANTHROPIC_API_KEY", ""), "anthropic-version": "2023-06-01",
+        "content-type": "application/json", "User-Agent": "Shturval/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            resp = json.loads(r.read().decode("utf-8"))
+        kb = "".join(b.get("text", "") for b in resp.get("content", []) if b.get("type") == "text").strip()
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "error": "Claude: " + e.read().decode()[:200]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    if not kb:
+        return {"ok": False, "error": "Пустой ответ анализа"}
+    _igbot_set({"kb": kb})
+    return {"ok": True, "kb_len": len(kb), "msgs_analyzed": len(lines)}
 
 def _ig_eligible_targets(account=None, max_age_hours=24):
     """Диалоги в пределах 24-часового окна Instagram (можно писать первым)."""
@@ -3241,6 +3320,11 @@ class Handler(BaseHTTPRequestHandler):
             u = self._user(); secs = u.get("sections", []) if u else []
             if not (u and ("all" in secs or "chats" in secs)):
                 return self._send(403, {"error": "Только владелец или менеджер чатов"})
+            if self.path.startswith("/api/ig/bot/learn"):
+                try:
+                    return self._send(200, igbot_learn())
+                except Exception as e:
+                    return self._send(200, {"ok": False, "error": str(e)})
             try:
                 length = int(self.headers.get("Content-Length", 0))
                 body = json.loads(self.rfile.read(length) or b"{}")
