@@ -402,14 +402,29 @@ def rent_save(d, company=None):
     key = _rent_key(company)
     kv_save(key, d)
     _RENT_DOC_CACHE[key] = (time.time(), d)   # свежий снимок в кэш — без повторного чтения базы
+    _rent_build_bust(company)                 # готовые ответы устарели — пересоберём при первом чтении
 
 def _rent_newid(d, pref):
     d["seq"] = int(d.get("seq", 0)) + 1
     return "%s%03d" % (pref, d["seq"])
 
+# кэш готового ответа по (компания, период): повторное чтение и смена периода — мгновенно.
+# Сбрасывается при любой записи (rent_save) и по TTL (просрочка зависит от текущей даты).
+_RENT_BUILD_CACHE = {}
+_RENT_BUILD_TTL = 120
+
+def _rent_build_bust(company=None):
+    pref = _rent_key(company) + "|"
+    for k in [k for k in _RENT_BUILD_CACHE if k.startswith(pref)]:
+        _RENT_BUILD_CACHE.pop(k, None)
+
 def rent_build(period=None, company=None):
     """Грузит документ из базы, считает производные поля (дни/сумма/долг) и сводку
     за выбранный период (period='YYYY-MM' или None/'ИТОГО'). Списки — новые сверху."""
+    ckey = _rent_key(company) + "|" + str(period or "")
+    ent = _RENT_BUILD_CACHE.get(ckey)
+    if ent and (time.time() - ent[0]) < _RENT_BUILD_TTL:
+        return ent[1]
     d = rent_doc(company)
     cars = d["cars"]
     import datetime
@@ -646,13 +661,15 @@ def rent_build(period=None, company=None):
     def fh(h):
         return {"id": h.get("id", ""), "date": h.get("date", ""), "sum": _rmoney(_rnum(h.get("sum"))),
                 "comment": h.get("comment", ""), "by": h.get("by", ""), "sum_raw": _rnum(h.get("sum"))}
-    return {"data": {"cars": cars, "rentals": [fr(r) for r in rentals], "expenses": [fe(e) for e in exps],
+    result = {"data": {"cars": cars, "rentals": [fr(r) for r in rentals], "expenses": [fe(e) for e in exps],
                      "handed": [fh(h) for h in handed], "salary": [fh(s) for s in salary],
                      "undercollect": [fh(u) for u in under], "months": months_list,
                      "caranalysis": car_an, "plan": plan_block,
                      "abc": abc, "weekdays": weekdays, "best_weekday": best_wd, "daily": daily,
                      "clients": clients},
             "summary": summary, "periods": periods, "synced": time.strftime("%d.%m.%Y %H:%M")}
+    _RENT_BUILD_CACHE[ckey] = (time.time(), result)
+    return result
 
 def rent_apply(action, p, company=None, user=None):
     """Изменение данных аренды. Возвращает свежий rent_build().
