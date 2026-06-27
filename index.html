@@ -348,7 +348,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.71.0<br>«Авто Рент»: фикс загрузки Плана; в Настройках владелец задаёт оклад и % комиссии менеджерам; авто-воронка скрыта в прокате</div>
+      Штурвал v3.72.0<br>«Авто Рент»: в карточке сотрудника поле «% за сдачу авто» (вместо ставки за видео) — выбираешь 10/15/20%</div>
   </aside>
 
   <!-- MAIN -->
@@ -1032,8 +1032,14 @@
     </div>
     <label>Зарплата в месяц, сом</label>
     <input type="number" id="emp-salary" placeholder="0">
-    <label style="margin-top:8px">📹 Ставка за видео, сом <span style="color:var(--muted);font-weight:400;font-size:11px">— только для мобилографов (зарплата = видео × ставка). Пусто = оклад÷30</span></label>
-    <input type="number" id="emp-video-rate" placeholder="напр. 1000">
+    <div id="emp-comm-block" style="display:none">
+      <label style="margin-top:8px">🚗 % за сдачу авто <span style="color:var(--muted);font-weight:400;font-size:11px">— комиссия с оформленных им аренд (напр. 10, 15, 20). Идёт в зарплату</span></label>
+      <input type="number" id="emp-comm-pct" placeholder="напр. 10" min="0" max="100">
+    </div>
+    <div id="emp-video-block">
+      <label style="margin-top:8px">📹 Ставка за видео, сом <span style="color:var(--muted);font-weight:400;font-size:11px">— только для мобилографов (зарплата = видео × ставка). Пусто = оклад÷30</span></label>
+      <input type="number" id="emp-video-rate" placeholder="напр. 1000">
+    </div>
     <div id="emp-login-block">
       <div style="font-size:12px;color:var(--muted);margin:12px 0 4px">Вход в систему (необязательно — если сотруднику нужен свой кабинет):</div>
       <div class="row">
@@ -1425,6 +1431,14 @@
   // владелец КОНКРЕТНОГО кабинета (флаг owner) — правит машины/план/импорт в своём разделе,
   // но НЕ расширяет список видимых модулей.
   function isCabinetOwner(){ return !!USER.owner || USER.sections.indexOf('all')>=0; }
+  // кабинет проката (не магазин Бизмарт): в форме сотрудника показываем «% за авто» вместо «ставки за видео»
+  function isRentCabinet(){ return USER.sections.indexOf('all')<0 && (canSee('rent') || (USER.sections||[]).some(function(s){return s.indexOf('rent')===0;})); }
+  function _toggleEmpPay(){
+    var rc=isRentCabinet();
+    var cb=document.getElementById('emp-comm-block'), vb=document.getElementById('emp-video-block');
+    if(cb) cb.style.display=rc?'':'none';
+    if(vb) vb.style.display=rc?'none':'';
+  }
   function applyUser(d){
     // ВАЖНО: пустой массив [] = «нет доступа к разделам» (только Мой день/Настройки),
     // а НЕ «показать всё». ['all'] ставим только если поле sections вообще не пришло.
@@ -4710,6 +4724,8 @@
     document.getElementById('emp-role').value='';
     document.getElementById('emp-salary').value='';
     document.getElementById('emp-video-rate').value='';
+    var cp=document.getElementById('emp-comm-pct'); if(cp) cp.value='';
+    _toggleEmpPay();
     document.getElementById('emp-login').value='';
     document.getElementById('emp-pw').value='';
     document.getElementById('emp-login-block').style.display='';
@@ -4730,6 +4746,8 @@
     document.getElementById('emp-role').value=v.role||'';
     document.getElementById('emp-salary').value=v.salary_month||'';
     document.getElementById('emp-video-rate').value=v.video_rate||'';
+    var cp=document.getElementById('emp-comm-pct'); if(cp) cp.value=(v.commission_pct!=null?v.commission_pct:'');
+    _toggleEmpPay();
     document.getElementById('emp-login-block').style.display='none';   // логин при правке не трогаем
     document.getElementById('emp-err').textContent='';
     renderEmpSecs((v.sections||[]).filter(s=>s!=='all'));
@@ -4750,6 +4768,7 @@
     if(!name){ err.textContent='Впишите имя'; return; }
     const sal=parseFloat((document.getElementById('emp-salary').value||'').replace(/\s/g,'').replace(',','.'))||0;
     const vrate=parseFloat((document.getElementById('emp-video-rate').value||'').replace(/\s/g,'').replace(',','.'))||0;
+    const commRaw=(document.getElementById('emp-comm-pct')||{}).value;
     const body={name:name, phone:(document.getElementById('emp-phone').value||'').trim(),
       department:(document.getElementById('emp-dept').value||'').trim(),
       role:(document.getElementById('emp-role').value||'').trim(), salary_month:sal, video_rate:vrate};
@@ -4765,7 +4784,16 @@
         if(pw) body.pw=pw;
         body.sections=secs;
       }
-      await teamPost(body); closeEmp(); await loadHR();
+      const res=await teamPost(body);
+      // прокат: сохранить персональный % за сдачу авто (комиссия)
+      if(isRentCabinet() && commRaw!=='' && commRaw!=null){
+        const lg=empEditLogin||(res&&res.login)||body.login;
+        if(lg){
+          var m={}; m[lg]=commRaw;
+          try{ await apiFetch('/api/rent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_commission',map:m})},ONEC_BASE); }catch(_){}
+        }
+      }
+      closeEmp(); await loadHR();
     }catch(e){ err.textContent=e.message; }
     finally{ btn.disabled=false; btn.textContent='Сохранить'; }
   }
