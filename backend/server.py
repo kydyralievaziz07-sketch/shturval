@@ -121,8 +121,8 @@ def load_users():
     # --- сотрудники, заведённые руководителем из интерфейса (таблица employees) ---
     # Перекрывают/дополняют записи из env. active=false → сотрудник «убран» (скрыт).
     try:
-        rows = _supa("GET", "employees",
-                     "?company_id=eq.%s&select=*" % _q(COMPANY_ID))
+        # грузим сотрудников ВСЕХ компаний (мульти-тенант): каждого помечаем его компанией
+        rows = _supa("GET", "employees", "?select=*")
         for u in (rows or []):
             login = (u.get("login") or "").strip()
             if not login:
@@ -146,6 +146,7 @@ def load_users():
                  {"name": u.get("name", "Сотрудник"), "sections": secs,
                   "role": u.get("role", ""), "department": u.get("department", ""),
                   "phone": u.get("phone", "") or "",
+                  "company": (u.get("company_id") or COMPANY_ID),
                   "plan_day": u.get("plan_day", 0),
                   "salary_month": u.get("salary_month", 0),
                   "daily_rate": u.get("daily_rate", 0),
@@ -167,6 +168,11 @@ def all_users():
             continue
         seen.add(id(v)); out.append(v)
     return out
+
+def company_users(co):
+    """Пользователи одной компании (мульти-тенант). co=None → компания по умолчанию."""
+    co = co or COMPANY_ID
+    return [v for v in all_users() if (v.get("company") or COMPANY_ID) == co]
 
 def _pkey(user):
     """Ключ зарплаты — логин (уникален). Если логина нет — имя (старое поведение)."""
@@ -2250,17 +2256,17 @@ def _cur_month():
 def _today_str():
     lt = time.localtime(); return "%04d-%02d-%02d" % (lt.tm_year, lt.tm_mon, lt.tm_mday)
 
-def payroll_rec(name):
+def payroll_rec(name, company=None):
     """Запись зарплаты сотрудника за текущий месяц (помесячно). Источник — Supabase."""
-    m = _cur_month()
+    m = _cur_month(); co = company or COMPANY_ID
     if supa_on():
         try:
             rows = _supa("GET", "payroll",
                          "?company_id=eq.%s&name=eq.%s&month=eq.%s&select=*"
-                         % (_q(COMPANY_ID), _q(name), _q(m)))
+                         % (_q(co), _q(name), _q(m)))
             if rows:
                 return rows[0]
-            rec = {"company_id": COMPANY_ID, "name": name, "month": m,
+            rec = {"company_id": co, "name": name, "month": m,
                    "present_days": 0, "advance": 0, "bonus": 0, "last_present": ""}
             _supa("POST", "payroll", "", rec)
             return rec
@@ -2304,13 +2310,13 @@ def _unique_login(base):
         i += 1; cand = "%s%d" % (base, i)
     return cand
 
-def _emp_row(login, **f):
+def _emp_row(login, company=None, **f):
     """Полная строка для таблицы employees (берём текущие поля юзера + изменения)."""
     cur = USERS_BY_LOGIN.get(login.lower()) or {}
     secs = f.get("sections", cur.get("sections") or ["myday"])
     if isinstance(secs, (list, tuple)):
         secs = ",".join(secs)
-    return {"company_id": COMPANY_ID, "login": login,
+    return {"company_id": (company or cur.get("company") or COMPANY_ID), "login": login,
             "pw": f.get("pw", cur.get("pw", "") or ""),
             "name": f.get("name", cur.get("name", "")),
             "role": f.get("role", cur.get("role", "") or ""),
@@ -2340,7 +2346,7 @@ def _is_video_dept(dep):
 def payroll_view(user, rec=None):
     name = user.get("name", "")
     key = _pkey(user)                       # зарплата ведётся по логину (уникален)
-    r = rec if rec is not None else payroll_rec(key)
+    r = rec if rec is not None else payroll_rec(key, user.get("company"))
     days = r.get("days") or {}
     hrs = r.get("hours") or {}
     vids = r.get("videos") or {}
@@ -2400,7 +2406,8 @@ def payroll_view(user, rec=None):
             "advance": adv, "to_receive": round(accrued + bonus - adv), "days": days,
             "marked_today": days.get(today) == "p", "marked_absent_today": days.get(today) == "a"}
 
-def payroll_all():
+def payroll_all(company=None):
+    co = company or COMPANY_ID
     # ВСЕ записи зарплаты за месяц — ОДНИМ запросом (а не по запросу на каждого: было N+1, ~13с)
     recs = None
     if supa_on():
@@ -2408,13 +2415,13 @@ def payroll_all():
         try:
             m = _cur_month()
             rows = _supa("GET", "payroll",
-                         "?company_id=eq.%s&month=eq.%s&select=*" % (_q(COMPANY_ID), _q(m)))
+                         "?company_id=eq.%s&month=eq.%s&select=*" % (_q(co), _q(m)))
             for row in (rows or []):
                 recs[row.get("name")] = row
         except Exception:
             recs = None                     # не вышло — откат на поштучный режим
     seen = set(); out = []
-    for v in all_users():
+    for v in company_users(co):
         if "all" in v.get("sections", []):  # владельца не показываем
             continue
         key = _pkey(v)
@@ -2431,9 +2438,9 @@ def payroll_all():
 DEPTPLAN = {}                # резерв в памяти/файле
 DEFAULT_DEPT_PLAN = 250000   # план по умолчанию на отдел в день
 
-def _dept_list():
+def _dept_list(company=None):
     out = []
-    for v in all_users():
+    for v in company_users(company):
         if "all" in v.get("sections", []):
             continue
         d = (v.get("department") or "").strip()
@@ -2441,18 +2448,19 @@ def _dept_list():
             out.append(d)
     return out
 
-def _dept_count(dep):
-    return sum(1 for v in all_users()
+def _dept_count(dep, company=None):
+    return sum(1 for v in company_users(company)
                if (v.get("department") or "").strip() == dep and "all" not in v.get("sections", []))
 
-def dept_plan_rec(dep):
+def dept_plan_rec(dep, company=None):
+    co = company or COMPANY_ID
     if supa_on():
         try:
             rows = _supa("GET", "dept_plan",
-                         "?company_id=eq.%s&department=eq.%s&select=*" % (_q(COMPANY_ID), _q(dep)))
+                         "?company_id=eq.%s&department=eq.%s&select=*" % (_q(co), _q(dep)))
             if rows:
                 return rows[0]
-            rec = {"company_id": COMPANY_ID, "department": dep,
+            rec = {"company_id": co, "department": dep,
                    "plan_day": DEFAULT_DEPT_PLAN, "facts": {}}
             _supa("POST", "dept_plan", "", rec)
             return rec
@@ -2474,30 +2482,31 @@ def dept_plan_upsert(rec):
             pass
     DEPTPLAN[rec.get("department")] = rec
 
-def dept_plan_all():
+def dept_plan_all(company=None):
+    co = company or COMPANY_ID
     today = _today_str(); out = []
     recs = None
     if supa_on():
         recs = {}
         try:
-            rows = _supa("GET", "dept_plan", "?company_id=eq.%s&select=*" % _q(COMPANY_ID))
+            rows = _supa("GET", "dept_plan", "?company_id=eq.%s&select=*" % _q(co))
             for row in (rows or []):
                 recs[row.get("department")] = row
         except Exception:
             recs = None
-    for dep in _dept_list():
+    for dep in _dept_list(co):
         if dep == "Администраторы" or _is_video_dept(dep):   # админы и мобилографы не продают — плана нет
             continue
         if recs is not None:
             r = recs.get(dep) or {"plan_day": DEFAULT_DEPT_PLAN, "facts": {}}
         else:
-            r = dept_plan_rec(dep)
+            r = dept_plan_rec(dep, co)
         plan = float(r.get("plan_day") or 0)
         facts = r.get("facts") or {}
         fact = float(facts.get(today) or 0)
         pct = round(fact / plan * 100) if plan > 0 else 0
         out.append({"department": dep, "plan_day": plan, "fact": fact,
-                    "pct": pct, "staff": _dept_count(dep)})
+                    "pct": pct, "staff": _dept_count(dep, co)})
     return out
 
 
@@ -3343,7 +3352,10 @@ class Handler(BaseHTTPRequestHandler):
                 tu = user_by_name(name)
             if not tu:
                 return self._send(400, {"error": "сотрудник не найден"})
-            r = payroll_rec(_pkey(tu))
+            co = u.get("company") or COMPANY_ID
+            if (tu.get("company") or COMPANY_ID) != co:   # чужую компанию не трогаем
+                return self._send(403, {"error": "Это сотрудник другой компании"})
+            r = payroll_rec(_pkey(tu), co)
             days = r.get("days") or {}
             hrs = r.get("hours") or {}
             vids = r.get("videos") or {}
@@ -3409,7 +3421,8 @@ class Handler(BaseHTTPRequestHandler):
             dep = (body.get("department") or "").strip(); action = body.get("action")
             if not dep:
                 return self._send(400, {"error": "нет отдела"})
-            r = dept_plan_rec(dep)
+            co = u.get("company") or COMPANY_ID
+            r = dept_plan_rec(dep, co)
             if action == "setplan":
                 r["plan_day"] = round(float(body.get("plan_day") or 0))
             elif action == "setfact":
@@ -3419,7 +3432,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 return self._send(400, {"error": "неизвестное действие"})
             dept_plan_upsert(r)
-            return self._send(200, {"ok": True, "departments": dept_plan_all()})
+            return self._send(200, {"ok": True, "departments": dept_plan_all(co)})
         if self.path.startswith("/api/team"):
             u = self._user(); secs = u.get("sections", []) if u else []
             if not (u and ("all" in secs or "hr" in secs)):   # команду ведёт владелец/HR
@@ -3432,6 +3445,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 return self._send(400, {"error": "плохой запрос"})
             action = body.get("action")
+            co = u.get("company") or COMPANY_ID
             try:
                 if action == "add":
                     name = (body.get("name") or "").strip()
@@ -3444,7 +3458,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not secs_in:
                         secs_in = ["myday"]
                     _newpw = (body.get("pw") or "").strip()
-                    row = _emp_row(login, name=name,
+                    row = _emp_row(login, company=co, name=name,
                                    role=(body.get("role") or "").strip(),
                                    department=(body.get("department") or "").strip(),
                                    phone=(body.get("phone") or "").strip(),
@@ -3462,10 +3476,12 @@ class Handler(BaseHTTPRequestHandler):
                     login = tu.get("login", "") if tu else ""
                 if not tu or not login:
                     return self._send(400, {"error": "Сотрудник не найден"})
+                if (tu.get("company") or COMPANY_ID) != co:   # чужую компанию не трогаем
+                    return self._send(403, {"error": "Это сотрудник другой компании"})
                 if "all" in tu.get("sections", []):
                     return self._send(400, {"error": "Владельца нельзя менять отсюда"})
                 if action == "set_salary":
-                    team_save(_emp_row(login,
+                    team_save(_emp_row(login, company=co,
                                        salary_month=round(float(body.get("salary_month") or 0))))
                     return self._send(200, {"ok": True})
                 elif action == "update":
@@ -3677,14 +3693,15 @@ class Handler(BaseHTTPRequestHandler):
             if not u:
                 return self._send(401, {"error": "вход"})
             secs = u.get("sections", [])
-            if "all" in secs or "hr" in secs:      # владелец и HR-менеджер видят всех
-                return self._send(200, {"all": payroll_all()})
+            co = u.get("company") or COMPANY_ID
+            if "all" in secs or "hr" in secs:      # владелец и HR-менеджер видят всех СВОЕЙ компании
+                return self._send(200, {"all": payroll_all(co)})
             return self._send(200, {"me": payroll_view(u)})
         if self.path.startswith("/api/deptplan"):
             u = self._user(); secs = u.get("sections", []) if u else []
             if not (u and ("all" in secs or "hr" in secs)):   # планы отделов — владелец и HR
                 return self._send(403, {"error": "Только владелец или HR"})
-            return self._send(200, {"departments": dept_plan_all()})
+            return self._send(200, {"departments": dept_plan_all(u.get("company") or COMPANY_ID)})
         if self.path.startswith("/api/crm-data"):
             u = self._user()
             if not u:
@@ -3709,7 +3726,7 @@ class Handler(BaseHTTPRequestHandler):
                       "sections": v.get("sections", []),
                       "role": v.get("role", ""), "department": v.get("department", ""),
                       "plan_day": v.get("plan_day", 0)}
-                     for v in all_users() if "all" not in v.get("sections", [])]
+                     for v in company_users(u.get("company") or COMPANY_ID) if "all" not in v.get("sections", [])]
             return self._send(200, {"staff": staff, "total": len(staff)})
         if self.path.startswith("/api/rent"):
             # доступ уже проверен общим шлюзом выше (раздел "rent")
