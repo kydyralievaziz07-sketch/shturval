@@ -726,6 +726,34 @@
       </div>
     </section>
 
+    <!-- РАСХОДЫ (отдельный раздел — можно выдать сотруднику) -->
+    <section id="tab-exp" class="hide">
+      <div id="exp-status" class="note" style="margin-bottom:14px">💸 Здесь вносим все расходы магазина: аренда, зарплаты, реклама, доставка и т.д. Всё, что внесёшь, попадёт в «Финансы».</div>
+      <div class="toolbar" style="margin-bottom:10px">
+        <div class="period" id="expperiod">
+          <button data-fp="today">День</button>
+          <button class="active" data-fp="week">Неделя</button>
+          <button data-fp="month">Месяц</button>
+        </div>
+        <button class="btn" onclick="openExpense()">💸 Добавить расход</button>
+      </div>
+      <div class="kpis" id="exp-total"></div>
+      <div class="grid2" style="margin-top:16px">
+        <div class="card">
+          <h3>💸 Список расходов <span id="exp-list-period" style="font-size:12px;color:var(--muted);font-weight:400"></span></h3>
+          <div id="exp-list" style="max-height:420px;overflow:auto"><span style="color:var(--muted);font-size:13px">—</span></div>
+        </div>
+        <div class="card">
+          <h3>📂 По категориям <span id="exp-cats-period" style="font-size:12px;color:var(--muted);font-weight:400"></span></h3>
+          <div id="exp-cats-box"><span style="color:var(--muted);font-size:13px">—</span></div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:18px">
+        <h3>💡 Как пользоваться</h3>
+        <div class="note">Нажми «<b>Добавить расход</b>», впиши сумму, выбери категорию и дату — и «Сохранить». Период (День/Неделя/Месяц) переключается кнопками сверху. Чтобы удалить запись — крестик справа от неё. Всё внесённое сразу учитывается в «Финансах» и уменьшает чистую прибыль.</div>
+      </div>
+    </section>
+
     <!-- ПОСТАВЩИКИ -->
     <section id="tab-supl" class="hide">
       <div class="toolbar" style="margin-bottom:12px">
@@ -1131,6 +1159,7 @@
     market   :["Рынок","Предложения и цены конкурентов"],
     analytics:["Аналитика","ABC-анализ, остатки, прогнозы"],
     fin      :["Финансы","Выручка, прибыль, расходы и чистая прибыль"],
+    exp      :["Расходы","Расходы магазина — вносим и смотрим по категориям"],
     supl     :["Поставщики","Что брал, сколько должен, сколько отдал"],
     ai       :["ИИ-помощник","Подсказки, прогнозы и чат по данным"],
     sim      :["Симулятор «Что если»","Подвигай ползунки — увидишь, как изменится прибыль"],
@@ -1156,7 +1185,7 @@
     tasks:{icon:'✅',label:'Задачи'}, clients:{icon:'👥',label:'Клиенты'},
     analytics:{icon:'📈',label:'Аналитика'}, crm:{icon:'📡',label:'Живые данные'},
     prod:{icon:'📦',label:'Товары'}, sales:{icon:'🛒',label:'Продажи'},
-    supl:{icon:'🤝',label:'Поставщики'}, fin:{icon:'💰',label:'Финансы'},
+    supl:{icon:'🤝',label:'Поставщики'}, fin:{icon:'💰',label:'Финансы'}, exp:{icon:'💸',label:'Расходы'},
     myday:{icon:'🎯',label:'Мой день'}, hr:{icon:'🗓',label:'Кадры'},
     ads:{icon:'📣',label:'Реклама'}, adsreport:{icon:'📑',label:'Отчёты по рекламе'}, adsanalysis:{icon:'🔬',label:'Анализ'},
     ai:{icon:'🤖',label:'ИИ-помощник'}, sim:{icon:'📊',label:'Симулятор'},
@@ -1169,7 +1198,7 @@
   const MODULES=[
     {key:'crm',  icon:'🧲', label:'CRM',     tabs:['crmdash','deals','tasks','clients','crm']},
     {key:'mkt',  icon:'📣', label:'Реклама', tabs:['ads','adsreport','adsanalysis']},
-    {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','analytics','supl','fin']},
+    {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','analytics','supl','fin','exp']},
     {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','rentcars','rentlist','rentexp','renthanded','rentanalysis','rentplan','rentclients','rentcalendar']},
     {key:'team', icon:'👥', label:'Команда', tabs:['myday','hr']},
     {key:'ai',   icon:'🤖', label:'ИИ',      tabs:['ai','sim']}
@@ -1207,6 +1236,7 @@
     else if(tab==='dash') loadDashSales();
     else if(tab==='analytics') renderAnalytics();
     else if(tab==='fin') renderFinance();
+    else if(tab==='exp') renderExpPage();
     else if(tab==='supl') loadSuppliers();
     else if(tab==='rentdash') rentDispatch('dash');
     else if(tab==='rentcars') rentDispatch('cars');
@@ -1357,6 +1387,16 @@
     // а НЕ «показать всё». ['all'] ставим только если поле sections вообще не пришло.
     USER={name:(d&&d.name)||'', sections:(d&&Array.isArray(d.sections))?d.sections:['all'],
           role:(d&&d.role)||'', department:(d&&d.department)||'', plan_day:(d&&d.plan_day)||0};
+    // СМЕНА АККАУНТА → сбросить кэши данных в памяти, чтобы не показывались чужие (старые) данные
+    try{
+      var _who=(getLg()||'').toLowerCase()+'|'+((d&&d.name)||'');
+      if(typeof window._curWho!=='undefined' && window._curWho!==_who){
+        if(typeof rentResetCache==='function') rentResetCache();
+        try{ CRM={clients:[],deals:[],tasks:[],activity:[]}; _crmCloudReady=false; }catch(e){}
+        try{ window._prodCache=null; window._salesCache=null; }catch(e){}
+      }
+      window._curWho=_who;
+    }catch(e){}
     if(d&&d.ok){ try{ d._lg=getLg(); }catch(e){} setCachedUser(d); }   // запомним профиль (+ под каким входом) — чтобы войти даже когда сервер спит
     applyAccess();
     loadCrmCloud();                 // подтянуть CRM из облака (общие данные на всех устройствах)
@@ -1535,6 +1575,8 @@
     // НО если это вкладка-демо (вход по ссылке) — не трогаем основной вход/данные в localStorage.
     if(!sess){ try{ Object.keys(localStorage).filter(k=>k.indexOf('shturval_')===0).forEach(k=>localStorage.removeItem(k)); }catch(e){} }
     try{ CRM={clients:[],deals:[],tasks:[],activity:[]}; _crmCloudReady=false; }catch(e){}
+    try{ if(typeof rentResetCache==='function') rentResetCache(); }catch(e){}
+    try{ window._curWho=undefined; }catch(e){}
     showLogin(true);
   }
   let CUR='KGS';          // выбранная валюта: KGS (сом) или USD ($)
@@ -2019,8 +2061,8 @@
   // ---- ФИНАНСЫ: деньги по периодам + расходы ----
   let finPeriod='week', _expData=null, _saving=false;
   const finPLabel={today:'сегодня',week:'за неделю',month:'за месяц'};
-  function setFinPeriod(p){ finPeriod=p; document.querySelectorAll('#finperiod button').forEach(b=>b.classList.toggle('active',b.dataset.fp===p)); renderFinMoney(); renderExpensesList(); }
-  document.querySelectorAll('#finperiod button').forEach(b=>b.addEventListener('click',()=>setFinPeriod(b.dataset.fp)));
+  function setFinPeriod(p){ finPeriod=p; document.querySelectorAll('#finperiod button,#expperiod button').forEach(b=>b.classList.toggle('active',b.dataset.fp===p)); renderFinMoney(); renderExpensesList(); }
+  document.querySelectorAll('#finperiod button,#expperiod button').forEach(b=>b.addEventListener('click',()=>setFinPeriod(b.dataset.fp)));
   function renderFinMoney(){
     const box=document.getElementById('fin-money'); if(!box||!_expData) return;
     const p=(_expData.periods||{})[finPeriod]||{};
@@ -2031,20 +2073,27 @@
     const ep=document.getElementById('fin-exp-period'); if(ep) ep.textContent='— '+finPLabel[finPeriod];
   }
   function renderExpensesList(){
-    const box=document.getElementById('fin-expenses'); if(!box||!_expData) return;
+    if(!_expData) return;
     const today=salesTodayStr();
     const wkAgo=(function(){const d=new Date();d.setDate(d.getDate()-6);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');})();
     const inP=(dt)=>finPeriod==='today'?dt===today:(finPeriod==='week'?dt>=wkAgo:dt.slice(0,7)===today.slice(0,7));
     const list=(_expData.expenses||[]).filter(x=>inP(x.date||''));
-    box.innerHTML=list.length?'<table><tbody>'+list.map(x=>'<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc((x.date||'').slice(5))+'</td><td>'+esc(x.category||'—')+(x.note?' <span style="color:var(--muted);font-size:12px">· '+esc(x.note)+'</span>':'')+'</td><td style="text-align:right;white-space:nowrap"><span class="money" data-som="'+x.amount+'">'+fmt(x.amount)+'</span></td><td style="width:26px;text-align:right"><span onclick="delExpense('+x.id+')" title="Удалить" style="cursor:pointer;color:var(--muted)">✕</span></td></tr>').join('')+'</tbody></table>':'<span style="color:var(--muted);font-size:13px">Расходов '+finPLabel[finPeriod]+' нет</span>';
-    const cb=document.getElementById('fin-exp-cats');
-    if(cb){
-      const byCat={}; list.forEach(x=>{const c=(x.category||'—'); byCat[c]=(byCat[c]||0)+(+x.amount||0);});   // за тот же период, что выбран
-      const cats=Object.keys(byCat).map(c=>({category:c,amount:byCat[c]})).sort((a,b)=>b.amount-a.amount);
-      const mx=Math.max.apply(null,cats.map(c=>c.amount).concat([1]));
-      cb.innerHTML=cats.length?cats.map(c=>'<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>'+esc(c.category)+'</span><span class="money" data-som="'+c.amount+'">'+fmt(c.amount)+'</span></div><div class="progress"><div style="width:'+Math.round(c.amount/mx*100)+'%"></div></div></div>').join(''):'<span style="color:var(--muted);font-size:13px">Расходов '+finPLabel[finPeriod]+' нет</span>';
-      const ch=document.getElementById('fin-cats-period'); if(ch) ch.textContent='— '+finPLabel[finPeriod];
-    }
+    // список расходов (одна разметка — для «Финансов» и для отдельной вкладки «Расходы»)
+    const listHTML=list.length?'<table><tbody>'+list.map(x=>'<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc((x.date||'').slice(5))+'</td><td>'+esc(x.category||'—')+(x.note?' <span style="color:var(--muted);font-size:12px">· '+esc(x.note)+'</span>':'')+'</td><td style="text-align:right;white-space:nowrap"><span class="money" data-som="'+x.amount+'">'+fmt(x.amount)+'</span></td><td style="width:26px;text-align:right"><span onclick="delExpense('+x.id+')" title="Удалить" style="cursor:pointer;color:var(--muted)">✕</span></td></tr>').join('')+'</tbody></table>':'<span style="color:var(--muted);font-size:13px">Расходов '+finPLabel[finPeriod]+' нет</span>';
+    ['fin-expenses','exp-list'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML=listHTML;});
+    // по категориям
+    const byCat={}; list.forEach(x=>{const c=(x.category||'—'); byCat[c]=(byCat[c]||0)+(+x.amount||0);});   // за тот же период, что выбран
+    const cats=Object.keys(byCat).map(c=>({category:c,amount:byCat[c]})).sort((a,b)=>b.amount-a.amount);
+    const mx=Math.max.apply(null,cats.map(c=>c.amount).concat([1]));
+    const catsHTML=cats.length?cats.map(c=>'<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>'+esc(c.category)+'</span><span class="money" data-som="'+c.amount+'">'+fmt(c.amount)+'</span></div><div class="progress"><div style="width:'+Math.round(c.amount/mx*100)+'%"></div></div></div>').join(''):'<span style="color:var(--muted);font-size:13px">Расходов '+finPLabel[finPeriod]+' нет</span>';
+    ['fin-exp-cats','exp-cats-box'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML=catsHTML;});
+    // подписи периода
+    ['fin-cats-period','fin-exp-period','exp-cats-period','exp-list-period'].forEach(id=>{const el=document.getElementById(id); if(el) el.textContent='— '+finPLabel[finPeriod];});
+    // итог для отдельной вкладки «Расходы» (без выручки/прибыли — можно дать сотруднику)
+    const et=document.getElementById('exp-total');
+    if(et){ const total=list.reduce((s,x)=>s+(+x.amount||0),0);
+      et.innerHTML='<div class="card kpi"><div class="label">Расходы '+finPLabel[finPeriod]+'</div><div class="value" style="color:#ffb84d"><span class="money" data-som="'+total+'">'+fmt(total)+'</span></div></div>'
+        +'<div class="card kpi"><div class="label">Записей</div><div class="value">'+list.length+'</div></div>'; }
     renderMoney();
   }
   async function loadExpenses(){
@@ -2056,6 +2105,8 @@
     loadExpenses();
     const st=document.getElementById('fin-status'); if(st){ st.style.borderStyle='solid'; st.style.borderColor='#39d98a'; st.innerHTML='🟢 <b>Финансы</b> · продажи из 1С минус твои расходы. Период — кнопками сверху.'; }
   }
+  // отдельная вкладка «Расходы» — только ввод и список (без выручки/прибыли)
+  function renderExpPage(){ loadExpenses(); }
   function openExpense(){ const dt=document.getElementById('exp-date'); if(dt) dt.value=salesTodayStr(); ['exp-amt','exp-cat','exp-note'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';}); openM('expbg'); }
   async function saveExpense(){
     if(_saving) return;
@@ -4446,7 +4497,7 @@
     DEPT_ORDER.forEach(d=>set.add(d));
     document.getElementById('emp-depts').innerHTML=[...set].map(d=>'<option value="'+esc(d)+'">').join('');
   }
-  const EMP_SECS=[['deals','Сделки и переписка'],['crmdash','CRM рабочий стол'],['prod','Товары'],['sales','Продажи'],['clients','Клиенты'],['analytics','Аналитика'],['fin','Финансы'],['supl','Поставщики'],['hr','Кадры'],['rent','Авто Рент'],['ai','ИИ-помощник'],['dash','Дашборд Магазина']];
+  const EMP_SECS=[['deals','Сделки и переписка'],['crmdash','CRM рабочий стол'],['prod','Товары'],['sales','Продажи'],['clients','Клиенты'],['analytics','Аналитика'],['fin','Финансы'],['exp','Расходы (магазин)'],['supl','Поставщики'],['hr','Кадры'],['rent','Авто Рент'],['ai','ИИ-помощник'],['dash','Дашборд Магазина']];
   // под-разделы Авто Рента — чтобы выдавать сотруднику только нужные вкладки
   const RENT_SUBS=[['rent_dash','🚗 Авто Рент — Дашборд'],['rent_cars','🚗 Авто Рент — Машины'],['rent_list','🚗 Авто Рент — Аренды'],['rent_exp','🚗 Авто Рент — Расходы'],['rent_handed','🚗 Авто Рент — Сдано'],['rent_analysis','🚗 Авто Рент — Анализ'],['rent_plan','🚗 Авто Рент — План'],['rent_clients','🚗 Авто Рент — Клиенты'],['rent_calendar','🚗 Авто Рент — Календарь']];
   // разделы, доступные ЭТОЙ компании = разделы её владельца (у Бизмарта «all» = все).
@@ -4804,6 +4855,8 @@
   // ===================== АВТО РЕНТ — самостоятельная система (база) =====================
   // Данные в базе (Supabase), правятся прямо на сайте. Приходят с сервера за логином.
   var RENT=null, RENT_ERR='', RENT_CUR='dash', RENT_PERIOD='ИТОГО';
+  // сброс кэша аренды (вызывается при смене аккаунта — чтобы не показывались чужие данные)
+  function rentResetCache(){ RENT=null; RENT_ERR=''; RENT_PERIOD='ИТОГО'; RENT_CUR='dash'; RENT_LF=''; RENT_EF=''; RENT_SOLD_OPEN=false; }
   function rentD(){ return (RENT&&RENT.data)||{cars:[],rentals:[],expenses:[],handed:[],months:[]}; }
   function rentS(){ return (RENT&&RENT.summary)||{}; }
   function rnum(s){ return parseInt(String(s==null?'':s).replace(/[^\d-]/g,''),10)||0; }
