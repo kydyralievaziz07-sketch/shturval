@@ -1285,14 +1285,21 @@
   const ONEC_BASE=(API_BASE!=='')?API_BASE:ONEC_CLOUD;
 
   // --- ВХОД ПО ПАРОЛЮ ---
+  // Храним вход в ДВУХ местах сразу: localStorage И cookie. Если у браузера заблокирован
+  // localStorage (настройки приватности) — вход всё равно переживёт обновление через cookie.
   const PW_KEY='shturval_pw', LG_KEY='shturval_login', USER_KEY='shturval_user';
-  function getPw(){ try{return localStorage.getItem(PW_KEY)||'';}catch(e){return '';} }
-  function setPw(p){ try{localStorage.setItem(PW_KEY,p);}catch(e){} }
-  function getLg(){ try{return localStorage.getItem(LG_KEY)||'';}catch(e){return '';} }
-  function setLg(l){ try{localStorage.setItem(LG_KEY,l||'');}catch(e){} }
-  function getCachedUser(){ try{return JSON.parse(localStorage.getItem(USER_KEY)||'null');}catch(e){return null;} }
-  function setCachedUser(d){ try{localStorage.setItem(USER_KEY,JSON.stringify(d));}catch(e){} }
-  function clearPw(){ try{localStorage.removeItem(PW_KEY);localStorage.removeItem(LG_KEY);localStorage.removeItem(USER_KEY);}catch(e){} }
+  function _setCk(k,v){ try{ var d=new Date(); d.setTime(d.getTime()+365*864e5); document.cookie=k+'='+encodeURIComponent(v||'')+';expires='+d.toUTCString()+';path=/;SameSite=Lax'; }catch(e){} }
+  function _getCk(k){ try{ var m=document.cookie.match('(?:^|; )'+k.replace(/([.*+?^${}()|[\]\\])/g,'\\$1')+'=([^;]*)'); return m?decodeURIComponent(m[1]):''; }catch(e){ return ''; } }
+  function _delCk(k){ try{ document.cookie=k+'=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/'; }catch(e){} }
+  function _lsGet(k){ try{ return localStorage.getItem(k)||''; }catch(e){ return ''; } }
+  function _lsSet(k,v){ try{ localStorage.setItem(k,v||''); }catch(e){} }
+  function getPw(){ return _lsGet(PW_KEY) || _getCk(PW_KEY) || ''; }
+  function setPw(p){ _lsSet(PW_KEY,p); _setCk(PW_KEY,p); }
+  function getLg(){ return _lsGet(LG_KEY) || _getCk(LG_KEY) || ''; }
+  function setLg(l){ _lsSet(LG_KEY,l||''); _setCk(LG_KEY,l||''); }
+  function getCachedUser(){ try{ var s=_lsGet(USER_KEY)||_getCk(USER_KEY); return s?JSON.parse(s):null; }catch(e){ return null; } }
+  function setCachedUser(d){ var s=JSON.stringify(d); _lsSet(USER_KEY,s); _setCk(USER_KEY,s); }
+  function clearPw(){ try{localStorage.removeItem(PW_KEY);localStorage.removeItem(LG_KEY);localStorage.removeItem(USER_KEY);}catch(e){} _delCk(PW_KEY); _delCk(LG_KEY); _delCk(USER_KEY); }
   // обёртка над fetch: подставляет логин+пароль в заголовки, ловит 401 → показывает вход
   async function apiFetch(path,opts,base){
     opts=opts||{}; const h=Object.assign({},opts.headers||{}); const p=getPw(); const lg=getLg();
