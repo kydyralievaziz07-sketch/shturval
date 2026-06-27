@@ -358,7 +358,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.77.0<br>Прокат: «Требует внимания» — отдельная вкладка в меню (после «Аренда авто»), убрана с дашборда</div>
+      Штурвал v3.78.0<br>Экспорт Excel даёт готовый шаблон с заголовками даже без данных (для загрузки таблицей)</div>
   </aside>
 
   <!-- MAIN -->
@@ -5651,11 +5651,19 @@
   }
   function rentExportXLSX(){
     rentLoadXLSX(function(){
-      var D=rentD(), J=XLSX.utils.json_to_sheet, A=XLSX.utils.book_append_sheet, wb=XLSX.utils.book_new();
-      A(wb, J((D.cars||[]).map(function(c){ return {ID:c.id,'Модель':c.model,'Госномер':c.plate,'Цена/сутки':rnum(c.price),'Залог':rnum(c.deposit),'Стоимость':rnum(c.cost),'Статус':c.status}; })), 'Машины');
-      A(wb, J((D.rentals||[]).map(function(r){ return {ID:r.id,'Модель':r.model,'Арендатор':r.renter,'Телефон':r.phone,'Начало':r.start,'Конец':r.end,'Цена/сутки':rnum(r.price),'Получено':rnum(r.got),'Статус':r.status,'Кто сдал':r.by}; })), 'Аренды');
-      A(wb, J((D.expenses||[]).map(function(e){ return {ID:e.id,'Дата':e.date,'Машина':e.model,'Категория':e.cat,'Описание':e.desc,'Сумма':rnum(e.sum),'Кто внёс':e.by}; })), 'Расходы');
-      A(wb, J((D.handed||[]).map(function(h){ return {ID:h.id,'Дата':h.date,'Сумма':rnum(h.sum),'Комментарий':h.comment}; })), 'Сдано');
+      var D=rentD(), A=XLSX.utils.book_append_sheet, wb=XLSX.utils.book_new();
+      // если данных нет — лист с одними заголовками (готовый шаблон для заполнения)
+      function sheet(rows, headers){
+        return rows.length ? XLSX.utils.json_to_sheet(rows) : XLSX.utils.aoa_to_sheet([headers]);
+      }
+      A(wb, sheet((D.cars||[]).map(function(c){ return {ID:c.id,'Модель':c.model,'Госномер':c.plate,'Цена/сутки':rnum(c.price),'Залог':rnum(c.deposit),'Стоимость':rnum(c.cost),'Статус':c.status}; }),
+        ['ID','Модель','Госномер','Цена/сутки','Залог','Стоимость','Статус']), 'Машины');
+      A(wb, sheet((D.rentals||[]).map(function(r){ return {ID:r.id,'Модель':r.model,'Арендатор':r.renter,'Телефон':r.phone,'Начало':r.start,'Конец':r.end,'Цена/сутки':rnum(r.price),'Получено':rnum(r.got),'Статус':r.status,'Кто сдал':r.by}; }),
+        ['ID','Модель','Арендатор','Телефон','Начало','Конец','Цена/сутки','Получено','Статус','Кто сдал']), 'Аренды');
+      A(wb, sheet((D.expenses||[]).map(function(e){ return {ID:e.id,'Дата':e.date,'Машина':e.model,'Категория':e.cat,'Описание':e.desc,'Сумма':rnum(e.sum),'Кто внёс':e.by}; }),
+        ['ID','Дата','Машина','Категория','Описание','Сумма','Кто внёс']), 'Расходы');
+      A(wb, sheet((D.handed||[]).map(function(h){ return {ID:h.id,'Дата':h.date,'Сумма':rnum(h.sum),'Комментарий':h.comment}; }),
+        ['ID','Дата','Сумма','Комментарий']), 'Сдано');
       XLSX.writeFile(wb, 'Авто-Рент.xlsx');
     });
   }
