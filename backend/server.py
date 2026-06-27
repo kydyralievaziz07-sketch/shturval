@@ -61,6 +61,12 @@ def load_secret():
     cfg["IG_TOKEN"] = env("IG_TOKEN")            # токен доступа Instagram/страницы (заполнит владелец после настройки Meta)
     cfg["IG_APP_SECRET"] = env("IG_APP_SECRET")  # секрет приложения Meta (для проверки подписи и обновления токена)
     cfg["IG_ACCOUNT_ID"] = env("IG_ACCOUNT_ID")  # id бизнес-аккаунта Instagram
+    # WhatsApp напрямую (WhatsApp Cloud API от Meta) — официальное подключение своего номера
+    cfg["WA_VERIFY_TOKEN"] = env("WA_VERIFY_TOKEN") or "shturval-wa-2026"  # слово-пароль для webhook (вписать в Meta)
+    cfg["WA_TOKEN"] = env("WA_TOKEN")            # постоянный токен (System User) с whatsapp_business_messaging
+    cfg["WA_PHONE_ID"] = env("WA_PHONE_ID")      # id номера телефона (Phone number ID из кабинета Meta)
+    cfg["WA_DISPLAY"] = env("WA_DISPLAY")        # как показывать номер в интерфейсе (необязательно, напр. «+996…»)
+    cfg["WA_APP_SECRET"] = env("WA_APP_SECRET")  # секрет приложения Meta (проверка подписи); если пусто — берём IG_APP_SECRET
     # Авто Рент — приватное чтение таблицы аренды через сервисный аккаунт Google
     cfg["GOOGLE_SA_JSON"] = env("GOOGLE_SA_JSON")   # JSON сервис-аккаунта (читает таблицу)
     cfg["RENT_SHEET_ID"] = env("RENT_SHEET_ID") or "1dEUZijK02ho264jrMBmXBzAZf18ITmLCXVMkdvqLr28"
@@ -212,6 +218,8 @@ SECTION_OF = [
     ("/api/ig/conversations", "chats"), ("/api/ig/thread", "chats"),
     ("/api/ig/reply", "chats"), ("/api/ig/accounts", "chats"),
     ("/api/ig/broadcast", "chats"), ("/api/ig/bot", "chats"),
+    ("/api/wa/conversations", "chats"), ("/api/wa/thread", "chats"),
+    ("/api/wa/reply", "chats"), ("/api/wa/accounts", "chats"),
     ("/api/assistant", "ai"),
     ("/api/ads", "ads"),
 ]
@@ -1726,6 +1734,266 @@ def ig_broadcast(text, account=None, max_age_hours=24, limit=500):
         except Exception:
             failed += 1
     return {"eligible": len(targets), "sent": sent, "failed": failed}
+
+# ===== WhatsApp напрямую (WhatsApp Cloud API от Meta), без посредников =====
+# Тот же Meta Graph API, что и реклама. Один Штурвал — несколько номеров (phone_id).
+# Хранение в БД зеркалит Instagram: таблицы wa_accounts / wa_inbox / wa_names.
+WA_GRAPH = "https://graph.facebook.com/v21.0"
+
+def wa_accounts():
+    """Все подключённые WhatsApp-номера компании: {phone_id, display, token}.
+    Если в БД пусто, но номер задан в окружении (WA_PHONE_ID) — показываем его (одиночный режим)."""
+    rows = []
+    if supa_on():
+        try:
+            rows = _supa("GET", "wa_accounts",
+                         "?company_id=eq.%s&select=*" % _q(COMPANY_ID)) or []
+        except Exception:
+            rows = []
+    if not rows and CFG.get("WA_PHONE_ID"):
+        rows = [{"phone_id": CFG.get("WA_PHONE_ID"),
+                 "display": CFG.get("WA_DISPLAY") or "WhatsApp",
+                 "token": CFG.get("WA_TOKEN", "")}]
+    return rows
+
+def wa_account_map():
+    """phone_id -> запись номера (для маршрутизации сообщений по номерам)."""
+    return {str(a.get("phone_id")): a for a in wa_accounts() if a.get("phone_id")}
+
+def wa_token_for(phone_id):
+    """Токен того номера, НА который пришло сообщение (phone_id из webhook)."""
+    a = wa_account_map().get(str(phone_id))
+    if a and a.get("token"):
+        return a["token"]
+    return CFG.get("WA_TOKEN", "")              # запасной (одиночный номер из конфига)
+
+def wa_send(to, text, from_phone_id=None):
+    """Отправить сообщение в WhatsApp. from_phone_id = НАШ номер (тот, на который писал клиент)."""
+    phone_id = str(from_phone_id or CFG.get("WA_PHONE_ID", "") or "")
+    token = wa_token_for(phone_id) if phone_id else CFG.get("WA_TOKEN", "")
+    if not (token and phone_id):
+        raise RuntimeError("WhatsApp пока не подключён (нет токена или номера). Сначала настройте приложение Meta.")
+    url = WA_GRAPH + "/" + _q(phone_id) + "/messages"
+    body = json.dumps({"messaging_product": "whatsapp", "to": str(to),
+                       "type": "text", "text": {"body": text}}).encode()
+    req = urllib.request.Request(url, data=body, method="POST",
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": "Bearer " + token,
+                                          "User-Agent": "Shturval/1.0"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read().decode() or "{}")
+
+# имена клиентов по их WhatsApp-номеру (приходят прямо в webhook → живых запросов не нужно).
+_wa_names = {}
+_wa_names_ts = 0
+def wa_load_names():
+    global _wa_names_ts
+    if time.time() - _wa_names_ts < 300 and _wa_names:
+        return
+    try:
+        off = 0
+        while True:
+            rows = _supa("GET", "wa_names",
+                         "?company_id=eq.%s&select=waid,name&order=waid&limit=1000&offset=%d"
+                         % (_q(COMPANY_ID), off)) or []
+            for row in rows:
+                _wa_names[str(row.get("waid"))] = row.get("name") or ""
+            if len(rows) < 1000:
+                break
+            off += 1000
+        _wa_names_ts = time.time()
+    except Exception:
+        pass
+
+def wa_customer_name(waid):
+    wa_load_names()
+    return _wa_names.get(str(waid), "")
+
+def wa_save_name(waid, name):
+    if not name:
+        return
+    _wa_names[str(waid)] = name
+    try:
+        _supa("POST", "wa_names", "?on_conflict=company_id,waid",
+              {"company_id": COMPANY_ID, "waid": str(waid), "name": name})
+    except Exception:
+        pass
+
+# защита от повторов: Meta переотправляет webhook, пока не получит 200 → не дублируем входящие
+_wa_seen = set()
+def _wa_seen_mid(mid):
+    if not mid:
+        return False
+    if mid in _wa_seen:
+        return True
+    _wa_seen.add(mid)
+    if len(_wa_seen) > 5000:
+        _wa_seen.clear()
+    return False
+
+_WA_TYPE_LABEL = {"image": "📷 фото", "video": "🎬 видео", "audio": "🎤 голосовое",
+                  "voice": "🎤 голосовое", "document": "📎 документ", "sticker": "💟 стикер",
+                  "location": "📍 геолокация", "contacts": "👤 контакт"}
+
+def wa_store_event(evt):
+    """Разобрать webhook WhatsApp Cloud API и сохранить входящие сообщения в wa_inbox.
+    Статусы (доставлено/прочитано) игнорируем — это не сообщения."""
+    if not isinstance(evt, dict):
+        return
+    for entry in (evt.get("entry") or []):
+        for ch in (entry.get("changes") or []):
+            val = ch.get("value") or {}
+            if val.get("messaging_product") != "whatsapp":
+                continue
+            phone_id = str((val.get("metadata") or {}).get("phone_number_id") or "")
+            # имена клиентов приходят прямо в webhook (contacts) — сохраняем сразу, без доп. запросов
+            for ct in (val.get("contacts") or []):
+                waid = str(ct.get("wa_id") or "")
+                nm = ((ct.get("profile") or {}).get("name") or "").strip()
+                if waid and nm and _wa_names.get(waid) != nm:
+                    wa_save_name(waid, nm)
+            for msg in (val.get("messages") or []):
+                sender = str(msg.get("from") or "")            # клиент
+                if not sender or _wa_seen_mid(msg.get("id", "")):
+                    continue
+                mtype = msg.get("type") or "text"
+                text = ""
+                if mtype == "text":
+                    text = (msg.get("text") or {}).get("body", "")
+                elif mtype == "button":
+                    text = (msg.get("button") or {}).get("text", "")
+                elif mtype == "interactive":
+                    inter = msg.get("interactive") or {}
+                    text = (inter.get("button_reply") or inter.get("list_reply") or {}).get("title", "")
+                row = {"company_id": COMPANY_ID, "sender_id": sender, "recipient_id": phone_id,
+                       "mid": msg.get("id", ""), "text": text,
+                       "ts": int(str(msg.get("timestamp") or "0") or 0) * 1000,
+                       "direction": "in", "raw": msg}
+                try:
+                    _supa("POST", "wa_inbox", "", row)
+                except Exception:
+                    pass
+                # ИИ-бот «Акылай» (те же настройки, что и для Instagram): отвечает в фоне, только на текст
+                if text and phone_id:
+                    threading.Thread(target=wabot_handle,
+                                     args=(sender, phone_id, text), daemon=True).start()
+
+def _wa_pair(r):
+    """(наш номер, клиент) из строки wa_inbox независимо от направления."""
+    if r.get("direction") == "out":
+        return str(r.get("sender_id")), str(r.get("recipient_id"))
+    return str(r.get("recipient_id")), str(r.get("sender_id"))
+
+def wa_rows(limit=1000):
+    if not supa_on():
+        return []
+    try:
+        return _supa("GET", "wa_inbox",
+                     "?company_id=eq.%s&select=*&order=ts.desc,id.desc&limit=%d" % (_q(COMPANY_ID), limit)) or []
+    except Exception:
+        return []
+
+def _wa_disp_text(r):
+    t = r.get("text") or ""
+    if t:
+        return t
+    typ = (r.get("raw") or {}).get("type") or ""
+    return _WA_TYPE_LABEL.get(typ, "📎 вложение") if typ and typ != "text" else ""
+
+def _build_wa_conversations():
+    amap = wa_account_map()
+    rows = wa_rows()
+    convos = {}
+    for r in rows:                            # rows уже по убыванию времени — первый = последний
+        acc, cust = _wa_pair(r)
+        key = acc + "|" + cust
+        if key not in convos:
+            convos[key] = {"account_id": acc, "customer_id": cust,
+                           "account": (amap.get(acc) or {}).get("display", acc),
+                           "last_text": _wa_disp_text(r), "last_ts": int(r.get("ts") or 0),
+                           "last_dir": r.get("direction", "in"), "count": 0}
+        convos[key]["count"] += 1
+    out = sorted(convos.values(), key=lambda c: c["last_ts"], reverse=True)
+    for c in out:
+        c["customer"] = wa_customer_name(c["customer_id"]) or ("+" + c["customer_id"])
+    return out
+
+def wa_conversations():
+    """Список диалогов WhatsApp (кэш 5с, имена — из БД, без живых запросов → быстро)."""
+    return cached("wa_convos", 5, _build_wa_conversations)
+
+def wa_thread(account_id, customer_id):
+    """Сообщения одного диалога по возрастанию времени."""
+    msgs = []
+    for r in wa_rows():
+        acc, cust = _wa_pair(r)
+        if acc == str(account_id) and cust == str(customer_id):
+            ts = int(r.get("ts") or 0)
+            typ = (r.get("raw") or {}).get("type") or ""
+            x = r.get("text", "") or (_WA_TYPE_LABEL.get(typ, "") if typ and typ != "text" else "")
+            msgs.append({"t": ("out" if r.get("direction") == "out" else "in"),
+                         "x": x, "ts": ts,
+                         "tm": time.strftime("%d.%m %H:%M", time.localtime(ts / 1000)) if ts > 1e12
+                               else (time.strftime("%d.%m %H:%M", time.localtime(ts)) if ts else "")})
+    msgs.sort(key=lambda m: m["ts"])
+    return {"msgs": msgs, "customer": wa_customer_name(customer_id) or ("+" + str(customer_id))}
+
+def wa_reply(account_id, customer_id, text, by="human"):
+    """Ответить клиенту с нужного номера и сохранить в историю.
+    by='human' (ручной ответ оператора) → ИИ-бот делает паузу в этом диалоге."""
+    wa_send(customer_id, text, account_id)
+    try:
+        _supa("POST", "wa_inbox", "",
+              {"company_id": COMPANY_ID, "sender_id": str(account_id),
+               "recipient_id": str(customer_id), "text": text,
+               "ts": int(time.time() * 1000), "direction": "out", "raw": {"by": by, "type": "text"}})
+    except Exception:
+        pass
+
+# ====== ИИ-БОТ WhatsApp — тот же «Акылай», что и в Instagram (общие настройки и правила) ======
+def _wabot_history(phone_id, customer, n=40):
+    """Последние сообщения диалога с клиентом (по возрастанию времени)."""
+    if not supa_on():
+        return []
+    try:
+        rows = _supa("GET", "wa_inbox",
+                     "?company_id=eq.%s&or=(sender_id.eq.%s,recipient_id.eq.%s)&order=ts.desc&limit=%d&select=text,direction,raw,ts"
+                     % (_q(COMPANY_ID), _q(str(customer)), _q(str(customer)), int(n))) or []
+        return list(reversed(rows))
+    except Exception:
+        return []
+
+def wabot_handle(sender, phone_id, text):
+    """ИИ-бот отвечает клиенту в WhatsApp. sender=клиент, phone_id=наш номер.
+    Те же настройки/правила, что у Instagram-бота. Передача человеку: если оператор
+    ответил в диалоге хоть раз — бот больше не вмешивается."""
+    try:
+        s = _igbot_get()
+        if not s["enabled"] or not (CFG.get("ANTHROPIC_API_KEY") and supa_on()):
+            return
+        hist = _wabot_history(phone_id, sender, 40)
+        for r in hist:
+            if r.get("direction") == "out" and (r.get("raw") or {}).get("by") == "human":
+                _igbot_bump("handoffs")
+                return
+        reply = _igbot_generate(hist, s)
+        if not reply:
+            return
+        try:
+            wa_send(sender, reply, phone_id)
+        except Exception as e:
+            _igbot_log_error("Отправка в WhatsApp", str(e))
+            return
+        _igbot_bump("replies")
+        try:
+            _supa("POST", "wa_inbox", "",
+                  {"company_id": COMPANY_ID, "sender_id": str(phone_id), "recipient_id": str(sender),
+                   "text": reply, "ts": int(time.time() * 1000), "direction": "out",
+                   "raw": {"by": "bot", "type": "text"}})
+        except Exception:
+            pass
+    except Exception as e:
+        _igbot_log_error("WhatsApp: обработка", str(e))
 
 # --- 1С (Yaros DataGate): товары, остатки, цены ---
 import base64
@@ -3660,6 +3928,31 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             self.send_response(200); self.send_header("Content-Type", "text/plain")
             self.end_headers(); self.wfile.write(b"EVENT_RECEIVED"); return
+        # WhatsApp webhook — ПУБЛИЧНЫЙ (Meta шлёт события без нашего логина). Отвечаем быстро 200.
+        if self.path.startswith("/api/wa/webhook"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(length) if length else b""
+            except Exception:
+                raw = b""
+            # БЕЗОПАСНОСТЬ: проверяем подпись Meta (HMAC-SHA256 от сырого тела).
+            # WA_APP_SECRET, а если не задан — IG_APP_SECRET (обычно то же приложение Meta).
+            secret = CFG.get("WA_APP_SECRET", "") or CFG.get("IG_APP_SECRET", "")
+            if secret:
+                sig = self.headers.get("X-Hub-Signature-256", "")
+                expected = "sha256=" + hmac.new(secret.encode("utf-8"), raw, hashlib.sha256).hexdigest()
+                if not (sig and hmac.compare_digest(expected, sig)):
+                    self.send_response(403); self.end_headers(); return   # поддельный запрос
+            try:
+                evt = json.loads(raw or b"{}")
+            except Exception:
+                evt = {}
+            try:
+                wa_store_event(evt)
+            except Exception:
+                pass
+            self.send_response(200); self.send_header("Content-Type", "text/plain")
+            self.end_headers(); self.wfile.write(b"EVENT_RECEIVED"); return
         if self.path.startswith("/api/"):
             u = self._user()
             if not u:
@@ -3711,6 +4004,21 @@ class Handler(BaseHTTPRequestHandler):
                 ig_reply(acc, cust, text)
             except Exception as e:
                 return self._send(200, {"ok": False, "error": "Instagram: " + str(e)})
+            return self._send(200, {"ok": True})
+        if self.path.startswith("/api/wa/reply"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            acc = str(body.get("account_id") or ""); cust = str(body.get("customer_id") or "")
+            text = (body.get("text") or "").strip()
+            if not acc or not cust or not text:
+                return self._send(400, {"error": "нужны account_id, customer_id и text"})
+            try:
+                wa_reply(acc, cust, text)
+            except Exception as e:
+                return self._send(200, {"ok": False, "error": "WhatsApp: " + str(e)})
             return self._send(200, {"ok": True})
         if self.path.startswith("/api/ig/bot"):
             u = self._user(); secs = u.get("sections", []) if u else []
@@ -4167,6 +4475,17 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "text/plain"); self.end_headers()
                 self.wfile.write(challenge.encode("utf-8")); return
             self.send_response(403); self.end_headers(); return
+        # WhatsApp webhook — ПУБЛИЧНЫЙ (Meta проверяет адрес). Должно отвечать сырым challenge.
+        if self.path.startswith("/api/wa/webhook"):
+            p = _parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            mode = (p.get("hub.mode") or [""])[0]
+            token = (p.get("hub.verify_token") or [""])[0]
+            challenge = (p.get("hub.challenge") or [""])[0]
+            if mode == "subscribe" and token == CFG.get("WA_VERIFY_TOKEN", ""):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain"); self.end_headers()
+                self.wfile.write(challenge.encode("utf-8")); return
+            self.send_response(403); self.end_headers(); return
         if self.path.startswith("/api/auth"):
             u = self._user()
             return self._send(200 if u else 401, {"ok": bool(u),
@@ -4341,6 +4660,25 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/ig/accounts"):
             return self._send(200, {"accounts": [{"username": a.get("username"), "ig_id": a.get("ig_id")}
                                                  for a in ig_accounts()]})
+        if self.path.startswith("/api/wa/conversations"):
+            try:
+                return self._send(200, {"conversations": wa_conversations(),
+                                        "accounts": [{"display": a.get("display"), "phone_id": a.get("phone_id")}
+                                                     for a in wa_accounts()]})
+            except Exception as e:
+                return self._send(200, {"conversations": [], "error": str(e)})
+        if self.path.startswith("/api/wa/thread"):
+            p = _parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            acc = (p.get("account") or [""])[0]; cust = (p.get("customer") or [""])[0]
+            if not acc or not cust:
+                return self._send(400, {"error": "нужны account и customer"})
+            try:
+                return self._send(200, wa_thread(acc, cust))
+            except Exception as e:
+                return self._send(200, {"msgs": [], "error": str(e)})
+        if self.path.startswith("/api/wa/accounts"):
+            return self._send(200, {"accounts": [{"display": a.get("display"), "phone_id": a.get("phone_id")}
+                                                 for a in wa_accounts()]})
         if self.path.startswith("/api/ig/bot"):
             return self._send(200, {"settings": _igbot_get(),
                                     "has_key": bool(CFG.get("ANTHROPIC_API_KEY")),

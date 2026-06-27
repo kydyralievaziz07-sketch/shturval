@@ -348,7 +348,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.67.0<br>«Авто Рент»: автор записей (кто сдал/внёс), зарплата +10% комиссии, период день/неделя/произвольный, машины и план — только владелец, выгрузка/загрузка Excel</div>
+      Штурвал v3.68.0<br>«Авто Рент»: в Арендах колонка «Кто добавил» вместо ID; короткие названия доступов; добавлен администратор (логин admin)</div>
   </aside>
 
   <!-- MAIN -->
@@ -471,6 +471,23 @@
           <div class="replybox">
             <input id="ig-reply" placeholder="Ответить клиенту в Instagram…" onkeydown="if(event.key==='Enter')igSend()">
             <button class="btn" onclick="igSend()">Отправить</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- WHATSAPP (прямой, WhatsApp Cloud API от Meta) -->
+    <section id="tab-wainbox" class="hide">
+      <div class="note" id="wa-status" style="margin-bottom:14px">🟢 Переписки из WhatsApp <b>напрямую</b> (официальный Cloud API). Номера: <span id="wa-accs">…</span></div>
+      <div class="note" style="margin-bottom:14px;font-size:12px">💡 Тот же ИИ-бот «Акылай» (вкладка Instagram → «ИИ-бот») отвечает и здесь. ⚠️ WhatsApp разрешает свободный текст только в течение <b>24 часов</b> после сообщения клиента — позже доходят лишь готовые шаблоны.</div>
+      <div class="inbox">
+        <div class="chatlist" id="wa-list"></div>
+        <div class="chatview">
+          <div class="head" id="wa-title">← Выберите диалог слева</div>
+          <div class="msgs" id="wa-msgs"></div>
+          <div class="replybox">
+            <input id="wa-reply" placeholder="Ответить клиенту в WhatsApp…" onkeydown="if(event.key==='Enter')waSend()">
+            <button class="btn" onclick="waSend()">Отправить</button>
           </div>
         </div>
       </div>
@@ -1152,6 +1169,7 @@
     deals    :["Сделки","Воронка, переписка и заявки в одном окне"],
     tasks    :["Задачи","Дела и напоминания по клиентам"],
     iginbox  :["Instagram","Переписки из Instagram напрямую"],
+    wainbox  :["WhatsApp","Переписки из WhatsApp напрямую"],
     chats    :["Чаты","Переписки с клиентами"],
     prod     :["Товары","Каталог, остатки и маржа"],
     sales    :["Продажи","Продажи за день и за период"],
@@ -1189,6 +1207,7 @@
     myday:{icon:'🎯',label:'Мой день'}, hr:{icon:'🗓',label:'Кадры'},
     ads:{icon:'📣',label:'Реклама'}, adsreport:{icon:'📑',label:'Отчёты по рекламе'}, adsanalysis:{icon:'🔬',label:'Анализ'},
     iginbox:{icon:'📷',label:'Instagram + бот'},
+    wainbox:{icon:'🟢',label:'WhatsApp + бот'},
     ai:{icon:'🤖',label:'ИИ-помощник'}, sim:{icon:'📊',label:'Симулятор'},
     rentdash:{icon:'📊',label:'Дашборд'}, rentcars:{icon:'🚗',label:'Машины'},
     rentlist:{icon:'🔑',label:'Аренда авто'}, rentexp:{icon:'🧾',label:'Расходы'},
@@ -1200,6 +1219,7 @@
     {key:'crm',  icon:'🧲', label:'CRM',     tabs:['crmdash','deals','tasks','clients','crm']},
     {key:'mkt',  icon:'📣', label:'Реклама', tabs:['ads','adsreport','adsanalysis']},
     {key:'ig',   icon:'📷', label:'Instagram', tabs:['iginbox']},
+    {key:'wa',   icon:'🟢', label:'WhatsApp', tabs:['wainbox']},
     {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','analytics','supl','fin','exp']},
     {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','rentcars','rentlist','rentexp','renthanded','rentanalysis','rentplan','rentclients','rentcalendar']},
     {key:'team', icon:'👥', label:'Команда', tabs:['myday','hr']},
@@ -1216,6 +1236,7 @@
     if(tab==='hr') return isOwner()||USER.sections.indexOf('hr')>=0;
     if(tab==='ads'||tab==='adsreport'||tab==='adsanalysis') return isOwner()||canSee('ads');
     if(tab==='iginbox') return isOwner()||canSee('chats');
+    if(tab==='wainbox') return isOwner()||canSee('chats');
     if(tab==='dash') return isOwner()||canSee('dash')||canSee('crm');
     if(tab==='sim') return isOwner()||canSee('ai')||canSee('analytics')||canSee('dash');
     return canSee(tab);
@@ -1229,6 +1250,7 @@
     else if(tab==='adsreport') loadAdsReport();
     else if(tab==='adsanalysis') loadAdsAnalysis();
     else if(tab==='iginbox') loadIgInbox();
+    else if(tab==='wainbox'){ loadWaInbox(); startWaAuto(); }
     else if(tab==='clients') renderClients();
     else if(tab==='ai') aiInit();
     else if(tab==='sim') simInit();
@@ -3278,6 +3300,74 @@
       if(igTick%4===0) loadIgInbox();             // список — раз в ~12с
     }, 3000);
   }
+
+  // ===== Раздел WhatsApp (прямые переписки, WhatsApp Cloud API) =====
+  let WA_CONVOS=[], waCur=null, waAccounts=[], waTimer=null, waTick=0;
+  async function loadWaInbox(){
+    const list=document.getElementById('wa-list');
+    if(list && !WA_CONVOS.length) list.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">Загрузка…</div>';
+    try{
+      const r=await apiFetch('/api/wa/conversations?_='+Date.now(),{},ONEC_BASE); const d=await r.json();
+      WA_CONVOS=d.conversations||[]; waAccounts=d.accounts||[];
+      const a=document.getElementById('wa-accs'); if(a) a.textContent=waAccounts.map(x=>x.display||x.phone_id).join(', ')||'— (подключите номер в Meta)';
+      renderWaList();
+    }catch(e){ if(list&&!WA_CONVOS.length) list.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">Сервер просыпается — обнови через минуту.</div>'; }
+  }
+  function renderWaList(){
+    const list=document.getElementById('wa-list'); if(!list) return;
+    if(!WA_CONVOS.length){ list.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">Пока нет переписок. Когда клиент напишет на ваш номер WhatsApp — диалог появится здесь.</div>'; return; }
+    list.innerHTML=WA_CONVOS.map((c,i)=>{
+      const active=(waCur&&waCur.account_id===c.account_id&&waCur.customer_id===c.customer_id);
+      return '<div onclick="openWaThread('+i+')" style="padding:11px 13px;border-bottom:1px solid var(--line);cursor:pointer;'+(active?'background:var(--panel2)':'')+'">'+
+        '<div style="display:flex;justify-content:space-between;gap:6px"><b style="font-size:14px">'+esc(c.customer||c.customer_id)+'</b><span style="font-size:11px;color:var(--muted)">'+(c.last_ts?igTime(c.last_ts):'')+'</span></div>'+
+        '<div style="font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(c.last_dir==='out'?'Вы: ':'')+esc(c.last_text||'')+'</div>'+
+        '<div style="font-size:11px;color:#25D366;margin-top:2px">🟢 '+esc(c.account)+'</div>'+
+      '</div>';
+    }).join('');
+  }
+  async function openWaThread(i){
+    const c=WA_CONVOS[i]; if(!c) return; waCur=c; renderWaList();
+    document.getElementById('wa-title').innerHTML='<b>'+esc(c.customer||c.customer_id)+'</b> <span style="color:var(--muted);font-size:12px">· 🟢 '+esc(c.account)+'</span>';
+    const box=document.getElementById('wa-msgs'); if(box){ box.innerHTML='<div style="padding:10px;color:var(--muted)">Загрузка…</div>'; box.dataset.sig=''; }
+    await waLoadThread(true);
+  }
+  async function waLoadThread(first){
+    const c=waCur; const box=document.getElementById('wa-msgs'); if(!c||!box) return;
+    try{
+      const r=await apiFetch('/api/wa/thread?account='+encodeURIComponent(c.account_id)+'&customer='+encodeURIComponent(c.customer_id)+'&_='+Date.now(),{},ONEC_BASE);
+      const d=await r.json(); if(waCur!==c) return; const msgs=d.msgs||[];
+      const last=msgs[msgs.length-1];
+      const sig=msgs.length+'|'+(last?(last.ts+':'+last.x):'');
+      if(box.dataset.sig===sig && !first) return;
+      const atBottom=(box.scrollHeight-box.scrollTop-box.clientHeight)<70;
+      box.dataset.sig=sig;
+      box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+(m.t==='out'?'out':'in')+'">'+linkify(m.x)+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>').join(''):'<div style="padding:10px;color:var(--muted)">Нет сообщений</div>';
+      if(first||atBottom) box.scrollTop=box.scrollHeight;
+    }catch(e){ if(first) box.innerHTML='<div style="padding:10px;color:var(--muted)">Не удалось загрузить.</div>'; }
+  }
+  async function waSend(){
+    const inp=document.getElementById('wa-reply'); const t=(inp.value||'').trim(); if(!t) return;
+    if(!waCur){ alert('Сначала выбери диалог слева.'); return; }
+    inp.value='';
+    const box=document.getElementById('wa-msgs'); const bid='wa'+Date.now();
+    box.insertAdjacentHTML('beforeend','<div class="bubble out" id="'+bid+'">'+esc(t)+' <span style="opacity:.6;font-size:11px">⏳</span></div>'); box.scrollTop=box.scrollHeight;
+    try{
+      const r=await apiFetch('/api/wa/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:waCur.account_id,customer_id:waCur.customer_id,text:t})},ONEC_BASE);
+      const d=await r.json(); const b=document.getElementById(bid);
+      if(d.ok){ if(b) b.innerHTML=esc(t)+' <span style="opacity:.7;font-size:11px">✓ отправлено</span>'; }
+      else { if(b){ b.innerHTML=esc(t)+' <span style="opacity:.7;font-size:11px">⚠️ не доставлено</span>'; b.style.background='var(--red)'; }
+        box.insertAdjacentHTML('beforeend','<div style="font-size:12px;color:#ffb84d;padding:4px 8px">⚠️ '+esc(sendErrText(d.error||''))+'</div>'); inp.value=t; }
+    }catch(e){ const b=document.getElementById(bid); if(b){ b.innerHTML=esc(t)+' ⚠️'; b.style.background='var(--red)'; } inp.value=t; }
+  }
+  function startWaAuto(){
+    if(waTimer) return;
+    waTimer=setInterval(()=>{
+      const tb=document.getElementById('tab-wainbox'); if(!tb||tb.classList.contains('hide')) return;
+      waTick++;
+      if(waCur) waLoadThread(false);              // открытый диалог — каждые 3с
+      if(waTick%4===0) loadWaInbox();             // список — раз в ~12с
+    }, 3000);
+  }
   function ckHead(){
     const head=document.getElementById('ck-head'); if(!head) return; const deal=findDealByName(ckCurName);
     const curChat=COCKPIT_CHATS.find(x=>x.id===ckCurId); const acc=curChat?curChat.account:'';
@@ -4519,7 +4609,7 @@
   }
   const EMP_SECS=[['deals','Сделки и переписка'],['crmdash','CRM рабочий стол'],['prod','Товары'],['sales','Продажи'],['clients','Клиенты'],['analytics','Аналитика'],['fin','Финансы'],['exp','Расходы (магазин)'],['supl','Поставщики'],['hr','Кадры'],['rent','Авто Рент'],['ai','ИИ-помощник'],['dash','Дашборд Магазина']];
   // под-разделы Авто Рента — чтобы выдавать сотруднику только нужные вкладки
-  const RENT_SUBS=[['rent_dash','🚗 Авто Рент — Дашборд'],['rent_cars','🚗 Авто Рент — Машины'],['rent_list','🚗 Авто Рент — Аренды'],['rent_exp','🚗 Авто Рент — Расходы'],['rent_handed','🚗 Авто Рент — Сдано'],['rent_analysis','🚗 Авто Рент — Анализ'],['rent_plan','🚗 Авто Рент — План'],['rent_clients','🚗 Авто Рент — Клиенты'],['rent_calendar','🚗 Авто Рент — Календарь']];
+  const RENT_SUBS=[['rent_dash','Дашборд'],['rent_cars','Машины'],['rent_list','Аренды'],['rent_exp','Расходы'],['rent_handed','Сдано'],['rent_analysis','Анализ'],['rent_plan','План'],['rent_clients','Клиенты'],['rent_calendar','Календарь']];
   // разделы, доступные ЭТОЙ компании = разделы её владельца (у Бизмарта «all» = все).
   // Чтобы в прокатной компании сотруднику нельзя было выдать Сделки/CRM/Товары и т.п.
   function _companySecs(){
@@ -5121,9 +5211,9 @@
       totSum+=rnum(r.sum); totDebt+=rnum(r.debt); var debt=rnum(r.debt);
       var u=rentUrg(r), trst=u?(' style="background:'+u.bg+'"'):'';
       var endCell=u?('<span style="color:'+u.col+';font-weight:600">'+esc(r.end||'')+'</span><div style="font-size:11px;color:'+u.col+'">'+u.tag+'</div>'):esc(r.end||'');
-      var byline=r.by?('<div style="font-size:11px;color:var(--muted)">🧑‍💼 сдал: '+esc(r.by)+(r.edit_by&&r.edit_by!==r.by?(' · правил: '+esc(r.edit_by)):'')+'</div>'):(r.edit_by?('<div style="font-size:11px;color:var(--muted)">✏️ правил: '+esc(r.edit_by)+'</div>'):'');
-      return '<tr'+trst+'><td '+RT_TD+' style="color:var(--muted)">'+esc(r.id||'')+'</td><td '+RT_TD+'><b>'+esc(r.model||'')+'</b></td>'+
-        '<td '+RT_TD+'>'+(r.renter?esc(r.renter):'<span style="color:var(--muted)">—</span>')+byline+'</td>'+
+      var whoCell=r.by?('🧑‍💼 <b>'+esc(r.by)+'</b>'+(r.edit_by&&r.edit_by!==r.by?('<div style="font-size:11px;color:var(--muted)">правил: '+esc(r.edit_by)+'</div>'):'')):(r.edit_by?('✏️ '+esc(r.edit_by)):'<span style="color:var(--muted)">—</span>');
+      return '<tr'+trst+'><td '+RT_TD+' style="font-size:12px;white-space:nowrap">'+whoCell+'</td><td '+RT_TD+'><b>'+esc(r.model||'')+'</b></td>'+
+        '<td '+RT_TD+'>'+(r.renter?esc(r.renter):'<span style="color:var(--muted)">—</span>')+'</td>'+
         '<td '+RT_TD+' style="white-space:nowrap">'+esc(r.start||'')+'</td><td '+RT_TD+' style="white-space:nowrap">'+endCell+'</td>'+
         '<td '+RT_TD+' style="text-align:center">'+esc(r.days||'')+'</td><td '+RT_TD+' style="text-align:right">'+esc(r.sum||'')+'</td>'+
         '<td '+RT_TD+' style="text-align:right">'+esc(r.got||'')+'</td>'+
@@ -5135,7 +5225,7 @@
       '<td '+RT_TD+' style="text-align:right;color:'+(totDebt>0?'var(--red)':'var(--muted)')+'"><b>'+fmt(totDebt)+'</b></td><td '+RT_TD+'></td><td '+RT_TD+'></td></tr></tfoot>';
     var search='<input type="text" placeholder="🔎 поиск: модель, арендатор, статус, дата…" value="'+esc(RENT_LF)+'" oninput="rentListFilter(this.value)" style="width:100%;max-width:420px;margin-bottom:12px;padding:9px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:14px">';
     b.innerHTML=rAddBtn('rental','Аренда')+rentExportBtn('expRentList()')+'<div class="note" style="margin-bottom:12px">🔑 Аренды — всего '+all.length+' (активные сверху по дате сдачи, затем завершённые по дате). 🟡 за день до сдачи · 🟠 в день сдачи · 🔴 просрочка. Суммы в сомах.</div>'+search+
-      rtable(['ID','Модель','Арендатор','Начало','Конец','Дней','Сумма','Получено','Долг','Статус',''], rows, foot);
+      rtable(['Кто добавил','Модель','Арендатор','Начало','Конец','Дней','Сумма','Получено','Долг','Статус',''], rows, foot);
   }
 
   // ---------- РАСХОДЫ ----------

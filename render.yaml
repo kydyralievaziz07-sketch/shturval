@@ -25,3 +25,14 @@ services:
         sync: false
       - key: SITE_PASSWORD
         sync: false
+      # WhatsApp Cloud API (официальное подключение своего номера через Meta)
+      - key: WA_TOKEN
+        sync: false
+      - key: WA_PHONE_ID
+        sync: false
+      - key: WA_VERIFY_TOKEN
+        sync: false
+      - key: WA_APP_SECRET
+        sync: false
+      - key: WA_DISPLAY
+        sync: false
