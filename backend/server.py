@@ -415,13 +415,9 @@ def rent_save(d, company=None):
     key = _rent_key(company)
     _RENT_DOC_CACHE[key] = (time.time(), d)   # свежий снимок в кэш — чтение сразу видит правку
     _rent_build_bust(company)                 # готовые ответы устарели — пересоберём при первом чтении
-    # независимый снимок (d может быть изменён следующей правкой) и сохранение в фоне
-    try:
-        snapshot = json.loads(json.dumps(d, ensure_ascii=False))
-    except Exception:
-        snapshot = d
+    # сохранение в Supabase — в фоне (сериализация тоже на фоновом потоке, вне критического пути)
     if supa_on():
-        _rent_persist_bg(key, snapshot)
+        _rent_persist_bg(key, d)
     else:
         kv_save(key, d)
 
