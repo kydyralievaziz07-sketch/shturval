@@ -358,7 +358,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.76.0<br>Прокат: «Мой день» менеджера (сдал сегодня/заработок/средний чек); «Требует внимания» поднято на дашборде</div>
+      Штурвал v3.77.0<br>Прокат: «Требует внимания» — отдельная вкладка в меню (после «Аренда авто»), убрана с дашборда</div>
   </aside>
 
   <!-- MAIN -->
@@ -391,6 +391,7 @@
     <section id="tab-rentdash" class="hide"><div id="rent-dash"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-rentcars" class="hide"><div id="rent-cars"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-rentlist" class="hide"><div id="rent-list"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
+    <section id="tab-rentalert" class="hide"><div id="rent-alert"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-rentexp" class="hide"><div id="rent-exp"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-renthanded" class="hide"><div id="rent-handed"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-rentanalysis" class="hide"><div id="rent-analysis"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
@@ -1239,6 +1240,7 @@
     rentdash :["Авто Рент — Дашборд","Сводка по аренде авто"],
     rentcars :["Машины","Автопарк аренды"],
     rentlist :["Аренда авто","Кто, что и на сколько взял"],
+    rentalert :["Требует внимания","Сдачи авто и должники"],
     rentexp  :["Расходы","Куда уходят деньги по аренде"],
     renthanded:["Сдано","Передано руководителю"],
     rentanalysis:["Анализ по машинам","Какая машина сколько зарабатывает"],
@@ -1261,7 +1263,7 @@
     wainbox:{icon:'🟢',label:'WhatsApp + бот'},
     ai:{icon:'🤖',label:'ИИ-помощник'}, sim:{icon:'📊',label:'Симулятор'},
     rentdash:{icon:'📊',label:'Дашборд'}, rentcars:{icon:'🚗',label:'Машины'},
-    rentlist:{icon:'🔑',label:'Аренда авто'}, rentexp:{icon:'🧾',label:'Расходы'},
+    rentlist:{icon:'🔑',label:'Аренда авто'}, rentalert:{icon:'🔔',label:'Требует внимания'}, rentexp:{icon:'🧾',label:'Расходы'},
     renthanded:{icon:'📤',label:'Сдано'},
     rentanalysis:{icon:'📊',label:'Анализ по машинам'}, rentplan:{icon:'🎯',label:'План'},
     rentclients:{icon:'🧑',label:'Клиенты'}, rentcalendar:{icon:'📆',label:'Календарь'}
@@ -1272,7 +1274,7 @@
     {key:'ig',   icon:'📷', label:'Instagram', tabs:['iginbox']},
     {key:'wa',   icon:'🟢', label:'WhatsApp', tabs:['wainbox']},
     {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','analytics','supl','fin','exp']},
-    {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','rentcars','rentlist','rentexp','renthanded','rentanalysis','rentplan','rentclients','rentcalendar']},
+    {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','rentcars','rentlist','rentalert','rentexp','renthanded','rentanalysis','rentplan','rentclients','rentcalendar']},
     {key:'team', icon:'👥', label:'Команда', tabs:['myday','hr']},
     {key:'ai',   icon:'🤖', label:'ИИ',      tabs:['ai','sim']}
   ];
@@ -1282,6 +1284,8 @@
     if(tab.indexOf('rent')===0){
       // «rent» = весь раздел; иначе по под-доступу: rentcars→rent_cars, rentdash→rent_dash и т.п.
       if(isOwner()||canSee('rent')) return true;
+      // «Требует внимания» видно всем, у кого есть любой доступ к прокату
+      if(tab==='rentalert') return (USER.sections||[]).some(function(s){return s.indexOf('rent')===0;});
       return canSee('rent_'+tab.slice(4));
     }
     if(tab==='hr') return isOwner()||USER.sections.indexOf('hr')>=0;
@@ -1318,6 +1322,7 @@
     else if(tab==='rentdash') rentDispatch('dash');
     else if(tab==='rentcars') rentDispatch('cars');
     else if(tab==='rentlist') rentDispatch('list');
+    else if(tab==='rentalert') rentDispatch('alert');
     else if(tab==='rentexp') rentDispatch('exp');
     else if(tab==='renthanded') rentDispatch('handed');
     else if(tab==='rentanalysis') rentDispatch('analysis');
@@ -5254,7 +5259,7 @@
   }
   function rAddBtn(type,label){ return '<button class="btn" style="padding:6px 14px;font-size:13px;margin-bottom:12px" onclick="openRentForm(\''+type+'\')">➕ '+label+'</button>'; }
 
-  var RENT_CONT={dash:'rent-dash',cars:'rent-cars',list:'rent-list',exp:'rent-exp',handed:'rent-handed',analysis:'rent-analysis',plan:'rent-plan',clients:'rent-clients',calendar:'rent-calendar'};
+  var RENT_CONT={dash:'rent-dash',cars:'rent-cars',list:'rent-list',alert:'rent-alert',exp:'rent-exp',handed:'rent-handed',analysis:'rent-analysis',plan:'rent-plan',clients:'rent-clients',calendar:'rent-calendar'};
   function rentDispatch(view){
     RENT_CUR=view;
     if(RENT){ rentRenderCur(); return; }
@@ -5274,7 +5279,7 @@
     if(el) el.innerHTML='<div class="card" style="border-color:var(--red)"><b>Не удалось загрузить данные аренды.</b><div style="color:var(--muted);font-size:13px;margin-top:6px">'+esc(RENT_ERR)+'</div><button class="btn ghost" style="margin-top:10px;padding:6px 12px;font-size:13px" onclick="RENT_ERR=\'\';rentDispatch(RENT_CUR)">↻ Повторить</button></div>';
   }
   function rentRenderCur(){
-    ({dash:renderRentDash,cars:renderRentCars,list:renderRentList,exp:renderRentExp,handed:renderRentHanded,analysis:renderRentAnalysis,plan:renderRentPlan,clients:renderRentClients,calendar:renderRentCalendar}[RENT_CUR]||renderRentDash)();
+    ({dash:renderRentDash,cars:renderRentCars,list:renderRentList,alert:renderRentAlert,exp:renderRentExp,handed:renderRentHanded,analysis:renderRentAnalysis,plan:renderRentPlan,clients:renderRentClients,calendar:renderRentCalendar}[RENT_CUR]||renderRentDash)();
   }
   // отправка изменения на сервер
   function rentPost(action,payload){
@@ -5366,29 +5371,32 @@
         '<td '+RT_TD+' style="text-align:right;color:var(--muted)">'+esc(m.margin||'')+'</td></tr>';
     }).join('');
     var months=(D.months&&D.months.length)?('<h3 style="margin:6px 0 10px">📅 По месяцам</h3>'+rtable(['Месяц','Аренд','Выручка','Расходы','Прибыль','Маржа'], mr)):'';
-    // --- Сводка «Требует внимания»: сдачи сегодня/завтра, просрочки, должники ---
+    b.innerHTML=note+rentExcelToolbar()+_rentPerSel(s)+row1+row2+park+eff+months;
+    if(typeof renderMoney==='function') renderMoney();
+  }
+  // ---------- ТРЕБУЕТ ВНИМАНИЯ (отдельная вкладка) ----------
+  function renderRentAlert(){
+    var b=document.getElementById('rent-alert'); if(!b) return;
+    var D=rentD();
     var due=[]; (D.rentals||[]).forEach(function(r){ var u=rentUrg(r); if(u) due.push({u:u,r:r}); });
     due.sort(function(a,b){ var o={'🔴':0,'🟠':1,'🟡':2}; return (o[a.u.tag[0]]||9)-(o[b.u.tag[0]]||9); });
     var debtors=(D.rentals||[]).filter(function(r){ return rnum(r.debt)>0; });
-    var attRows=due.slice(0,12).map(function(x){
-      return '<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)">'+
-        '<span><b>'+esc(x.r.model||'')+'</b>'+(x.r.renter?' · '+esc(x.r.renter):'')+(x.r.phone?' · <span style="color:var(--muted)">'+esc(x.r.phone)+'</span>':'')+'</span>'+
+    var attRows=due.map(function(x){
+      return '<div style="display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)">'+
+        '<span><b>'+esc(x.r.model||'')+'</b>'+(x.r.renter?' · '+esc(x.r.renter):'')+(x.r.phone?' · <a href="tel:'+esc((x.r.phone||'').replace(/[^0-9+]/g,''))+'" style="color:var(--muted);text-decoration:none">'+esc(x.r.phone)+'</a>':'')+'</span>'+
         '<span style="color:'+x.u.col+';white-space:nowrap;font-weight:600">'+x.u.tag+' ('+esc(x.r.end||'')+')</span></div>';
     }).join('');
-    var debtRows=debtors.slice(0,12).map(function(r){
-      return '<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)">'+
-        '<span><b>'+esc(r.model||'')+'</b>'+(r.renter?' · '+esc(r.renter):'')+'</span>'+
+    var debtRows=debtors.map(function(r){
+      return '<div style="display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)">'+
+        '<span><b>'+esc(r.model||'')+'</b>'+(r.renter?' · '+esc(r.renter):'')+(r.phone?' · <a href="tel:'+esc((r.phone||'').replace(/[^0-9+]/g,''))+'" style="color:var(--muted);text-decoration:none">'+esc(r.phone)+'</a>':'')+'</span>'+
         '<span style="color:var(--red);white-space:nowrap;font-weight:600">'+esc(r.debt||'')+' '+MUNIT()+'</span></div>';
     }).join('');
-    var att='';
-    if(due.length||debtors.length){
-      att='<div class="card" style="margin-bottom:14px;border-color:'+(due.some(function(x){return x.u.tag[0]==='🔴';})?'var(--red)':'var(--line)')+'"><h3>🔔 Требует внимания</h3>'+
-        (due.length?('<div style="margin-top:6px;font-size:13px;color:var(--muted)">Сдача авто:</div>'+attRows):'')+
-        (debtors.length?('<div style="margin-top:10px;font-size:13px;color:var(--muted)">Должники ('+debtors.length+'):</div>'+debtRows):'')+
-        '</div>';
-    }
-    b.innerHTML=note+att+rentExcelToolbar()+_rentPerSel(s)+row1+row2+park+eff+months;
-    if(typeof renderMoney==='function') renderMoney();
+    var html='<div class="note" style="margin-bottom:14px">🔔 <b>Требует внимания</b> — сдачи авто (🟡 завтра · 🟠 сегодня · 🔴 просрочка) и должники.</div>';
+    html+='<div class="card" style="margin-bottom:14px'+(due.some(function(x){return x.u.tag[0]==='🔴';})?';border-color:var(--red)':'')+'"><h3>🚗 Сдача авто'+(due.length?(' ('+due.length+')'):'')+'</h3>'+
+      (due.length?attRows:'<div style="color:var(--muted);font-size:13px;margin-top:6px">Ближайших сдач нет 👍</div>')+'</div>';
+    html+='<div class="card"><h3>📕 Должники'+(debtors.length?(' ('+debtors.length+')'):'')+'</h3>'+
+      (debtors.length?debtRows:'<div style="color:var(--muted);font-size:13px;margin-top:6px">Должников нет 👍</div>')+'</div>';
+    b.innerHTML=html;
   }
 
   // ---------- МАШИНЫ ----------
