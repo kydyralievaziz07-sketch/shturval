@@ -358,7 +358,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.79.0<br>Временно скрыта иконка «Авто Рент» у владельца-Бизмарта (у FREE WAYS остаётся)</div>
+      Штурвал v3.80.0<br>У FREE WAYS раздел «Авто Рент» переименован в «FreeWays»</div>
   </aside>
 
   <!-- MAIN -->
@@ -1279,6 +1279,9 @@
     {key:'ai',   icon:'🤖', label:'ИИ',      tabs:['ai','sim']}
   ];
   let curModule='crm', curTab='dash';
+  // У компании FREE WAYS раздел «Авто Рент» называется «FreeWays».
+  function rentBrand(){ return isRentCabinet() ? 'FreeWays' : 'Авто Рент'; }
+  function modLabel(m){ return m.key==='rent' ? rentBrand() : m.label; }
   function tabVisible(tab){
     if(tab==='set'||tab==='myday') return true;
     if(tab.indexOf('rent')===0){
@@ -1346,7 +1349,7 @@
     const mod=MODULES.find(m=>m.tabs.indexOf(tab)>=0); if(mod) curModule=mod.key;
     document.querySelectorAll('main section').forEach(s=>s.classList.add('hide'));
     const sec=document.getElementById('tab-'+tab); if(sec) sec.classList.remove('hide');
-    if(titles[tab]){ const pt=document.getElementById('page-title'),ps=document.getElementById('page-sub'); if(pt)pt.textContent=titles[tab][0]; if(ps)ps.textContent=titles[tab][1]; }
+    if(titles[tab]){ const pt=document.getElementById('page-title'),ps=document.getElementById('page-sub'); let _t0=titles[tab][0]; if(tab==='rentdash') _t0=rentBrand()+' — Дашборд'; if(pt)pt.textContent=_t0; if(ps)ps.textContent=titles[tab][1]; }
     renderTopNav(); renderSubmenu();
     dispatchTab(tab);
     // кнопки периода (Сегодня/Неделя/Месяц) показываем только там, где они реально работают
@@ -1357,7 +1360,7 @@
   function renderTopNav(){
     const tm=document.getElementById('topmods');
     if(tm){
-      tm.innerHTML=MODULES.filter(moduleVisible).map(m=>'<a data-mod="'+m.key+'"'+((m.key===curModule&&curTab!=='set')?' class="active"':'')+'><span>'+m.icon+'</span> '+esc(m.label)+'</a>').join('');
+      tm.innerHTML=MODULES.filter(moduleVisible).map(m=>'<a data-mod="'+m.key+'"'+((m.key===curModule&&curTab!=='set')?' class="active"':'')+'><span>'+m.icon+'</span> '+esc(modLabel(m))+'</a>').join('');
       tm.querySelectorAll('a').forEach(a=>a.addEventListener('click',()=>selectModule(a.dataset.mod)));
     }
     const setBtn=document.getElementById('tn-set'); if(setBtn) setBtn.classList.toggle('active',curTab==='set');
