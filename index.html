@@ -876,6 +876,26 @@
         <div id="set-acc-msg" style="font-size:13px;margin-top:10px;min-height:16px"></div>
       </div>
 
+      <!-- Авто Рент: валюта + оплата менеджеров (только владелец проката) -->
+      <div class="card" id="set-rentpay" style="display:none">
+        <h3>🚗 Авто Рент — оплата и валюта</h3>
+        <div class="set-row">
+          <span class="lbl">💱 Валюта учёта <span style="font-size:11px;color:var(--muted)">в чём ведём весь учёт</span></span>
+          <div class="thsel" style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn ghost" id="rcur-som" onclick="rentSetCurrency('сом')">сом</button>
+            <button class="btn ghost" id="rcur-usd" onclick="rentSetCurrency('$')">$ доллар</button>
+            <button class="btn ghost" id="rcur-tg" onclick="rentSetCurrency('₸')">₸ тенге</button>
+          </div>
+        </div>
+        <div class="note" style="margin:12px 0 10px">Задай оклад сотруднику и процент комиссии с оформленных им аренд. Комиссия начисляется автоматически в зарплату.</div>
+        <div id="set-rentpay-rows"></div>
+        <div class="set-row" style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px">
+          <span class="lbl">📊 Процент по умолчанию (% от аренды) <span style="font-size:11px;color:var(--muted)">если у сотрудника не задан свой</span></span>
+          <input type="number" inputmode="numeric" id="set-comm-default" placeholder="10" style="width:90px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--text)">
+        </div>
+        <div style="margin-top:12px"><button class="btn" onclick="rentPaySave()">💾 Сохранить оплату</button> <span id="set-rentpay-msg" style="font-size:13px;color:var(--muted);margin-left:8px"></span></div>
+      </div>
+
       <!-- Внешний вид и поведение -->
       <div class="card">
         <h3>⚙️ Приложение</h3>
@@ -888,7 +908,7 @@
             <button class="btn ghost" id="thbtn-brand" onclick="setTheme('brand')">🏁 Фирменная</button>
           </div>
         </div>
-        <div class="set-row">
+        <div class="set-row" id="set-row-fx">
           <span class="lbl">💱 Показывать в долларах ($) <span id="fxnote" style="font-size:11px;color:var(--muted)"></span></span>
           <label class="switch"><input type="checkbox" id="sw-cur" onchange="setCur(this.checked?'USD':'KGS')"><span class="slider"></span></label>
         </div>
@@ -897,18 +917,6 @@
           <label class="switch"><input type="checkbox" id="sw-auto" onchange="setAuto(this.checked)"><span class="slider"></span></label>
         </div>
         <div style="margin-top:22px"><button class="btn ghost" onclick="logout()">🚪 Выйти из аккаунта</button></div>
-      </div>
-
-      <!-- Авто Рент: оплата менеджеров (только владелец проката) -->
-      <div class="card" id="set-rentpay" style="display:none">
-        <h3>🚗 Оплата менеджеров (Авто Рент)</h3>
-        <div class="note" style="margin-bottom:10px">Задай оклад сотруднику и процент комиссии с оформленных им аренд. Комиссия начисляется автоматически в зарплату.</div>
-        <div id="set-rentpay-rows"></div>
-        <div class="set-row" style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px">
-          <span class="lbl">📊 Процент по умолчанию (% от аренды) <span style="font-size:11px;color:var(--muted)">если у сотрудника не задан свой</span></span>
-          <input type="number" inputmode="numeric" id="set-comm-default" placeholder="10" style="width:90px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--text)">
-        </div>
-        <div style="margin-top:12px"><button class="btn" onclick="rentPaySave()">💾 Сохранить оплату</button> <span id="set-rentpay-msg" style="font-size:13px;color:var(--muted);margin-left:8px"></span></div>
       </div>
     </section>
 
@@ -1055,7 +1063,7 @@
       <div><label>Отдел</label><input type="text" id="emp-dept" placeholder="Например: Обувь" list="emp-depts"><datalist id="emp-depts"></datalist></div>
       <div><label>Должность</label><input type="text" id="emp-role" placeholder="Например: Консультант"></div>
     </div>
-    <label>Зарплата в месяц, сом</label>
+    <label id="emp-salary-label">Зарплата в месяц, сом</label>
     <input type="number" id="emp-salary" placeholder="0">
     <div id="emp-comm-block" style="display:none">
       <label style="margin-top:8px">🚗 % за сдачу авто <span style="color:var(--muted);font-weight:400;font-size:11px">— комиссия с оформленных им аренд (напр. 10, 15, 20). Идёт в зарплату</span></label>
@@ -1383,7 +1391,7 @@
             html:'<b>'+u.tag+'.</b> '+esc(r.model||'')+(r.renter?' · '+esc(r.renter):'')+(r.phone?' · <a href="tel:'+esc((r.phone||'').replace(/[^0-9+]/g,''))+'" style="color:inherit">'+esc(r.phone)+'</a>':'')+' (сдача '+esc(r.end||'')+')'});
         });
         (D.rentals||[]).filter(function(r){ return rnum(r.debt)>0; }).forEach(function(r){
-          items.push({cls:'red',html:'<b>Долг '+esc(r.debt)+' сом.</b> '+esc(r.model||'')+(r.renter?' · '+esc(r.renter):'')+(r.phone?' · <a href="tel:'+esc((r.phone||'').replace(/[^0-9+]/g,''))+'" style="color:inherit">'+esc(r.phone)+'</a>':'')});
+          items.push({cls:'red',html:'<b>Долг '+esc(r.debt)+' '+MUNIT()+'.</b> '+esc(r.model||'')+(r.renter?' · '+esc(r.renter):'')+(r.phone?' · <a href="tel:'+esc((r.phone||'').replace(/[^0-9+]/g,''))+'" style="color:inherit">'+esc(r.phone)+'</a>':'')});
         });
       }
     }catch(e){}
@@ -1477,11 +1485,14 @@
   function isCabinetOwner(){ return !!USER.owner || USER.sections.indexOf('all')>=0; }
   // кабинет проката (не магазин Бизмарт): в форме сотрудника показываем «% за авто» вместо «ставки за видео»
   function isRentCabinet(){ return USER.sections.indexOf('all')<0 && (canSee('rent') || (USER.sections||[]).some(function(s){return s.indexOf('rent')===0;})); }
+  // подпись валюты: в прокате — из настроек кабинета (по умолч. $), в магазине — сом
+  function MUNIT(){ return isRentCabinet() ? ((typeof RENT!=='undefined'&&RENT&&RENT.summary&&RENT.summary.currency)||'$') : 'сом'; }
   function _toggleEmpPay(){
     var rc=isRentCabinet();
     var cb=document.getElementById('emp-comm-block'), vb=document.getElementById('emp-video-block');
     if(cb) cb.style.display=rc?'':'none';
     if(vb) vb.style.display=rc?'none':'';
+    var sl=document.getElementById('emp-salary-label'); if(sl) sl.textContent='Зарплата в месяц, '+MUNIT();
   }
   function applyUser(d){
     // ВАЖНО: пустой массив [] = «нет доступа к разделам» (только Мой день/Настройки),
@@ -1534,13 +1545,34 @@
     // блок оплаты менеджеров проката — только владельцу кабинета проката
     var rp=document.getElementById('set-rentpay');
     if(rp){ var showPay=(typeof rentIsOwner==='function'&&rentIsOwner()&&(canSee('rent')||canSee('rent_dash')||canSee('rent_list'))); rp.style.display=showPay?'':'none'; if(showPay) loadRentPay(); }
+    // долларовый тумблер (FX, для магазина) прячем в кабинете проката — там своя валюта
+    var fx=document.getElementById('set-row-fx'); if(fx) fx.style.display=(typeof isRentCabinet==='function'&&isRentCabinet())?'none':'';
     applyAvatar();
+  }
+  function _hlCur(){
+    var c=(typeof MUNIT==='function')?MUNIT():'сом';
+    var map={'сом':'rcur-som','$':'rcur-usd','₸':'rcur-tg'};
+    ['rcur-som','rcur-usd','rcur-tg'].forEach(function(id){var b=document.getElementById(id);if(b)b.classList.remove('active');});
+    var b=document.getElementById(map[c]); if(b) b.classList.add('active');
+  }
+  function rentSetCurrency(cur){
+    var msg=document.getElementById('set-rentpay-msg');
+    apiFetch('/api/rent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_currency',currency:cur})},ONEC_BASE)
+      .then(function(r){return r.json();}).then(function(d){
+        if(d&&d.error) throw new Error(d.error);
+        if(d&&d.data) RENT=d;
+        _hlCur();
+        if(typeof rentRenderCur==='function' && RENT) rentRenderCur();
+        if(msg){ msg.style.color='var(--green)'; msg.textContent='✅ Валюта учёта: '+cur; }
+      }).catch(function(e){ if(msg){ msg.style.color='var(--red)'; msg.textContent='Ошибка: '+e.message; } });
   }
   // ----- Авто Рент: оплата менеджеров (оклад + % комиссии) в Настройках -----
   function loadRentPay(){
     var box=document.getElementById('set-rentpay-rows'); if(!box) return;
     box.innerHTML='<div style="color:var(--muted);font-size:13px">Загружаю команду…</div>';
-    // дефолтный % — из данных аренды (если уже загружены), иначе подтянем
+    // подтянуть валюту/проценты из данных аренды для подсветки и дефолта
+    if(typeof RENT==='undefined'||!RENT){ apiFetch('/api/rent?period=ИТОГО',{},ONEC_BASE).then(function(r){return r.json();}).then(function(d){ if(d&&!d.error){ RENT=d; _hlCur(); var de=document.getElementById('set-comm-default'); if(de&&RENT.summary&&RENT.summary.commission_pct!=null) de.value=RENT.summary.commission_pct; } }).catch(function(){}); }
+    else _hlCur();
     var def=(RENT&&RENT.summary&&RENT.summary.commission_pct);
     var dEl=document.getElementById('set-comm-default'); if(dEl&&def!=null) dEl.value=def;
     apiFetch('/api/payroll',{},ONEC_BASE).then(function(r){return r.json();}).then(function(d){
@@ -3846,15 +3878,15 @@
         '<div style="font-size:11px;color:var(--muted);margin-top:8px">Дни отмечает HR-менеджер. Оклад пока не задан.</div></div>';
       return;
     }
-    const subline='Отработано дней: <b style="color:var(--text)">'+(v.present_days||0)+'</b> · ставка '+fmt(v.daily_rate)+' сом/день'+
-      ((v.partial_days>0)?(' · ещё '+v.hours_month+' ч частично (по '+fmt(v.hourly_rate||0)+' сом/ч)'):'');
+    const subline='Отработано дней: <b style="color:var(--text)">'+(v.present_days||0)+'</b> · ставка '+fmt(v.daily_rate)+' '+MUNIT()+'/день'+
+      ((v.partial_days>0)?(' · ещё '+v.hours_month+' ч частично (по '+fmt(v.hourly_rate||0)+' '+MUNIT()+'/ч)'):'');
     box.innerHTML='<div class="card" style="margin-top:16px"><h3>💼 Зарплата за '+mName+'</h3>'+
       '<div style="font-size:12px;color:var(--muted);margin-bottom:12px">'+subline+'</div>'+
       payBar('💰 Зарплата (накоплено)',v.accrued,v.salary_month,'#39d98a')+
-      (v.commission>0?('<div style="display:flex;justify-content:space-between;font-size:14px;margin:4px 0"><span>🚗 Комиссия с аренд ('+(v.commission_pct||10)+'%)</span><b style="color:#39d98a"><span class="money" data-som="'+v.commission+'">'+fmt(v.commission)+'</span> сом</b></div>'):'')+
+      (v.commission>0?('<div style="display:flex;justify-content:space-between;font-size:14px;margin:4px 0"><span>🚗 Комиссия с аренд ('+(v.commission_pct||10)+'%)</span><b style="color:#39d98a"><span class="money" data-som="'+v.commission+'">'+fmt(v.commission)+'</span> '+MUNIT()+'</b></div>'):'')+
       payBar('🎁 Премия',v.bonus,v.bonus_month,'#a78bfa')+
       payBar('💸 Аванс (взято)',v.advance,v.salary_month,'#ffb84d')+
-      '<div style="border-top:1px solid var(--line);margin-top:6px;padding-top:12px;display:flex;justify-content:space-between;font-size:15px"><span>К выплате сейчас:</span><b><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span> сом</b></div>'+
+      '<div style="border-top:1px solid var(--line);margin-top:6px;padding-top:12px;display:flex;justify-content:space-between;font-size:15px"><span>К выплате сейчас:</span><b><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span> '+MUNIT()+'</b></div>'+
       '<div style="font-size:11px;color:var(--muted);margin-top:8px">Полный день считается по ставке. Если отработал не весь день, HR вписывает часы — тогда день считается по часам.</div></div>';
     renderMoney();
   }
@@ -4203,8 +4235,8 @@
     hraCur=cur||0;
     const word=kind==='advance'?'аванс':'премия';
     document.getElementById('hra-title').textContent=(kind==='advance'?'💸 Аванс':'🎁 Премия')+' — '+v.name;
-    document.getElementById('hra-sub').textContent='Текущий '+word+': '+fmt(hraCur)+' сом. Впиши, сколько ДОБАВИТЬ.';
-    document.getElementById('hra-label').textContent='Добавить, сом';
+    document.getElementById('hra-sub').textContent='Текущий '+word+': '+fmt(hraCur)+' '+MUNIT()+'. Впиши, сколько ДОБАВИТЬ.';
+    document.getElementById('hra-label').textContent='Добавить, '+MUNIT();
     const inp=document.getElementById('hra-input'); inp.value='';            // пусто — вписываем только прибавку
     document.getElementById('hra-preview').textContent='';
     document.getElementById('hrambg').classList.add('open');
@@ -4214,7 +4246,7 @@
     const add=parseFloat((document.getElementById('hra-input').value||'').replace(/\s/g,'').replace(',','.'));
     const p=document.getElementById('hra-preview');
     if(isNaN(add)){ p.textContent=''; return; }
-    p.innerHTML='Станет: <b style="color:var(--text)">'+fmt(hraCur)+' + '+fmt(add)+' = '+fmt(hraCur+add)+'</b> сом';
+    p.innerHTML='Станет: <b style="color:var(--text)">'+fmt(hraCur)+' + '+fmt(add)+' = '+fmt(hraCur+add)+'</b> '+MUNIT();
   }
   function closeHra(){ document.getElementById('hrambg').classList.remove('open'); hraLogin=null; }
   async function hraSave(mode){
@@ -5135,7 +5167,7 @@
   // владелец проката (полный контроль: машины, план, импорт). Менеджеры — только операции.
   function rentIsOwner(){ return (typeof isCabinetOwner==='function') && isCabinetOwner(); }
   function rnum(s){ return parseInt(String(s==null?'':s).replace(/[^\d-]/g,''),10)||0; }
-  function rsom(s){ s=(s==null?'':String(s)).trim(); return s?('<b>'+esc(s)+'</b> <span style="color:var(--muted);font-size:12px">сом</span>'):'<span style="color:var(--muted)">—</span>'; }
+  function rsom(s){ s=(s==null?'':String(s)).trim(); return s?('<b>'+esc(s)+'</b> <span style="color:var(--muted);font-size:12px">'+MUNIT()+'</span>'):'<span style="color:var(--muted)">—</span>'; }
   function isoToRu(s){ s=(s||'').trim(); var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s); return m?(m[3]+'.'+m[2]+'.'+m[1]):s; }
   function ruToIso(s){ s=(s||'').trim(); var m=/^(\d{2})\.(\d{2})\.(\d{4})$/.exec(s); return m?(m[3]+'-'+m[2]+'-'+m[1]):''; }
   function todayIso(){ var d=new Date(),p=function(n){return(n<10?'0':'')+n;}; return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
@@ -5299,7 +5331,7 @@
     var debtRows=debtors.slice(0,12).map(function(r){
       return '<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)">'+
         '<span><b>'+esc(r.model||'')+'</b>'+(r.renter?' · '+esc(r.renter):'')+'</span>'+
-        '<span style="color:var(--red);white-space:nowrap;font-weight:600">'+esc(r.debt||'')+' сом</span></div>';
+        '<span style="color:var(--red);white-space:nowrap;font-weight:600">'+esc(r.debt||'')+' '+MUNIT()+'</span></div>';
     }).join('');
     var att='';
     if(due.length||debtors.length){
@@ -5343,7 +5375,7 @@
     var sold=all.filter(carIsSold);
     var head=['ID','Модель','Госномер','Цена/сутки','Залог','Стоимость','Статус',''];
     var own=rentIsOwner();
-    var note=own?'🚗 Автопарк — '+active.length+' машин. Цена/сутки, залог и стоимость покупки в сомах. ➕ добавить · ✏️ изменить · 💰 продать (в архив) · 🗑 удалить.'
+    var note=own?'🚗 Автопарк — '+active.length+' машин. Цена/сутки, залог и стоимость покупки в '+MUNIT()+'. ➕ добавить · ✏️ изменить · 💰 продать (в архив) · 🗑 удалить.'
                 :'🚗 Автопарк — '+active.length+' машин. 🔒 Изменять машины может только владелец — вам доступен просмотр.';
     var cnt=function(w){ return active.filter(function(c){ return (c.status||'').toLowerCase().indexOf(w)>=0; }).length; };
     var park='<div class="card" style="margin-bottom:14px"><h3>🚗 Парк</h3><div class="kpis" style="grid-template-columns:repeat(4,1fr);margin:0">'+
@@ -5390,7 +5422,7 @@
       '<td '+RT_TD+' style="text-align:right"><b>'+fmt(totSum)+'</b></td><td '+RT_TD+'></td>'+
       '<td '+RT_TD+' style="text-align:right;color:'+(totDebt>0?'var(--red)':'var(--muted)')+'"><b>'+fmt(totDebt)+'</b></td><td '+RT_TD+'></td><td '+RT_TD+'></td></tr></tfoot>';
     var search='<input type="text" placeholder="🔎 поиск: модель, арендатор, статус, дата…" value="'+esc(RENT_LF)+'" oninput="rentListFilter(this.value)" style="width:100%;max-width:420px;margin-bottom:12px;padding:9px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:14px">';
-    b.innerHTML=rAddBtn('rental','Аренда')+rentExportBtn('expRentList()')+'<div class="note" style="margin-bottom:12px">🔑 Аренды — всего '+all.length+' (активные сверху по дате сдачи, затем завершённые по дате). 🟡 за день до сдачи · 🟠 в день сдачи · 🔴 просрочка. Суммы в сомах.</div>'+search+
+    b.innerHTML=rAddBtn('rental','Аренда')+rentExportBtn('expRentList()')+'<div class="note" style="margin-bottom:12px">🔑 Аренды — всего '+all.length+' (активные сверху по дате сдачи, затем завершённые по дате). 🟡 за день до сдачи · 🟠 в день сдачи · 🔴 просрочка. Суммы в '+MUNIT()+'.</div>'+search+
       rtable(['Кто добавил','Модель','Арендатор','Начало','Конец','Дней','Сумма','Получено','Долг','Статус',''], rows, foot);
   }
 
@@ -5414,14 +5446,14 @@
       '<td '+RT_TD+' style="text-align:right"><b>'+fmt(tot)+'</b></td><td '+RT_TD+'></td></tr></tfoot>';
     var search='<input type="text" placeholder="🔎 поиск: категория, описание, машина…" value="'+esc(RENT_EF)+'" oninput="rentExpFilter(this.value)" style="width:100%;max-width:420px;margin-bottom:12px;padding:9px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:14px">';
     // расходы по месяцам (видно и сотрудникам)
-    var mr=(rentD().months||[]).map(function(m){ return '<tr><td '+RT_TD+'><b>'+esc(m.month)+'</b></td><td '+RT_TD+' style="text-align:right">'+esc(m.expenses||'0')+' сом</td></tr>'; }).join('');
+    var mr=(rentD().months||[]).map(function(m){ return '<tr><td '+RT_TD+'><b>'+esc(m.month)+'</b></td><td '+RT_TD+' style="text-align:right">'+esc(m.expenses||'0')+' '+MUNIT()+'</td></tr>'; }).join('');
     var byMonth=mr?('<details style="margin-top:14px"><summary style="cursor:pointer;color:var(--muted);font-size:13px">📅 Расходы по месяцам</summary><div style="margin-top:8px">'+rtable(['Месяц','Расходы'], mr)+'</div></details>'):'';
     var perLabel=(rentS().period)||'ИТОГО';
     var topTotal='<div class="card" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;border-color:#e0871e">'+
       '<div><div style="font-size:13px;color:var(--muted)">🧾 Всего расходов за период: <b style="color:var(--text)">'+esc(perLabel)+'</b></div>'+
-      '<div style="font-size:28px;font-weight:700;margin-top:2px;color:#e0871e">'+fmt(tot)+' <span style="font-size:15px;color:var(--muted)">сом</span></div></div>'+
+      '<div style="font-size:28px;font-weight:700;margin-top:2px;color:#e0871e">'+fmt(tot)+' <span style="font-size:15px;color:var(--muted)">'+MUNIT()+'</span></div></div>'+
       '<div style="text-align:right;font-size:13px;color:var(--muted)">записей: <b style="color:var(--text)">'+list.length+'</b></div></div>';
-    b.innerHTML=topTotal+rAddBtn('expense','Расход')+rentExportBtn('expRentExp()')+'<div class="note" style="margin-bottom:12px">🧾 Расходы — показано '+list.length+' из '+all.length+' (по выбранному периоду; новые сверху). Суммы в сомах.</div>'+_rentPerSel(rentS())+search+
+    b.innerHTML=topTotal+rAddBtn('expense','Расход')+rentExportBtn('expRentExp()')+'<div class="note" style="margin-bottom:12px">🧾 Расходы — показано '+list.length+' из '+all.length+' (по выбранному периоду; новые сверху). Суммы в '+MUNIT()+'.</div>'+_rentPerSel(rentS())+search+
       rtable(['Дата','Машина','Категория','Описание','Сумма',''], rows, foot)+byMonth;
   }
 
@@ -5436,7 +5468,7 @@
     }).join('');
     var foot='<tfoot><tr><td '+RT_TD+' style="text-align:right;color:var(--muted)">Итого:</td>'+
       '<td '+RT_TD+' style="text-align:right"><b>'+fmt(tot)+'</b></td><td '+RT_TD+'></td><td '+RT_TD+'></td></tr></tfoot>';
-    b.innerHTML=rAddBtn('handed','Сдано')+'<div class="note" style="margin-bottom:12px">📤 Сдано руководителю — '+all.length+' записей (новые сверху). Суммы в сомах.</div>'+
+    b.innerHTML=rAddBtn('handed','Сдано')+'<div class="note" style="margin-bottom:12px">📤 Сдано руководителю — '+all.length+' записей (новые сверху). Суммы в '+MUNIT()+'.</div>'+
       rtable(['Дата','Сумма','Комментарий',''], rows, foot);
   }
 
@@ -5489,7 +5521,7 @@
       var bars=daily.map(function(x){
         var h=Math.max(3,Math.round((x.pct||0)*1.1));
         var lbl=(x.pct>=55)?(Math.round((x.revenue||0)/1000)+'к'):'';
-        return '<div title="'+esc(x.date+': '+x.revenue_f+' сом')+'" style="display:flex;flex-direction:column;align-items:center;justify-content:flex-end;min-width:24px">'+
+        return '<div title="'+esc(x.date+': '+x.revenue_f+' '+MUNIT())+'" style="display:flex;flex-direction:column;align-items:center;justify-content:flex-end;min-width:24px">'+
           '<div style="font-size:9px;color:var(--muted);height:12px">'+lbl+'</div>'+
           '<div style="width:18px;height:'+h+'px;background:var(--accent);border-radius:4px 4px 0 0"></div>'+
           '<div style="font-size:10px;color:var(--muted);margin-top:4px">'+esc(x.day)+'</div></div>';
@@ -5497,7 +5529,7 @@
       chart='<h3 style="margin:18px 0 6px">📈 Выручка по дням ('+esc(s.period||'')+')</h3>'+
         '<div class="card" style="overflow-x:auto"><div style="display:flex;align-items:flex-end;gap:6px;min-height:150px;padding:6px 2px">'+bars+'</div></div>';
     }
-    b.innerHTML='<div class="note" style="margin-bottom:12px">📊 <b>Анализ</b> — по машинам, ABC, дни недели и выручка по дням. Выбери период ниже. Суммы в сомах.</div>'+
+    b.innerHTML='<div class="note" style="margin-bottom:12px">📊 <b>Анализ</b> — по машинам, ABC, дни недели и выручка по дням. Выбери период ниже. Суммы в '+MUNIT()+'.</div>'+
       _rentPerSel(s)+carTable+abcBlock+wdBlock+chart;
   }
 
@@ -5520,11 +5552,11 @@
     var editor=rentIsOwner()
       ? ('<div class="card" style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-size:13px">🎯 Цель выручки в месяц:</span>'+
          '<input type="number" inputmode="numeric" id="rplan-target" value="'+(rnum(p.target)||'')+'" placeholder="0" style="width:160px;padding:7px 10px;background:var(--panel2);border:1px solid var(--line);border-radius:9px;color:var(--text)">'+
-         '<span style="color:var(--muted)">сом</span>'+
+         '<span style="color:var(--muted)">'+MUNIT()+'</span>'+
          '<button class="btn" style="padding:7px 14px;font-size:13px" onclick="rentSavePlan()">Сохранить</button>'+
          '<span style="font-size:12px;color:var(--muted)">только владелец</span></div>')
       : ('<div class="note" style="margin-bottom:12px">🔒 План задаёт владелец — вам доступен просмотр.</div>');
-    b.innerHTML=editor+'<div class="note" style="margin-bottom:12px">🎯 <b>План выручки</b> — цель <b>'+esc(p.target||'')+'</b> сом/мес. «Факт» — это касса (получено) за месяц.</div>'+
+    b.innerHTML=editor+'<div class="note" style="margin-bottom:12px">🎯 <b>План выручки</b> — цель <b>'+esc(p.target||'')+'</b> '+MUNIT()+'/мес. «Факт» — это касса (получено) за месяц.</div>'+
       ((p.rows&&p.rows.length)?rtable(['Месяц','План','Факт','Выполнено','Прогресс'], tr, foot)
         :'<div class="card"><span style="color:var(--muted)">Пока нет месяцев с данными.</span></div>');
   }
@@ -5685,8 +5717,8 @@
         '<label>Телефон</label><input id="rf-phone" value="'+esc(rec&&rec.phone||'')+'" placeholder="необязательно">'+
         '<div class="row"><div><label>Дата начала *</label><input type="date" id="rf-start" value="'+ruToIso(rec&&rec.start)+'"></div>'+
         '<div><label>Дата конца *</label><input type="date" id="rf-end" value="'+ruToIso(rec&&rec.end)+'"></div></div>'+
-        '<div class="row"><div><label>Цена/сутки, сом *</label><input type="number" inputmode="numeric" id="rf-price" value="'+((rec&&rec.price_raw)||'')+'" placeholder="0"></div>'+
-        '<div><label>Получено, сом</label><input type="number" inputmode="numeric" id="rf-got" value="'+((rec&&rec.got_raw)||'')+'" placeholder="0"></div></div>'+
+        '<div class="row"><div><label>Цена/сутки, '+MUNIT()+' *</label><input type="number" inputmode="numeric" id="rf-price" value="'+((rec&&rec.price_raw)||'')+'" placeholder="0"></div>'+
+        '<div><label>Получено, '+MUNIT()+'</label><input type="number" inputmode="numeric" id="rf-got" value="'+((rec&&rec.got_raw)||'')+'" placeholder="0"></div></div>'+
         '<label>Статус</label><select id="rf-status">'+_selOpts(['Активна','Завершена'],(rec&&rec.status)||'Активна')+'</select>'+
         '<div style="font-size:12px;color:var(--muted);margin-top:8px">Дни и сумма посчитаются сами: дни = конец − начало, сумма = дни × цена, долг = сумма − получено.</div>';
     } else if(type==='expense'){
@@ -5695,19 +5727,19 @@
         '<label>Машина (необязательно)</label><select id="rf-model"><option value="">— не привязано —</option>'+_carOpts(rec&&rec.model)+'</select>'+
         '<label>Категория</label><select id="rf-cat">'+_selOpts(RENT_EXP_CATS,(rec&&rec.cat)||'Прочее')+'</select>'+
         '<label>Описание</label><input id="rf-desc" value="'+esc(rec&&rec.desc||'')+'" placeholder="за что">'+
-        '<label>Сумма, сом *</label><input type="number" inputmode="numeric" id="rf-sum" value="'+((rec&&rec.sum_raw)||'')+'" placeholder="0">';
+        '<label>Сумма, '+MUNIT()+' *</label><input type="number" inputmode="numeric" id="rf-sum" value="'+((rec&&rec.sum_raw)||'')+'" placeholder="0">';
     } else if(type==='handed'){
       html=
         '<label>Дата *</label><input type="date" id="rf-date" value="'+((rec&&rec.date)?ruToIso(rec.date):todayIso())+'">'+
-        '<label>Сумма, сом *</label><input type="number" inputmode="numeric" id="rf-sum" value="'+((rec&&rec.sum_raw)||'')+'" placeholder="0">'+
+        '<label>Сумма, '+MUNIT()+' *</label><input type="number" inputmode="numeric" id="rf-sum" value="'+((rec&&rec.sum_raw)||'')+'" placeholder="0">'+
         '<label>Комментарий (кому / за что)</label><input id="rf-comment" value="'+esc(rec&&rec.comment||'')+'" placeholder="напр. Сдано руководителю">';
     } else if(type==='car'){
       html=
         '<label>Модель *</label><input id="rf-model" value="'+esc(rec&&rec.model||'')+'" placeholder="напр. Kia Seltos">'+
         '<label>Госномер</label><input id="rf-plate" value="'+esc(rec&&rec.plate||'')+'" placeholder="напр. 01 925 AZN">'+
-        '<div class="row"><div><label>Цена/сутки, сом</label><input type="number" inputmode="numeric" id="rf-price" value="'+((rec&&rnum(rec.price))||'')+'" placeholder="0"></div>'+
-        '<div><label>Залог, сом</label><input type="number" inputmode="numeric" id="rf-deposit" value="'+((rec&&rnum(rec.deposit))||'')+'" placeholder="0"></div></div>'+
-        '<label>Стоимость покупки, сом</label><input type="number" inputmode="numeric" id="rf-cost" value="'+((rec&&rnum(rec.cost))||'')+'" placeholder="за сколько купили">'+
+        '<div class="row"><div><label>Цена/сутки, '+MUNIT()+'</label><input type="number" inputmode="numeric" id="rf-price" value="'+((rec&&rnum(rec.price))||'')+'" placeholder="0"></div>'+
+        '<div><label>Залог, '+MUNIT()+'</label><input type="number" inputmode="numeric" id="rf-deposit" value="'+((rec&&rnum(rec.deposit))||'')+'" placeholder="0"></div></div>'+
+        '<label>Стоимость покупки, '+MUNIT()+'</label><input type="number" inputmode="numeric" id="rf-cost" value="'+((rec&&rnum(rec.cost))||'')+'" placeholder="за сколько купили">'+
         '<label>Статус</label><select id="rf-status">'+_selOpts(['Свободна','В аренде','На ремонте','Продана'],(rec&&rec.status)||'Свободна')+'</select>';
     }
     document.getElementById('rentmodal').innerHTML='<h3>'+title+'</h3>'+html+

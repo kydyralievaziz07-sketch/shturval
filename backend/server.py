@@ -614,6 +614,7 @@ def rent_build(period=None, company=None):
         "period_key": (sel or "ИТОГО"),
         "commission_pct": (int(float(d.get("commission_pct"))) if d.get("commission_pct") not in (None, "") else 10),
         "commissions": d.get("commissions") or {},
+        "currency": (d.get("currency") or "сом"),
     }
     # форматируем для показа (а raw — для редактирования формой)
     def fr(r):
@@ -649,7 +650,7 @@ def rent_apply(action, p, company=None, user=None):
     who = user.get("name") or user.get("login") or ""
     now_ms = int(time.time() * 1000)
     # машины и план — только владелец (полный контроль)
-    if action in ("add_car", "edit_car", "del_car", "set_plan", "set_commission") and not is_owner:
+    if action in ("add_car", "edit_car", "del_car", "set_plan", "set_commission", "set_currency") and not is_owner:
         return {"error": "Машины, план и оплату может менять только владелец"}
     def keep(lst, _id):
         return [x for x in lst if x.get("id") != _id]
@@ -720,6 +721,9 @@ def rent_apply(action, p, company=None, user=None):
         d["cars"] = keep(d["cars"], p.get("id"))
     elif action == "set_plan":
         d["plan_target"] = _rnum(p.get("plan_target"))
+    elif action == "set_currency":
+        cur = (str(p.get("currency") or "").strip())[:8] or "сом"
+        d["currency"] = cur
     elif action == "set_commission":
         # общий % по умолчанию + персональные % по логинам
         dp = p.get("default_pct")
