@@ -1249,13 +1249,13 @@ def _igbot_history(account, customer, n=12):
 
 def igbot_find_products(text, limit=15):
     """Поиск реальных товаров в каталоге 1С по словам из сообщения клиента (наличие+цена).
-    Это «синхронизация с Товарами» — бот называет настоящие позиции и цены."""
-    try:
-        goods = get_goods() or []
-    except Exception:
+    Это «синхронизация с Товарами». ВАЖНО: берём только УЖЕ загруженный кэш каталога —
+    НЕ дёргаем 1С во время ответа (иначе ответ клиенту завис бы на тяжёлом каталоге)."""
+    goods = (_goods or {}).get("goods")
+    if not goods:
         return []
     words = [w for w in re.findall(r"[а-яёa-z0-9]+", (text or "").lower()) if len(w) >= 4]
-    if not words or not goods:
+    if not words:
         return []
     stems = set()
     for w in words:
