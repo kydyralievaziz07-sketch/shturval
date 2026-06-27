@@ -348,7 +348,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.70.0<br>«Авто Рент» → Расходы: вверху крупный итог расходов за выбранный период</div>
+      Штурвал v3.71.0<br>«Авто Рент»: фикс загрузки Плана; в Настройках владелец задаёт оклад и % комиссии менеджерам; авто-воронка скрыта в прокате</div>
   </aside>
 
   <!-- MAIN -->
@@ -867,11 +867,23 @@
           <span class="lbl">💱 Показывать в долларах ($) <span id="fxnote" style="font-size:11px;color:var(--muted)"></span></span>
           <label class="switch"><input type="checkbox" id="sw-cur" onchange="setCur(this.checked?'USD':'KGS')"><span class="slider"></span></label>
         </div>
-        <div class="set-row">
+        <div class="set-row" id="set-row-auto">
           <span class="lbl">🤖 Авто-воронка по переписке <span style="font-size:11px;color:var(--muted)">бот сам раскладывает чаты по стадиям</span></span>
           <label class="switch"><input type="checkbox" id="sw-auto" onchange="setAuto(this.checked)"><span class="slider"></span></label>
         </div>
         <div style="margin-top:22px"><button class="btn ghost" onclick="logout()">🚪 Выйти из аккаунта</button></div>
+      </div>
+
+      <!-- Авто Рент: оплата менеджеров (только владелец проката) -->
+      <div class="card" id="set-rentpay" style="display:none">
+        <h3>🚗 Оплата менеджеров (Авто Рент)</h3>
+        <div class="note" style="margin-bottom:10px">Задай оклад сотруднику и процент комиссии с оформленных им аренд. Комиссия начисляется автоматически в зарплату.</div>
+        <div id="set-rentpay-rows"></div>
+        <div class="set-row" style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px">
+          <span class="lbl">📊 Процент по умолчанию (% от аренды) <span style="font-size:11px;color:var(--muted)">если у сотрудника не задан свой</span></span>
+          <input type="number" inputmode="numeric" id="set-comm-default" placeholder="10" style="width:90px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--text)">
+        </div>
+        <div style="margin-top:12px"><button class="btn" onclick="rentPaySave()">💾 Сохранить оплату</button> <span id="set-rentpay-msg" style="font-size:13px;color:var(--muted);margin-left:8px"></span></div>
       </div>
     </section>
 
@@ -1455,7 +1467,55 @@
     const sn=document.getElementById('set-name'); if(sn) sn.textContent=USER.name||'Пользователь';
     const sr=document.getElementById('set-role'); if(sr) sr.textContent=(all?'Владелец':(USER.role||'Сотрудник'))+(USER.department?(' · '+USER.department):'');
     const sl=document.getElementById('set-login'); if(sl) sl.value=getLg()||'';
+    // авто-воронка по переписке — только для кабинетов с CRM/чатами (в прокате прячем)
+    var ra=document.getElementById('set-row-auto');
+    if(ra) ra.style.display=(all||canSee('crm')||canSee('deals')||canSee('chats'))?'':'none';
+    // блок оплаты менеджеров проката — только владельцу кабинета проката
+    var rp=document.getElementById('set-rentpay');
+    if(rp){ var showPay=(typeof rentIsOwner==='function'&&rentIsOwner()&&(canSee('rent')||canSee('rent_dash')||canSee('rent_list'))); rp.style.display=showPay?'':'none'; if(showPay) loadRentPay(); }
     applyAvatar();
+  }
+  // ----- Авто Рент: оплата менеджеров (оклад + % комиссии) в Настройках -----
+  function loadRentPay(){
+    var box=document.getElementById('set-rentpay-rows'); if(!box) return;
+    box.innerHTML='<div style="color:var(--muted);font-size:13px">Загружаю команду…</div>';
+    // дефолтный % — из данных аренды (если уже загружены), иначе подтянем
+    var def=(RENT&&RENT.summary&&RENT.summary.commission_pct);
+    var dEl=document.getElementById('set-comm-default'); if(dEl&&def!=null) dEl.value=def;
+    apiFetch('/api/payroll',{},ONEC_BASE).then(function(r){return r.json();}).then(function(d){
+      var list=(d&&d.all)||[];
+      if(!list.length){ box.innerHTML='<div style="color:var(--muted);font-size:13px">Сотрудников пока нет.</div>'; return; }
+      box.innerHTML=list.map(function(v){
+        var lg=esc(v.login||'');
+        return '<div class="set-row" style="align-items:flex-start;flex-wrap:wrap;gap:8px" data-login="'+lg+'">'+
+          '<span class="lbl" style="min-width:150px"><b>'+esc(v.name||v.login||'')+'</b>'+(v.department?'<div style="font-size:11px;color:var(--muted)">'+esc(v.department)+'</div>':'')+'</span>'+
+          '<span style="display:flex;align-items:center;gap:6px"><span style="font-size:12px;color:var(--muted)">оклад</span>'+
+          '<input type="number" inputmode="numeric" class="rp-sal" value="'+(rnum(v.salary_month)||'')+'" placeholder="0" style="width:110px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--text)"></span>'+
+          '<span style="display:flex;align-items:center;gap:6px"><span style="font-size:12px;color:var(--muted)">% от авто</span>'+
+          '<input type="number" inputmode="numeric" class="rp-pct" value="'+(v.commission_pct!=null?v.commission_pct:'')+'" placeholder="10" style="width:70px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--text)"></span>'+
+          '</div>';
+      }).join('');
+    }).catch(function(e){ box.innerHTML='<div style="color:var(--red);font-size:13px">Не удалось загрузить: '+esc(e.message)+'</div>'; });
+  }
+  function rentPaySave(){
+    var msg=document.getElementById('set-rentpay-msg'); if(msg){ msg.style.color='var(--muted)'; msg.textContent='Сохраняю…'; }
+    var rows=[].slice.call(document.querySelectorAll('#set-rentpay-rows .set-row'));
+    var defPct=(document.getElementById('set-comm-default')||{}).value||'';
+    var map={}; var salTasks=[];
+    rows.forEach(function(row){
+      var lg=row.getAttribute('data-login'); if(!lg) return;
+      var sal=(row.querySelector('.rp-sal')||{}).value||'0';
+      var pct=(row.querySelector('.rp-pct')||{}).value;
+      if(pct!=='' && pct!=null) map[lg]=pct;
+      salTasks.push(apiFetch('/api/team',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update',login:lg,salary_month:sal})},ONEC_BASE).then(function(r){return r.json();}));
+    });
+    Promise.all(salTasks).then(function(){
+      return apiFetch('/api/rent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_commission',default_pct:defPct,map:map})},ONEC_BASE).then(function(r){return r.json();});
+    }).then(function(d){
+      if(d&&d.error) throw new Error(d.error);
+      if(d&&d.data) RENT=d;   // set_commission возвращает свежий build
+      if(msg){ msg.style.color='var(--green)'; msg.textContent='✅ Сохранено'; }
+    }).catch(function(e){ if(msg){ msg.style.color='var(--red)'; msg.textContent='Ошибка: '+e.message; } });
   }
   // ---- Аватар (хранится локально на устройстве: смайлик или фото) ----
   function avatarKey(){ return 'shturval_avatar_'+(getLg()||'me'); }
@@ -5358,7 +5418,7 @@
       '<td '+RT_TD+' style="text-align:right"><b>'+esc(p.total_pct||'')+'</b></td><td '+RT_TD+'></td></tr></tfoot>';
     var editor=rentIsOwner()
       ? ('<div class="card" style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-size:13px">🎯 Цель выручки в месяц:</span>'+
-         '<input type="number" inputmode="numeric" id="rplan-target" value="'+esc(rnum(p.target)||'')+'" placeholder="0" style="width:160px;padding:7px 10px;background:var(--panel2);border:1px solid var(--line);border-radius:9px;color:var(--text)">'+
+         '<input type="number" inputmode="numeric" id="rplan-target" value="'+(rnum(p.target)||'')+'" placeholder="0" style="width:160px;padding:7px 10px;background:var(--panel2);border:1px solid var(--line);border-radius:9px;color:var(--text)">'+
          '<span style="color:var(--muted)">сом</span>'+
          '<button class="btn" style="padding:7px 14px;font-size:13px" onclick="rentSavePlan()">Сохранить</button>'+
          '<span style="font-size:12px;color:var(--muted)">только владелец</span></div>')

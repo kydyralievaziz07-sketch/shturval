@@ -607,6 +607,8 @@ def rent_build(period=None, company=None):
         "avg_days": str(avg_days).replace(".", ","), "margin": (str(round(profit / revenue * 100)) + "%") if revenue else "—",
         "rentals_total": str(cnt), "rentals_active": str(active), "plan": "", "period": per_label,
         "period_key": (sel or "ИТОГО"),
+        "commission_pct": (int(float(d.get("commission_pct"))) if d.get("commission_pct") not in (None, "") else 10),
+        "commissions": d.get("commissions") or {},
     }
     # форматируем для показа (а raw — для редактирования формой)
     def fr(r):
@@ -642,8 +644,8 @@ def rent_apply(action, p, company=None, user=None):
     who = user.get("name") or user.get("login") or ""
     now_ms = int(time.time() * 1000)
     # машины и план — только владелец (полный контроль)
-    if action in ("add_car", "edit_car", "del_car", "set_plan") and not is_owner:
-        return {"error": "Машины и план может менять только владелец"}
+    if action in ("add_car", "edit_car", "del_car", "set_plan", "set_commission") and not is_owner:
+        return {"error": "Машины, план и оплату может менять только владелец"}
     def keep(lst, _id):
         return [x for x in lst if x.get("id") != _id]
     def find(lst, _id):
@@ -713,6 +715,15 @@ def rent_apply(action, p, company=None, user=None):
         d["cars"] = keep(d["cars"], p.get("id"))
     elif action == "set_plan":
         d["plan_target"] = _rnum(p.get("plan_target"))
+    elif action == "set_commission":
+        # общий % по умолчанию + персональные % по логинам
+        dp = p.get("default_pct")
+        if dp not in (None, ""):
+            d["commission_pct"] = _rnum(dp)
+        comm = d.get("commissions") or {}
+        for lg, pct in (p.get("map") or {}).items():
+            comm[str(lg).lower()] = _rnum(pct)
+        d["commissions"] = comm
     elif action == "import":
         return rent_import(d, p, company, who, now_ms)
     else:
@@ -3057,16 +3068,32 @@ SHIFT_HOURS = 10.5                          # часов в смене (цена
 
 def rent_commissions(company=None, month=None):
     """Комиссия менеджеров проката: % от выручки (got) аренд, которые ОНИ оформили
-    (поле `by`), за месяц. Возвращает {by_имя_или_логин: сумма}. Ставка — поле
-    `commission_pct` в документе (по умолчанию 10%). Месяц = по дате начала аренды."""
+    (поле `by`), за месяц. Процент может быть СВОЙ у каждого (d['commissions'][login])
+    либо общий по умолчанию (d['commission_pct'], дефолт 10%).
+    Возвращает (amount_map, pct_for, default_pct):
+      amount_map[by]  — сумма комиссии (ключ = имя/логин, как в поле by),
+      pct_for[ключ]   — применённый % (по имени и по логину),
+      default_pct     — общий % по умолчанию."""
+    co = company or COMPANY_ID
     try:
         d = rent_doc(company)
     except Exception:
-        return {}, 10
-    pct = d.get("commission_pct")
-    pct = float(pct) if (pct not in (None, "")) else 10.0
+        return {}, {}, 10
+    default_pct = d.get("commission_pct")
+    default_pct = int(float(default_pct)) if (default_pct not in (None, "")) else 10
+    per_login = {str(k).lower(): _rnum(v) for k, v in (d.get("commissions") or {}).items()}
+    # карты имя→логин и имя/логин→%
+    pct_for = {}
+    for v in company_users(co):
+        lg = (v.get("login") or "").strip().lower()
+        nm = (v.get("name") or "").strip()
+        pct = per_login.get(lg, default_pct)
+        if lg:
+            pct_for[lg] = pct
+        if nm:
+            pct_for[nm] = pct
     m = month or _cur_month()
-    out = {}
+    got_map = {}
     for r in d.get("rentals", []):
         who = (r.get("by") or "").strip()
         if not who:
@@ -3075,8 +3102,12 @@ def rent_commissions(company=None, month=None):
         mk = ("%04d-%02d" % (sd.year, sd.month)) if sd else None
         if mk != m:
             continue
-        out[who] = out.get(who, 0) + _rnum(r.get("got"))
-    return {k: int(round(v * pct / 100.0)) for k, v in out.items()}, int(pct)
+        got_map[who] = got_map.get(who, 0) + _rnum(r.get("got"))
+    amount_map = {}
+    for who, got in got_map.items():
+        pct = pct_for.get(who, pct_for.get(who.lower(), default_pct))
+        amount_map[who] = int(round(got * pct / 100.0))
+    return amount_map, pct_for, default_pct
 
 def _is_video_dept(dep):
     return "мобилограф" in (dep or "").lower()
@@ -3092,6 +3123,23 @@ def payroll_view(user, rec=None, commission=0, commission_pct=10):
     sal = float(user.get("salary_month") or 0)
     dep = user.get("department", "")
     is_video = _is_video_dept(dep)
+    # --- ПРОКАТ (другая компания, не магазин): оклад фиксированный + комиссия с аренд ---
+    co_u = user.get("company") or COMPANY_ID
+    if co_u != COMPANY_ID:
+        accrued = round(sal)
+        bonus = float(r.get("bonus") or 0); adv = float(r.get("advance") or 0)
+        return {"name": name, "login": user.get("login", ""),
+                "role": user.get("role", ""), "department": dep,
+                "phone": user.get("phone", "") or "", "sections": user.get("sections", []),
+                "salary_month": sal, "daily_rate": float(user.get("daily_rate") or 0),
+                "bonus_month": float(user.get("bonus_month") or 0),
+                "present_days": _present_in_month(days, m), "partial_days": 0,
+                "hours_month": 0, "hours_today": 0, "hours": {}, "hourly_rate": 0, "shift_hours": SHIFT_HOURS,
+                "is_video": False, "video_rate": 0, "videos_month": 0, "videos_today": 0,
+                "accrued": accrued, "bonus": bonus, "advance": adv,
+                "commission": commission, "commission_pct": commission_pct,
+                "to_receive": round(accrued + bonus + commission - adv), "days": days,
+                "marked_today": days.get(today) == "p", "marked_absent_today": days.get(today) == "a"}
     # --- МОБИЛОГРАФЫ: зарплата по числу отснятых видео ---
     if is_video:
         vrate = float(user.get("video_rate") or 0)
@@ -3160,9 +3208,11 @@ def payroll_all(company=None):
                 recs[row.get("name")] = row
         except Exception:
             recs = None                     # не вышло — откат на поштучный режим
-    comm_map, comm_pct = rent_commissions(co)   # комиссия проката за месяц (по полю `by`)
+    comm_map, pct_for, default_pct = rent_commissions(co)   # комиссия проката за месяц (по полю `by`)
     def _comm(v):
         return comm_map.get((v.get("name") or "").strip(), 0) or comm_map.get((v.get("login") or "").strip(), 0)
+    def _cpct(v):
+        return pct_for.get((v.get("name") or "").strip(), pct_for.get((v.get("login") or "").strip(), default_pct))
     seen = set(); out = []
     for v in company_users(co):
         if "all" in v.get("sections", []) or v.get("owner"):  # владельца не показываем
@@ -3172,9 +3222,9 @@ def payroll_all(company=None):
             continue
         seen.add(key)
         if recs is not None:
-            out.append(payroll_view(v, recs.get(key) or {}, _comm(v), comm_pct))   # без обращения к базе
+            out.append(payroll_view(v, recs.get(key) or {}, _comm(v), _cpct(v)))   # без обращения к базе
         else:
-            out.append(payroll_view(v, None, _comm(v), comm_pct))
+            out.append(payroll_view(v, None, _comm(v), _cpct(v)))
     return out
 
 # --- Планы по отделам (продажи/день) ---
@@ -4208,8 +4258,9 @@ class Handler(BaseHTTPRequestHandler):
             r["present_days"] = _present_in_month(days, _cur_month())
             r["last_present"] = today if days.get(today) == "p" else r.get("last_present", "")
             payroll_upsert(r)
-            _cm, _cp = rent_commissions(tu.get("company"))
+            _cm, _pf, _dp = rent_commissions(tu.get("company"))
             _c = _cm.get((tu.get("name") or "").strip(), 0) or _cm.get((tu.get("login") or "").strip(), 0)
+            _cp = _pf.get((tu.get("name") or "").strip(), _pf.get((tu.get("login") or "").strip(), _dp))
             return self._send(200, {"ok": True, "view": payroll_view(tu, r, _c, _cp)})
         if self.path.startswith("/api/deptplan"):
             u = self._user(); secs = u.get("sections", []) if u else []
@@ -4509,8 +4560,9 @@ class Handler(BaseHTTPRequestHandler):
             co = u.get("company") or COMPANY_ID
             if "all" in secs or "hr" in secs:      # владелец и HR-менеджер видят всех СВОЕЙ компании
                 return self._send(200, {"all": payroll_all(co)})
-            _cm, _cp = rent_commissions(co)
+            _cm, _pf, _dp = rent_commissions(co)
             _c = _cm.get((u.get("name") or "").strip(), 0) or _cm.get((u.get("login") or "").strip(), 0)
+            _cp = _pf.get((u.get("name") or "").strip(), _pf.get((u.get("login") or "").strip(), _dp))
             return self._send(200, {"me": payroll_view(u, None, _c, _cp)})
         if self.path.startswith("/api/deptplan"):
             u = self._user(); secs = u.get("sections", []) if u else []
