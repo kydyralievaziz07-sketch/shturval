@@ -348,7 +348,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.68.0<br>«Авто Рент»: в Арендах колонка «Кто добавил» вместо ID; короткие названия доступов; добавлен администратор (логин admin)</div>
+      Штурвал v3.69.0<br>«Авто Рент»: кабинет проката показывает только Авто Рент / Команда / ИИ; владелец кабинета правит машины и план по флагу (без лишних модулей)</div>
   </aside>
 
   <!-- MAIN -->
@@ -1407,7 +1407,12 @@
   // --- пользователь и роли (что ему показывать) ---
   let USER={name:'',sections:['all'],role:'',department:'',plan_day:0};
   function canSee(tab){ return USER.sections.indexOf('all')>=0 || USER.sections.indexOf(tab)>=0; }
-  function isOwner(){ return !!USER.owner || USER.sections.indexOf('all')>=0; }
+  // isOwner = ПОЛНЫЙ доступ ко всем модулям (только аккаунт с разделом 'all', напр. Бизмарт).
+  // Видимость вкладок идёт по разделам, чтобы у проката были ТОЛЬКО Авто Рент/Команда/ИИ.
+  function isOwner(){ return USER.sections.indexOf('all')>=0; }
+  // владелец КОНКРЕТНОГО кабинета (флаг owner) — правит машины/план/импорт в своём разделе,
+  // но НЕ расширяет список видимых модулей.
+  function isCabinetOwner(){ return !!USER.owner || USER.sections.indexOf('all')>=0; }
   function applyUser(d){
     // ВАЖНО: пустой массив [] = «нет доступа к разделам» (только Мой день/Настройки),
     // а НЕ «показать всё». ['all'] ставим только если поле sections вообще не пришло.
@@ -4970,7 +4975,7 @@
   function rentD(){ return (RENT&&RENT.data)||{cars:[],rentals:[],expenses:[],handed:[],months:[]}; }
   function rentS(){ return (RENT&&RENT.summary)||{}; }
   // владелец проката (полный контроль: машины, план, импорт). Менеджеры — только операции.
-  function rentIsOwner(){ return (typeof isOwner==='function') && isOwner(); }
+  function rentIsOwner(){ return (typeof isCabinetOwner==='function') && isCabinetOwner(); }
   function rnum(s){ return parseInt(String(s==null?'':s).replace(/[^\d-]/g,''),10)||0; }
   function rsom(s){ s=(s==null?'':String(s)).trim(); return s?('<b>'+esc(s)+'</b> <span style="color:var(--muted);font-size:12px">сом</span>'):'<span style="color:var(--muted)">—</span>'; }
   function isoToRu(s){ s=(s||'').trim(); var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s); return m?(m[3]+'.'+m[2]+'.'+m[1]):s; }
