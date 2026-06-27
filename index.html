@@ -348,7 +348,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.66.0<br>«Авто Рент»: долги клиентов считаются автоматически по просрочке (дни просрочки × цена в день)</div>
+      Штурвал v3.67.0<br>«Авто Рент»: автор записей (кто сдал/внёс), зарплата +10% комиссии, период день/неделя/произвольный, машины и план — только владелец, выгрузка/загрузка Excel</div>
   </aside>
 
   <!-- MAIN -->
@@ -1385,12 +1385,12 @@
   // --- пользователь и роли (что ему показывать) ---
   let USER={name:'',sections:['all'],role:'',department:'',plan_day:0};
   function canSee(tab){ return USER.sections.indexOf('all')>=0 || USER.sections.indexOf(tab)>=0; }
-  function isOwner(){ return USER.sections.indexOf('all')>=0; }
+  function isOwner(){ return !!USER.owner || USER.sections.indexOf('all')>=0; }
   function applyUser(d){
     // ВАЖНО: пустой массив [] = «нет доступа к разделам» (только Мой день/Настройки),
     // а НЕ «показать всё». ['all'] ставим только если поле sections вообще не пришло.
     USER={name:(d&&d.name)||'', sections:(d&&Array.isArray(d.sections))?d.sections:['all'],
-          role:(d&&d.role)||'', department:(d&&d.department)||'', plan_day:(d&&d.plan_day)||0};
+          role:(d&&d.role)||'', department:(d&&d.department)||'', plan_day:(d&&d.plan_day)||0, owner:!!(d&&d.owner)};
     // СМЕНА АККАУНТА → сбросить кэши данных в памяти, чтобы не показывались чужие (старые) данные
     try{
       var _who=(getLg()||'').toLowerCase()+'|'+((d&&d.name)||'');
@@ -3616,6 +3616,7 @@
     box.innerHTML='<div class="card" style="margin-top:16px"><h3>💼 Зарплата за '+mName+'</h3>'+
       '<div style="font-size:12px;color:var(--muted);margin-bottom:12px">'+subline+'</div>'+
       payBar('💰 Зарплата (накоплено)',v.accrued,v.salary_month,'#39d98a')+
+      (v.commission>0?('<div style="display:flex;justify-content:space-between;font-size:14px;margin:4px 0"><span>🚗 Комиссия с аренд ('+(v.commission_pct||10)+'%)</span><b style="color:#39d98a"><span class="money" data-som="'+v.commission+'">'+fmt(v.commission)+'</span> сом</b></div>'):'')+
       payBar('🎁 Премия',v.bonus,v.bonus_month,'#a78bfa')+
       payBar('💸 Аванс (взято)',v.advance,v.salary_month,'#ffb84d')+
       '<div style="border-top:1px solid var(--line);margin-top:6px;padding-top:12px;display:flex;justify-content:space-between;font-size:15px"><span>К выплате сейчас:</span><b><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span> сом</b></div>'+
@@ -4878,6 +4879,8 @@
   function rentResetCache(){ RENT=null; RENT_ERR=''; RENT_PERIOD='ИТОГО'; RENT_CUR='dash'; RENT_LF=''; RENT_EF=''; RENT_SOLD_OPEN=false; }
   function rentD(){ return (RENT&&RENT.data)||{cars:[],rentals:[],expenses:[],handed:[],months:[]}; }
   function rentS(){ return (RENT&&RENT.summary)||{}; }
+  // владелец проката (полный контроль: машины, план, импорт). Менеджеры — только операции.
+  function rentIsOwner(){ return (typeof isOwner==='function') && isOwner(); }
   function rnum(s){ return parseInt(String(s==null?'':s).replace(/[^\d-]/g,''),10)||0; }
   function rsom(s){ s=(s==null?'':String(s)).trim(); return s?('<b>'+esc(s)+'</b> <span style="color:var(--muted);font-size:12px">сом</span>'):'<span style="color:var(--muted)">—</span>'; }
   function isoToRu(s){ s=(s||'').trim(); var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s); return m?(m[3]+'.'+m[2]+'.'+m[1]):s; }
@@ -4956,20 +4959,55 @@
     rentPost('del_'+type,{id:id}).catch(function(e){ alert('Не удалось удалить: '+e.message); });
   }
 
-  // выбор периода на дашборде (ИТОГО + месяцы)
+  // выбор периода: пресеты (сегодня/неделя/месяц/итого) + месяцы + произвольный диапазон
+  function _isoToday(){ var t=new Date(); return t.getFullYear()+'-'+('0'+(t.getMonth()+1)).slice(-2)+'-'+('0'+t.getDate()).slice(-2); }
+  function _isoAgo(n){ var t=new Date(); t.setDate(t.getDate()-n); return t.getFullYear()+'-'+('0'+(t.getMonth()+1)).slice(-2)+'-'+('0'+t.getDate()).slice(-2); }
+  // попадает ли дата (дд.мм.гггг) в выбранный период RENT_PERIOD — для фильтра списков на фронте
+  function rentInPeriod(dateRu){
+    var p=RENT_PERIOD; if(!p||p==='ИТОГО') return true;
+    var d=ruToDate(dateRu); if(!d) return false;
+    if(p.indexOf(':')>=0){ var pp=p.split(':'); var lo=pp[0]?new Date(pp[0]):null, hi=pp[1]?new Date(pp[1]):null; if(hi)hi.setHours(23,59,59,999); return (!lo||d>=lo)&&(!hi||d<=hi); }
+    return (d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2))===p;
+  }
   function _rentPerSel(s){
     var ps=(RENT&&RENT.periods)||[{key:'ИТОГО',label:'ИТОГО'}];
     var cur=(s&&s.period_key)||RENT_PERIOD;
-    return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">'+
+    var isRange=(cur.indexOf(':')>=0);
+    var rf='',rt='';
+    if(isRange){ var pp=cur.split(':'); rf=pp[0]; rt=pp[1]; }
+    var btn=function(key,label){ return '<button class="btn '+((cur===key)?'':'ghost')+'" style="padding:6px 11px;font-size:13px" onclick="rentSetPeriod(\''+key+'\')">'+label+'</button>'; };
+    var today=_isoToday();
+    return '<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;flex-wrap:wrap">'+
       '<span style="font-size:13px;color:var(--muted)">📅 Период:</span>'+
+      btn('ИТОГО','Всё')+
+      btn(today+':'+today,'Сегодня')+
+      btn(_isoAgo(6)+':'+today,'7 дней')+
+      btn(_isoAgo(29)+':'+today,'30 дней')+
       '<select onchange="rentSetPeriod(this.value)" style="padding:7px 11px;background:var(--panel2);border:1px solid var(--line);border-radius:9px;color:var(--text);font-size:14px">'+
-      ps.map(function(p){ return '<option value="'+esc(p.key)+'"'+((p.key===cur)?' selected':'')+'>'+esc(p.label)+'</option>'; }).join('')+
-      '</select></div>';
+      '<option value="">— месяц —</option>'+
+      ps.filter(function(p){return p.key!=='ИТОГО';}).map(function(p){ return '<option value="'+esc(p.key)+'"'+((p.key===cur)?' selected':'')+'>'+esc(p.label)+'</option>'; }).join('')+
+      '</select>'+
+      '</div>'+
+      '<div style="display:flex;align-items:center;gap:7px;margin-bottom:14px;flex-wrap:wrap">'+
+      '<span style="font-size:13px;color:var(--muted)">📆 Свой период:</span>'+
+      '<input type="date" id="rper-from" value="'+rf+'" style="padding:6px 9px;background:var(--panel2);border:1px solid var(--line);border-radius:9px;color:var(--text);font-size:13px">'+
+      '<span style="color:var(--muted)">—</span>'+
+      '<input type="date" id="rper-to" value="'+rt+'" style="padding:6px 9px;background:var(--panel2);border:1px solid var(--line);border-radius:9px;color:var(--text);font-size:13px">'+
+      '<button class="btn ghost" style="padding:6px 12px;font-size:13px" onclick="rentSetRange()">Показать</button>'+
+      (isRange?('<span style="font-size:12px;color:var(--accent)">показан период '+esc(s&&s.period||'')+'</span>'):'')+
+      '</div>';
   }
   function rentSetPeriod(p){
+    if(p==null||p==='') return;
     RENT_PERIOD=p||'ИТОГО';
-    var el=document.getElementById('rent-dash'); if(el) el.innerHTML='<div class="card"><span style="color:var(--muted)">⏳ Считаю за период…</span></div>';
+    var el=document.getElementById(RENT_CONT[RENT_CUR]); if(el) el.innerHTML='<div class="card"><span style="color:var(--muted)">⏳ Считаю за период…</span></div>';
     rentLoad();
+  }
+  function rentSetRange(){
+    var f=(document.getElementById('rper-from')||{}).value||'';
+    var t=(document.getElementById('rper-to')||{}).value||'';
+    if(!f&&!t){ alert('Выберите хотя бы одну дату.'); return; }
+    rentSetPeriod((f||t)+':'+(t||f));
   }
   // ---------- ДАШБОРД ----------
   function renderRentDash(){
@@ -5017,7 +5055,7 @@
         (debtors.length?('<div style="margin-top:10px;font-size:13px;color:var(--muted)">Должники ('+debtors.length+'):</div>'+debtRows):'')+
         '</div>';
     }
-    b.innerHTML=note+_rentPerSel(s)+row1+row2+att+park+eff+months;
+    b.innerHTML=note+rentExcelToolbar()+_rentPerSel(s)+row1+row2+att+park+eff+months;
     if(typeof renderMoney==='function') renderMoney();
   }
 
@@ -5029,7 +5067,9 @@
     rentPost('edit_car',{id:id,status:'Продана'}).catch(function(e){ alert('Не получилось: '+e.message); }); }
   function rentRestoreCar(id){ rentPost('edit_car',{id:id,status:'Свободна'}).then(function(){ RENT_SOLD_OPEN=true; }).catch(function(e){ alert('Не получилось: '+e.message); }); }
   function _carRow(c,archived){
-    var acts=archived
+    var acts;
+    if(!rentIsOwner()){ acts='<td '+RT_TD+' style="text-align:right;color:var(--muted);font-size:12px">🔒</td>'; }
+    else acts=archived
       ? ('<td '+RT_TD+' style="white-space:nowrap;text-align:right">'+
          '<button class="btn ghost" title="Вернуть в парк" style="padding:3px 8px;font-size:13px;color:var(--green)" onclick="rentRestoreCar(\''+c.id+'\')">↩︎ Вернуть</button> '+
          '<button class="btn ghost" title="Удалить навсегда" style="padding:3px 8px;font-size:13px;color:var(--red)" onclick="rentDel(\'car\',\''+c.id+'\')">🗑</button></td>')
@@ -5049,7 +5089,10 @@
     var active=all.filter(function(c){ return !carIsSold(c); });
     var sold=all.filter(carIsSold);
     var head=['ID','Модель','Госномер','Цена/сутки','Залог','Стоимость','Статус',''];
-    var main=rAddBtn('car','Машина')+'<div class="note" style="margin-bottom:12px">🚗 Автопарк — '+active.length+' машин. Цена/сутки, залог и стоимость покупки в сомах. ➕ добавить · ✏️ изменить · 💰 продать (в архив) · 🗑 удалить.</div>'+
+    var own=rentIsOwner();
+    var note=own?'🚗 Автопарк — '+active.length+' машин. Цена/сутки, залог и стоимость покупки в сомах. ➕ добавить · ✏️ изменить · 💰 продать (в архив) · 🗑 удалить.'
+                :'🚗 Автопарк — '+active.length+' машин. 🔒 Изменять машины может только владелец — вам доступен просмотр.';
+    var main=(own?rAddBtn('car','Машина'):'')+'<div class="note" style="margin-bottom:12px">'+note+'</div>'+
       rtable(head, active.map(function(c){ return _carRow(c,false); }).join(''));
     var arch='';
     if(sold.length){
@@ -5078,8 +5121,9 @@
       totSum+=rnum(r.sum); totDebt+=rnum(r.debt); var debt=rnum(r.debt);
       var u=rentUrg(r), trst=u?(' style="background:'+u.bg+'"'):'';
       var endCell=u?('<span style="color:'+u.col+';font-weight:600">'+esc(r.end||'')+'</span><div style="font-size:11px;color:'+u.col+'">'+u.tag+'</div>'):esc(r.end||'');
+      var byline=r.by?('<div style="font-size:11px;color:var(--muted)">🧑‍💼 сдал: '+esc(r.by)+(r.edit_by&&r.edit_by!==r.by?(' · правил: '+esc(r.edit_by)):'')+'</div>'):(r.edit_by?('<div style="font-size:11px;color:var(--muted)">✏️ правил: '+esc(r.edit_by)+'</div>'):'');
       return '<tr'+trst+'><td '+RT_TD+' style="color:var(--muted)">'+esc(r.id||'')+'</td><td '+RT_TD+'><b>'+esc(r.model||'')+'</b></td>'+
-        '<td '+RT_TD+'>'+(r.renter?esc(r.renter):'<span style="color:var(--muted)">—</span>')+'</td>'+
+        '<td '+RT_TD+'>'+(r.renter?esc(r.renter):'<span style="color:var(--muted)">—</span>')+byline+'</td>'+
         '<td '+RT_TD+' style="white-space:nowrap">'+esc(r.start||'')+'</td><td '+RT_TD+' style="white-space:nowrap">'+endCell+'</td>'+
         '<td '+RT_TD+' style="text-align:center">'+esc(r.days||'')+'</td><td '+RT_TD+' style="text-align:right">'+esc(r.sum||'')+'</td>'+
         '<td '+RT_TD+' style="text-align:right">'+esc(r.got||'')+'</td>'+
@@ -5100,20 +5144,24 @@
   function renderRentExp(){
     var b=document.getElementById('rent-exp'); if(!b) return;
     var all=rentD().expenses||[];
-    var list=all.filter(function(e){ return !RENT_EF || ((e.cat||'')+' '+(e.desc||'')+' '+(e.model||'')+' '+(e.date||'')).toLowerCase().indexOf(RENT_EF)>=0; });
+    var list=all.filter(function(e){ return rentInPeriod(e.date) && (!RENT_EF || ((e.cat||'')+' '+(e.desc||'')+' '+(e.model||'')+' '+(e.date||'')).toLowerCase().indexOf(RENT_EF)>=0); });
     var tot=0;
     var rows=list.map(function(e){
       tot+=rnum(e.sum);
+      var byline=e.by?('<div style="font-size:11px;color:var(--muted)">внёс: '+esc(e.by)+(e.edit_by&&e.edit_by!==e.by?(' · правил: '+esc(e.edit_by)):'')+'</div>'):'';
       return '<tr><td '+RT_TD+' style="white-space:nowrap">'+esc(e.date||'')+'</td>'+
         '<td '+RT_TD+'>'+(e.model?esc(e.model):'<span style="color:var(--muted)">—</span>')+'</td>'+
-        '<td '+RT_TD+'>'+esc(e.cat||'')+'</td><td '+RT_TD+'>'+esc(e.desc||'')+'</td>'+
+        '<td '+RT_TD+'>'+esc(e.cat||'')+'</td><td '+RT_TD+'>'+esc(e.desc||'')+byline+'</td>'+
         '<td '+RT_TD+' style="text-align:right">'+esc(e.sum||'')+'</td>'+rActs('expense',e.id)+'</tr>';
     }).join('');
     var foot='<tfoot><tr><td '+RT_TD+' colspan="4" style="text-align:right;color:var(--muted)">Итого ('+list.length+'):</td>'+
       '<td '+RT_TD+' style="text-align:right"><b>'+fmt(tot)+'</b></td><td '+RT_TD+'></td></tr></tfoot>';
     var search='<input type="text" placeholder="🔎 поиск: категория, описание, машина…" value="'+esc(RENT_EF)+'" oninput="rentExpFilter(this.value)" style="width:100%;max-width:420px;margin-bottom:12px;padding:9px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:14px">';
-    b.innerHTML=rAddBtn('expense','Расход')+rentExportBtn('expRentExp()')+'<div class="note" style="margin-bottom:12px">🧾 Расходы — всего '+all.length+' (новые сверху). Суммы в сомах.</div>'+search+
-      rtable(['Дата','Машина','Категория','Описание','Сумма',''], rows, foot);
+    // расходы по месяцам (видно и сотрудникам)
+    var mr=(rentD().months||[]).map(function(m){ return '<tr><td '+RT_TD+'><b>'+esc(m.month)+'</b></td><td '+RT_TD+' style="text-align:right">'+esc(m.expenses||'0')+' сом</td></tr>'; }).join('');
+    var byMonth=mr?('<details style="margin-top:14px"><summary style="cursor:pointer;color:var(--muted);font-size:13px">📅 Расходы по месяцам</summary><div style="margin-top:8px">'+rtable(['Месяц','Расходы'], mr)+'</div></details>'):'';
+    b.innerHTML=rAddBtn('expense','Расход')+rentExportBtn('expRentExp()')+'<div class="note" style="margin-bottom:12px">🧾 Расходы — показано '+list.length+' из '+all.length+' (по выбранному периоду; новые сверху). Суммы в сомах.</div>'+_rentPerSel(rentS())+search+
+      rtable(['Дата','Машина','Категория','Описание','Сумма',''], rows, foot)+byMonth;
   }
 
   // ---------- СДАНО ----------
@@ -5208,9 +5256,20 @@
     var foot='<tfoot><tr><td '+RT_TD+'><b>ИТОГО</b></td><td '+RT_TD+' style="text-align:right"><b>'+esc(p.total_plan||'')+'</b></td>'+
       '<td '+RT_TD+' style="text-align:right"><b>'+esc(p.total_fact||'')+'</b></td>'+
       '<td '+RT_TD+' style="text-align:right"><b>'+esc(p.total_pct||'')+'</b></td><td '+RT_TD+'></td></tr></tfoot>';
-    b.innerHTML='<div class="note" style="margin-bottom:12px">🎯 <b>План выручки</b> — цель <b>'+esc(p.target||'')+'</b> сом/мес. «Факт» — это касса (получено) за месяц.</div>'+
+    var editor=rentIsOwner()
+      ? ('<div class="card" style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-size:13px">🎯 Цель выручки в месяц:</span>'+
+         '<input type="number" inputmode="numeric" id="rplan-target" value="'+esc(rnum(p.target)||'')+'" placeholder="0" style="width:160px;padding:7px 10px;background:var(--panel2);border:1px solid var(--line);border-radius:9px;color:var(--text)">'+
+         '<span style="color:var(--muted)">сом</span>'+
+         '<button class="btn" style="padding:7px 14px;font-size:13px" onclick="rentSavePlan()">Сохранить</button>'+
+         '<span style="font-size:12px;color:var(--muted)">только владелец</span></div>')
+      : ('<div class="note" style="margin-bottom:12px">🔒 План задаёт владелец — вам доступен просмотр.</div>');
+    b.innerHTML=editor+'<div class="note" style="margin-bottom:12px">🎯 <b>План выручки</b> — цель <b>'+esc(p.target||'')+'</b> сом/мес. «Факт» — это касса (получено) за месяц.</div>'+
       ((p.rows&&p.rows.length)?rtable(['Месяц','План','Факт','Выполнено','Прогресс'], tr, foot)
         :'<div class="card"><span style="color:var(--muted)">Пока нет месяцев с данными.</span></div>');
+  }
+  function rentSavePlan(){
+    var v=(document.getElementById('rplan-target')||{}).value||'0';
+    rentPost('set_plan',{plan_target:v}).catch(function(e){ alert('Не удалось сохранить план: '+e.message); });
   }
 
   // ---------- ЭКСПОРТ В EXCEL (CSV) ----------
@@ -5229,6 +5288,73 @@
       L.map(function(e){ return [e.date,e.model,e.cat,e.desc,rnum(e.sum)]; })); }
   function expRentClients(){ var L=rentD().clients||[]; rentCSV('Клиенты.csv',['Клиент','Телефон','Аренд','Выручка','Долг','Последняя','Машины'],
       L.map(function(c){ return [c.name,c.phone,c.count,rnum(c.revenue),rnum(c.debt),c.last,c.cars]; })); }
+
+  // ---------- ПОЛНЫЙ ЭКСПОРТ/ИМПОРТ В EXCEL (.xlsx, 4 листа) ----------
+  var _XLSX_LOADING=false,_XLSX_CBS=[];
+  function rentLoadXLSX(cb){
+    if(window.XLSX){ cb(); return; }
+    _XLSX_CBS.push(cb);
+    if(_XLSX_LOADING) return; _XLSX_LOADING=true;
+    var sc=document.createElement('script');
+    sc.src='https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    sc.onload=function(){ var c=_XLSX_CBS; _XLSX_CBS=[]; c.forEach(function(f){f();}); };
+    sc.onerror=function(){ _XLSX_LOADING=false; _XLSX_CBS=[]; alert('Не удалось загрузить модуль Excel (нет интернета?). Можно выгрузить по разделам кнопками «⬇️ Excel» (CSV).'); };
+    document.head.appendChild(sc);
+  }
+  function rentExportXLSX(){
+    rentLoadXLSX(function(){
+      var D=rentD(), J=XLSX.utils.json_to_sheet, A=XLSX.utils.book_append_sheet, wb=XLSX.utils.book_new();
+      A(wb, J((D.cars||[]).map(function(c){ return {ID:c.id,'Модель':c.model,'Госномер':c.plate,'Цена/сутки':rnum(c.price),'Залог':rnum(c.deposit),'Стоимость':rnum(c.cost),'Статус':c.status}; })), 'Машины');
+      A(wb, J((D.rentals||[]).map(function(r){ return {ID:r.id,'Модель':r.model,'Арендатор':r.renter,'Телефон':r.phone,'Начало':r.start,'Конец':r.end,'Цена/сутки':rnum(r.price),'Получено':rnum(r.got),'Статус':r.status,'Кто сдал':r.by}; })), 'Аренды');
+      A(wb, J((D.expenses||[]).map(function(e){ return {ID:e.id,'Дата':e.date,'Машина':e.model,'Категория':e.cat,'Описание':e.desc,'Сумма':rnum(e.sum),'Кто внёс':e.by}; })), 'Расходы');
+      A(wb, J((D.handed||[]).map(function(h){ return {ID:h.id,'Дата':h.date,'Сумма':rnum(h.sum),'Комментарий':h.comment}; })), 'Сдано');
+      XLSX.writeFile(wb, 'Авто-Рент.xlsx');
+    });
+  }
+  var RENT_SHEET_MAP={
+    'Машины':{sec:'cars',cols:{'id':'id','модель':'model','госномер':'plate','цена/сутки':'price','цена':'price','залог':'deposit','стоимость':'cost','статус':'status'}},
+    'Аренды':{sec:'rentals',cols:{'id':'id','модель':'model','арендатор':'renter','телефон':'phone','начало':'start','конец':'end','цена/сутки':'price','цена':'price','получено':'got','статус':'status'}},
+    'Расходы':{sec:'expenses',cols:{'id':'id','дата':'date','машина':'model','категория':'cat','описание':'desc','сумма':'sum'}},
+    'Сдано':{sec:'handed',cols:{'id':'id','дата':'date','сумма':'sum','комментарий':'comment'}}
+  };
+  function rentImportFile(input){
+    var file=input.files&&input.files[0]; if(!file){ return; }
+    if(!rentIsOwner()){ alert('Загрузка из Excel доступна только владельцу.'); input.value=''; return; }
+    rentLoadXLSX(function(){
+      var rd=new FileReader();
+      rd.onload=function(ev){
+        try{
+          var wb=XLSX.read(ev.target.result,{type:'array'});
+          var payload={action:'import',mode:'merge'}, total=0;
+          wb.SheetNames.forEach(function(sn){
+            var key=Object.keys(RENT_SHEET_MAP).filter(function(k){ return sn.toLowerCase().indexOf(k.toLowerCase())>=0; })[0];
+            if(!key) return; var def=RENT_SHEET_MAP[key];
+            var rows=XLSX.utils.sheet_to_json(wb.Sheets[sn],{defval:''});
+            var out=rows.map(function(row){ var rec={}; Object.keys(row).forEach(function(h){ var f=def.cols[String(h).toLowerCase().trim()]; if(f) rec[f]=row[h]; }); return rec; })
+              .filter(function(rec){ return Object.keys(rec).some(function(k){ return k!=='id' && String(rec[k]||'').trim(); }); });
+            if(out.length){ payload[def.sec]=out; total+=out.length; }
+          });
+          if(!total){ alert('В файле не нашлись листы «Машины / Аренды / Расходы / Сдано» с данными.\nСовет: нажмите «⬇️ Выгрузить в Excel», заполните этот файл и загрузите его обратно.'); return; }
+          if(!confirm('Загрузить из файла '+total+' строк?\nСтроки с тем же ID — обновятся, новые — добавятся. Существующие данные НЕ удаляются.')) return;
+          apiFetch('/api/rent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)},ONEC_BASE)
+            .then(function(r){ return r.json(); }).then(function(d){
+              if(d&&d.error) throw new Error(d.error);
+              RENT=d.build||d; rentRenderCur();
+              var rep=d.report||{}; var msg=Object.keys(rep).map(function(k){ return '• '+k+': добавлено '+rep[k].added+', обновлено '+rep[k].updated; }).join('\n');
+              alert('✅ Готово! Данные встали на места.\n'+(msg||''));
+            }).catch(function(e){ alert('Не удалось импортировать: '+e.message); });
+        }catch(e){ alert('Не удалось прочитать файл: '+e.message); }
+      };
+      rd.readAsArrayBuffer(file);
+    });
+    input.value='';
+  }
+  function rentExcelToolbar(){
+    return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">'+
+      '<button class="btn ghost" style="padding:7px 13px;font-size:13px" onclick="rentExportXLSX()">⬇️ Выгрузить в Excel</button>'+
+      (rentIsOwner()?'<label class="btn ghost" style="padding:7px 13px;font-size:13px;cursor:pointer;margin:0">⬆️ Загрузить из Excel<input type="file" accept=".xlsx,.xls,.csv" style="display:none" onchange="rentImportFile(this)"></label>':'')+
+      '</div>';
+  }
 
   // ---------- КЛИЕНТЫ (арендаторы) ----------
   function renderRentClients(){

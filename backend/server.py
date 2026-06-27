@@ -444,13 +444,27 @@ def rent_build(period=None, company=None):
     for k in sorted(months.keys(), reverse=True):
         y, mo = k.split("-")
         periods.append({"key": k, "label": "%s %s" % (RENT_MONTHS_RU[int(mo)], y)})
-    # фильтр по выбранному периоду (ИТОГО = все)
+    # фильтр по выбранному периоду:
+    #   None / 'ИТОГО'           — всё
+    #   'YYYY-MM'                — месяц
+    #   'YYYY-MM-DD:YYYY-MM-DD'  — произвольный диапазон (день/неделя/период)
     sel = period if (period and period != "ИТОГО") else None
+    rng = None
+    if sel and ":" in sel:
+        a, _, b = sel.partition(":")
+        rng = (_rdate(a.strip()), _rdate(b.strip()))
+        if rng[0] and rng[1] and rng[1] < rng[0]:
+            rng = (rng[1], rng[0])
     def inper(datestr):
         if not sel:
             return True
         dt = _rdate(datestr)
-        return bool(dt and ("%04d-%02d" % (dt.year, dt.month)) == sel)
+        if not dt:
+            return False
+        if rng:
+            lo, hi = rng
+            return bool((not lo or dt >= lo) and (not hi or dt <= hi))
+        return ("%04d-%02d" % (dt.year, dt.month)) == sel
     frent = [r for r in rentals if inper(r.get("start"))]
     fexp = [e for e in exps if inper(e.get("date"))]
     fhanded = [h for h in handed if inper(h.get("date"))]
@@ -471,7 +485,11 @@ def rent_build(period=None, company=None):
     avg_days = round(sum(dl) / len(dl), 1) if dl else 0
     scnt = lambda w: sum(1 for c in cars if w in (c.get("status") or "").lower())
     active = sum(1 for r in frent if "заверш" not in (r.get("status") or "").lower() and (r.get("status") or ""))
-    per_label = next((p["label"] for p in periods if p["key"] == (sel or "ИТОГО")), "ИТОГО")
+    if rng:
+        _fl = lambda dt: dt.strftime("%d.%m.%Y") if dt else "…"
+        per_label = "%s — %s" % (_fl(rng[0]), _fl(rng[1])) if rng[0] != rng[1] else _fl(rng[0])
+    else:
+        per_label = next((p["label"] for p in periods if p["key"] == (sel or "ИТОГО")), "ИТОГО")
     # анализ по машинам (за выбранный период): какая машина сколько заработала
     exp_by_model = {}
     for e in fexp:
@@ -590,14 +608,15 @@ def rent_build(period=None, company=None):
                 "sum": _rmoney(r["_sum"]), "got": _rmoney(r["_got"]) if r.get("got") not in (None, "") else "",
                 "debt": _rmoney(r["_debt"]), "status": r.get("status", ""), "note": r.get("note", ""),
                 "overdue": _rmoney(r["_overdue"]) if r["_overdue"] else "", "overdue_days": r["_overdue_days"],
+                "by": r.get("by", ""), "edit_by": r.get("edit_by", ""),
                 "price_raw": _rnum(r.get("price")), "got_raw": _rnum(r.get("got"))}
     def fe(e):
         return {"id": e.get("id", ""), "date": e.get("date", ""), "model": e.get("model", ""),
                 "cat": e.get("cat", ""), "desc": e.get("desc", ""), "sum": _rmoney(_rnum(e.get("sum"))),
-                "sum_raw": _rnum(e.get("sum"))}
+                "by": e.get("by", ""), "edit_by": e.get("edit_by", ""), "sum_raw": _rnum(e.get("sum"))}
     def fh(h):
         return {"id": h.get("id", ""), "date": h.get("date", ""), "sum": _rmoney(_rnum(h.get("sum"))),
-                "comment": h.get("comment", ""), "sum_raw": _rnum(h.get("sum"))}
+                "comment": h.get("comment", ""), "by": h.get("by", ""), "sum_raw": _rnum(h.get("sum"))}
     return {"data": {"cars": cars, "rentals": [fr(r) for r in rentals], "expenses": [fe(e) for e in exps],
                      "handed": [fh(h) for h in handed], "salary": [fh(s) for s in salary],
                      "undercollect": [fh(u) for u in under], "months": months_list,
@@ -606,10 +625,17 @@ def rent_build(period=None, company=None):
                      "clients": clients},
             "summary": summary, "periods": periods, "synced": time.strftime("%d.%m.%Y %H:%M")}
 
-def rent_apply(action, p, company=None):
-    """Изменение данных аренды. Возвращает свежий rent_build()."""
+def rent_apply(action, p, company=None, user=None):
+    """Изменение данных аренды. Возвращает свежий rent_build().
+    Автор записи фиксируется в поле `by`. Машины и план правит только владелец."""
     d = rent_doc(company)
+    user = user or {}
+    is_owner = bool(user.get("owner")) or ("all" in (user.get("sections") or []))
+    who = user.get("name") or user.get("login") or ""
     now_ms = int(time.time() * 1000)
+    # машины и план — только владелец (полный контроль)
+    if action in ("add_car", "edit_car", "del_car", "set_plan") and not is_owner:
+        return {"error": "Машины и план может менять только владелец"}
     def keep(lst, _id):
         return [x for x in lst if x.get("id") != _id]
     def find(lst, _id):
@@ -617,59 +643,119 @@ def rent_apply(action, p, company=None):
             if x.get("id") == _id:
                 return x
         return None
+    def stamp_new(rec):
+        rec["by"] = who; rec["by_ts"] = now_ms
+        return rec
+    def stamp_edit(rec):
+        if rec is not None:
+            rec["edit_by"] = who; rec["edit_ts"] = now_ms
+        return rec
     if action == "add_rental":
-        d["rentals"].append({"id": _rent_newid(d, "RN"), "ts": now_ms,
+        d["rentals"].append(stamp_new({"id": _rent_newid(d, "RN"), "ts": now_ms,
             "model": p.get("model", ""), "renter": p.get("renter", ""), "phone": p.get("phone", ""),
             "start": p.get("start", ""), "end": p.get("end", ""), "price": p.get("price", ""),
-            "got": p.get("got", ""), "status": (p.get("status") or "Активна"), "note": p.get("note", "")})
+            "got": p.get("got", ""), "status": (p.get("status") or "Активна"), "note": p.get("note", "")}))
     elif action == "edit_rental":
         r = find(d["rentals"], p.get("id"))
         if r:
             for f in ("model", "renter", "phone", "start", "end", "price", "got", "status", "note"):
                 if f in p:
                     r[f] = p[f]
+            stamp_edit(r)
     elif action == "del_rental":
         d["rentals"] = keep(d["rentals"], p.get("id"))
     elif action == "add_expense":
-        d["expenses"].append({"id": _rent_newid(d, "EX"), "ts": now_ms,
+        d["expenses"].append(stamp_new({"id": _rent_newid(d, "EX"), "ts": now_ms,
             "date": p.get("date", ""), "model": p.get("model", ""), "cat": p.get("cat", ""),
-            "desc": p.get("desc", ""), "sum": p.get("sum", "")})
+            "desc": p.get("desc", ""), "sum": p.get("sum", "")}))
     elif action == "edit_expense":
         e = find(d["expenses"], p.get("id"))
         if e:
             for f in ("date", "model", "cat", "desc", "sum"):
                 if f in p:
                     e[f] = p[f]
+            stamp_edit(e)
     elif action == "del_expense":
         d["expenses"] = keep(d["expenses"], p.get("id"))
     elif action == "add_handed":
-        d["handed"].append({"id": _rent_newid(d, "HD"), "ts": now_ms,
-            "date": p.get("date", ""), "sum": p.get("sum", ""), "comment": p.get("comment", "")})
+        d["handed"].append(stamp_new({"id": _rent_newid(d, "HD"), "ts": now_ms,
+            "date": p.get("date", ""), "sum": p.get("sum", ""), "comment": p.get("comment", "")}))
     elif action == "edit_handed":
         h = find(d["handed"], p.get("id"))
         if h:
             for f in ("date", "sum", "comment"):
                 if f in p:
                     h[f] = p[f]
+            stamp_edit(h)
     elif action == "del_handed":
         d["handed"] = keep(d["handed"], p.get("id"))
     elif action == "add_car":
-        d["cars"].append({"id": _rent_newid(d, "M"), "ts": now_ms,
+        d["cars"].append(stamp_new({"id": _rent_newid(d, "M"), "ts": now_ms,
             "model": p.get("model", ""), "plate": p.get("plate", ""), "price": p.get("price", ""),
             "deposit": p.get("deposit", ""), "cost": p.get("cost", ""),
-            "status": (p.get("status") or "Свободна"), "note": p.get("note", "")})
+            "status": (p.get("status") or "Свободна"), "note": p.get("note", "")}))
     elif action == "edit_car":
         c = find(d["cars"], p.get("id"))
         if c:
             for f in ("model", "plate", "price", "deposit", "cost", "status", "note"):
                 if f in p:
                     c[f] = p[f]
+            stamp_edit(c)
     elif action == "del_car":
         d["cars"] = keep(d["cars"], p.get("id"))
+    elif action == "set_plan":
+        d["plan_target"] = _rnum(p.get("plan_target"))
+    elif action == "import":
+        return rent_import(d, p, company, who, now_ms)
     else:
         return {"error": "неизвестное действие"}
     rent_save(d, company)
     return rent_build(None, company)
+
+RENT_IMPORT_FIELDS = {
+    "cars": ("M", ["model", "plate", "price", "deposit", "cost", "status", "note"]),
+    "rentals": ("RN", ["model", "renter", "phone", "start", "end", "price", "got", "status", "note"]),
+    "expenses": ("EX", ["date", "model", "cat", "desc", "sum"]),
+    "handed": ("HD", ["date", "sum", "comment"]),
+}
+
+def rent_import(d, p, company, who, now_ms):
+    """Импорт из Excel/CSV. p={cars:[],rentals:[],expenses:[],handed:[],mode}.
+    mode='replace' — заменить раздел целиком; иначе (по умолчанию) — добавить/обновить по id.
+    Возвращает {ok, build, report}. Данные не теряются: пустые разделы не трогаем."""
+    mode = (p.get("mode") or "merge").lower()
+    report = {}
+    for sec, (prefix, fields) in RENT_IMPORT_FIELDS.items():
+        rows = p.get(sec)
+        if not isinstance(rows, list) or not rows:
+            continue
+        cleaned = []
+        for raw in rows:
+            if not isinstance(raw, dict):
+                continue
+            rec = {f: ("" if raw.get(f) is None else str(raw.get(f)).strip()) for f in fields}
+            if not any(rec.values()):
+                continue
+            rec["id"] = (str(raw.get("id")).strip() if raw.get("id") else "") or _rent_newid(d, prefix)
+            rec["ts"] = raw.get("ts") or now_ms
+            rec["by"] = who
+            cleaned.append(rec)
+        if not cleaned:
+            continue
+        if mode == "replace":
+            d[sec] = cleaned
+            report[sec] = {"added": len(cleaned), "updated": 0, "mode": "replace"}
+        else:
+            byid = {x.get("id"): x for x in d.get(sec, [])}
+            added = updated = 0
+            for rec in cleaned:
+                if rec["id"] in byid:
+                    byid[rec["id"]].update(rec); updated += 1
+                else:
+                    d.setdefault(sec, []).append(rec); added += 1
+            report[sec] = {"added": added, "updated": updated, "mode": "merge"}
+    rent_save(d, company)
+    return {"ok": True, "report": report, "build": rent_build(None, company)}
 
 def amo_get(path):
     """GET-запрос к amoCRM с токеном. Возвращает dict (или {} если пусто)."""
@@ -2701,10 +2787,33 @@ def _present_in_month(days, m):
 
 SHIFT_HOURS = 10.5                          # часов в смене (цена часа = ставка/день ÷ это)
 
+def rent_commissions(company=None, month=None):
+    """Комиссия менеджеров проката: % от выручки (got) аренд, которые ОНИ оформили
+    (поле `by`), за месяц. Возвращает {by_имя_или_логин: сумма}. Ставка — поле
+    `commission_pct` в документе (по умолчанию 10%). Месяц = по дате начала аренды."""
+    try:
+        d = rent_doc(company)
+    except Exception:
+        return {}, 10
+    pct = d.get("commission_pct")
+    pct = float(pct) if (pct not in (None, "")) else 10.0
+    m = month or _cur_month()
+    out = {}
+    for r in d.get("rentals", []):
+        who = (r.get("by") or "").strip()
+        if not who:
+            continue
+        sd = _rdate(r.get("start"))
+        mk = ("%04d-%02d" % (sd.year, sd.month)) if sd else None
+        if mk != m:
+            continue
+        out[who] = out.get(who, 0) + _rnum(r.get("got"))
+    return {k: int(round(v * pct / 100.0)) for k, v in out.items()}, int(pct)
+
 def _is_video_dept(dep):
     return "мобилограф" in (dep or "").lower()
 
-def payroll_view(user, rec=None):
+def payroll_view(user, rec=None, commission=0, commission_pct=10):
     name = user.get("name", "")
     key = _pkey(user)                       # зарплата ведётся по логину (уникален)
     r = rec if rec is not None else payroll_rec(key, user.get("company"))
@@ -2733,7 +2842,8 @@ def payroll_view(user, rec=None):
                 "videos": vids,
                 "present_days": 0, "partial_days": 0, "hours_month": 0, "hours_today": 0, "hours": {},
                 "accrued": accrued, "bonus": bonus, "advance": adv,
-                "to_receive": round(accrued + bonus - adv), "days": days,
+                "commission": commission, "commission_pct": commission_pct,
+                "to_receive": round(accrued + bonus + commission - adv), "days": days,
                 "marked_today": False, "marked_absent_today": False}
     rate = float(user.get("daily_rate") or 0)
     if rate <= 0 and sal > 0:
@@ -2764,7 +2874,8 @@ def payroll_view(user, rec=None):
             "hours_month": hours_month, "hours_today": float(hrs.get(today) or 0),
             "hours": hrs,
             "is_video": False, "video_rate": 0, "videos_month": 0, "videos_today": 0,
-            "advance": adv, "to_receive": round(accrued + bonus - adv), "days": days,
+            "commission": commission, "commission_pct": commission_pct,
+            "advance": adv, "to_receive": round(accrued + bonus + commission - adv), "days": days,
             "marked_today": days.get(today) == "p", "marked_absent_today": days.get(today) == "a"}
 
 def payroll_all(company=None):
@@ -2781,6 +2892,9 @@ def payroll_all(company=None):
                 recs[row.get("name")] = row
         except Exception:
             recs = None                     # не вышло — откат на поштучный режим
+    comm_map, comm_pct = rent_commissions(co)   # комиссия проката за месяц (по полю `by`)
+    def _comm(v):
+        return comm_map.get((v.get("name") or "").strip(), 0) or comm_map.get((v.get("login") or "").strip(), 0)
     seen = set(); out = []
     for v in company_users(co):
         if "all" in v.get("sections", []) or v.get("owner"):  # владельца не показываем
@@ -2790,9 +2904,9 @@ def payroll_all(company=None):
             continue
         seen.add(key)
         if recs is not None:
-            out.append(payroll_view(v, recs.get(key) or {}))   # без обращения к базе
+            out.append(payroll_view(v, recs.get(key) or {}, _comm(v), comm_pct))   # без обращения к базе
         else:
-            out.append(payroll_view(v))
+            out.append(payroll_view(v, None, _comm(v), comm_pct))
     return out
 
 # --- Планы по отделам (продажи/день) ---
@@ -3559,8 +3673,9 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 return self._send(400, {"error": "плохой запрос"})
             try:
-                _co = (self._user() or {}).get("company") or COMPANY_ID
-                res = rent_apply(body.get("action"), body, _co)
+                _u = self._user() or {}
+                _co = _u.get("company") or COMPANY_ID
+                res = rent_apply(body.get("action"), body, _co, _u)
             except Exception as e:
                 return self._send(500, {"error": "Не удалось сохранить: %s" % e})
             if isinstance(res, dict) and res.get("error"):
@@ -3785,7 +3900,9 @@ class Handler(BaseHTTPRequestHandler):
             r["present_days"] = _present_in_month(days, _cur_month())
             r["last_present"] = today if days.get(today) == "p" else r.get("last_present", "")
             payroll_upsert(r)
-            return self._send(200, {"ok": True, "view": payroll_view(tu, r)})
+            _cm, _cp = rent_commissions(tu.get("company"))
+            _c = _cm.get((tu.get("name") or "").strip(), 0) or _cm.get((tu.get("login") or "").strip(), 0)
+            return self._send(200, {"ok": True, "view": payroll_view(tu, r, _c, _cp)})
         if self.path.startswith("/api/deptplan"):
             u = self._user(); secs = u.get("sections", []) if u else []
             if not (u and ("all" in secs or "hr" in secs)):   # планы отделов — владелец и HR/Кадры
@@ -4055,7 +4172,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200 if u else 401, {"ok": bool(u),
                 "name": (u or {}).get("name", ""), "sections": (u or {}).get("sections", []),
                 "role": (u or {}).get("role", ""), "department": (u or {}).get("department", ""),
-                "plan_day": (u or {}).get("plan_day", 0)})
+                "owner": bool((u or {}).get("owner")), "plan_day": (u or {}).get("plan_day", 0)})
         # всё остальное под /api/ — нужен вход и доступ к разделу
         if self.path.startswith("/api/"):
             u = self._user()
@@ -4073,7 +4190,9 @@ class Handler(BaseHTTPRequestHandler):
             co = u.get("company") or COMPANY_ID
             if "all" in secs or "hr" in secs:      # владелец и HR-менеджер видят всех СВОЕЙ компании
                 return self._send(200, {"all": payroll_all(co)})
-            return self._send(200, {"me": payroll_view(u)})
+            _cm, _cp = rent_commissions(co)
+            _c = _cm.get((u.get("name") or "").strip(), 0) or _cm.get((u.get("login") or "").strip(), 0)
+            return self._send(200, {"me": payroll_view(u, None, _c, _cp)})
         if self.path.startswith("/api/deptplan"):
             u = self._user(); secs = u.get("sections", []) if u else []
             if not (u and ("all" in secs or "hr" in secs)):   # планы отделов — владелец и HR
