@@ -235,6 +235,10 @@ def _allowed(user, path):
     # дашборд показывает сводку amoCRM → доступ к /api/overview даём и роли "dash", и "crm"
     if path.startswith("/api/overview"):
         return _can(user, "crm") or _can(user, "dash")
+    # Авто Рент: доступ даёт «rent» (весь раздел) ИЛИ любое под-разрешение «rent_*» (отдельные вкладки)
+    if path.startswith("/api/rent"):
+        s = (user or {}).get("sections", [])
+        return ("all" in s) or ("rent" in s) or any(str(x).startswith("rent_") for x in s)
     sec = _section_for(path)
     return (sec is None) or _can(user, sec)
 
@@ -1218,22 +1222,92 @@ IGBOT_DEFAULT_PROMPT = (
     "Не обещай скидок и условий, которых не знаешь. Пиши кратко — 1–3 предложения, без формальностей."
 )
 
+# Правила языка ВСЕГДА добавляются к промпту (нельзя случайно потерять при переписывании правил).
+# Гарантируют грамотный кыргызский (сингармонизм, аффиксы) и живой человеческий тон.
+IGBOT_LANG_RULES = (
+    "\n\n=== ЯЗЫК И ТОН (соблюдай строго) ===\n"
+    "• Отвечай на ЯЗЫКЕ КЛИЕНТА: написал по-русски → отвечай по-русски; по-кыргызски → по-кыргызски; "
+    "вперемешку → как ему удобнее. Никогда не переключай язык сам.\n"
+    "• КЫРГЫЗСКИЙ — пиши ГРАМОТНО, соблюдай сингармонизм (гармонию гласных) в аффиксах:\n"
+    "   — мн. число/падежи подбирай по последней гласной основы: -лар/-лер/-лор/-лөр, -дар/-дер/-дор/-дөр, "
+    "-тар/-тер/-тор/-төр (китеп→китептер, бассейн→бассейндер, баа→баалар, көйнөк→көйнөктөр).\n"
+    "   — «есть/в наличии» = «бар», «нет» = «жок», «цена» = «баасы», «сколько» = «канча», «заказ» = «заказ/буйрутма».\n"
+    "   — вежливое обращение: «Саламатсызбы!», «Кош келиңиз!», «рахмат», на «Сиз».\n"
+    "   — НЕ калькируй с русского дословно, пиши как живой бишкекский продавец-кыргыз.\n"
+    "• Без канцелярита и роботных фраз. Тепло, коротко, по-человечески — как живой консультант в директе.\n"
+    "• Эмодзи — уместно и редко (1, максимум 2 на сообщение), не в каждой строке."
+)
+
+def _igbot_defaults():
+    return {"enabled": False, "prompt": IGBOT_DEFAULT_PROMPT, "model": CFG.get("ANTHROPIC_MODEL"),
+            "handoff_hours": 6, "kb": "", "sources": [], "learn_every_days": 0,
+            "learn_last": 0, "learn_next": 0}
+
 def _igbot_get():
     s = kv_load("igbot_settings") or {}
     return {"enabled": bool(s.get("enabled")), "prompt": s.get("prompt") or IGBOT_DEFAULT_PROMPT,
             "model": s.get("model") or CFG.get("ANTHROPIC_MODEL"),
             "handoff_hours": int(s.get("handoff_hours") or 6),
-            "kb": s.get("kb") or ""}
+            "kb": s.get("kb") or "",
+            "sources": s.get("sources") or [],
+            "learn_every_days": int(s.get("learn_every_days") or 0),
+            "learn_last": int(s.get("learn_last") or 0),
+            "learn_next": int(s.get("learn_next") or 0)}
 
 def _igbot_set(patch):
     cur = _igbot_get()
-    for k in ("enabled", "prompt", "model", "handoff_hours", "kb"):
+    for k in ("enabled", "prompt", "model", "handoff_hours", "kb", "sources",
+              "learn_every_days", "learn_last", "learn_next"):
         if k in patch:
             cur[k] = patch[k]
     cur["enabled"] = bool(cur["enabled"])
     cur["handoff_hours"] = int(_num(cur["handoff_hours"]) or 6)
+    cur["learn_every_days"] = int(_num(cur.get("learn_every_days")) or 0)
+    if not isinstance(cur.get("sources"), list):
+        cur["sources"] = []
     kv_save("igbot_settings", cur)
     return cur
+
+# ===== Журнал ошибок и статистика бота =====
+def _igbot_log_error(stage, msg):
+    """Записать ошибку бота в журнал (последние 40), чтобы показать в пульте."""
+    try:
+        log = kv_load("igbot_errors") or []
+        if not isinstance(log, list):
+            log = []
+        log.insert(0, {"t": int(time.time()), "stage": stage, "msg": (str(msg) or "")[:300]})
+        kv_save("igbot_errors", log[:40])
+    except Exception:
+        pass
+
+def _igbot_bump(field):
+    """Счётчики статистики: replies (ответов бота), handoffs (передач человеку)."""
+    try:
+        st = kv_load("igbot_stats") or {}
+        st[field] = int(st.get(field) or 0) + 1
+        st["last_" + field] = int(time.time())
+        kv_save("igbot_stats", st)
+    except Exception:
+        pass
+
+# Товары для бота: тёплый кэш 1С, иначе — ПОСТОЯННАЯ резервная копия каталога из БД (catalog_v1).
+# Так бот ВСЕГДА знает ассортимент и цены, даже когда 1С недоступна.
+_igbot_goods_cache = {"goods": None, "t": 0.0}
+def _igbot_goods():
+    live = (_goods or {}).get("goods")
+    if live:
+        return live
+    now = time.time()
+    if _igbot_goods_cache["goods"] is not None and now - _igbot_goods_cache["t"] < 600:
+        return _igbot_goods_cache["goods"]
+    try:
+        b = _load_catalog_backup()        # быстрый чтение из БД + распаковка, кэшируем на 10 мин
+    except Exception:
+        b = None
+    g = (b or {}).get("goods") or None
+    _igbot_goods_cache["goods"] = g
+    _igbot_goods_cache["t"] = now
+    return g
 
 def _igbot_history(account, customer, n=12):
     """Последние сообщения диалога с клиентом (по возрастанию времени)."""
@@ -1250,8 +1324,9 @@ def _igbot_history(account, customer, n=12):
 def igbot_find_products(text, limit=15):
     """Поиск реальных товаров в каталоге 1С по словам из сообщения клиента (наличие+цена).
     Это «синхронизация с Товарами». ВАЖНО: берём только УЖЕ загруженный кэш каталога —
-    НЕ дёргаем 1С во время ответа (иначе ответ клиенту завис бы на тяжёлом каталоге)."""
-    goods = (_goods or {}).get("goods")
+    НЕ дёргаем 1С во время ответа (иначе ответ клиенту завис бы на тяжёлом каталоге).
+    Когда 1С лежит — берём товары из ПОСТОЯННОЙ резервной копии в БД (бот всегда знает ассортимент)."""
+    goods = _igbot_goods()
     if not goods:
         return []
     words = [w for w in re.findall(r"[а-яёa-z0-9]+", (text or "").lower()) if len(w) >= 4]
@@ -1296,10 +1371,16 @@ def _igbot_generate(history, settings):
             merged.append(dict(m))
     if not merged or merged[-1]["role"] != "user":
         return None
-    system = settings["prompt"]
+    system = settings["prompt"] + IGBOT_LANG_RULES
     if settings.get("kb"):
         system += ("\n\n=== ЗНАНИЯ ИЗ ПРОШЛЫХ ПЕРЕПИСОК (реальные товары, цены, ответы, политика — "
                    "опирайся на них; если тут есть цена/факт — отвечай уверенно) ===\n" + settings["kb"])
+    # Знания из прикреплённых ссылок (видео/посты Instagram — описания товаров/акций)
+    srcs = [s for s in (settings.get("sources") or []) if (s.get("text") or "").strip()]
+    if srcs:
+        sblock = "\n\n".join("• %s\n%s" % ((s.get("title") or s.get("url") or "пост"),
+                                           (s.get("text") or "").strip()[:1500]) for s in srcs)
+        system += ("\n\n=== ЗНАНИЯ ИЗ ВИДЕО/ПОСТОВ INSTAGRAM (описания товаров и акций — используй их) ===\n" + sblock)
     # ЖИВАЯ СИНХРОНИЗАЦИЯ С ТОВАРАМИ 1С — товары по запросу клиента (наличие + цена)
     try:
         prods = igbot_find_products(merged[-1]["content"])
@@ -1320,7 +1401,13 @@ def _igbot_generate(history, settings):
         with urllib.request.urlopen(req, timeout=40) as r:
             resp = json.loads(r.read().decode("utf-8"))
         return "".join(b.get("text", "") for b in resp.get("content", []) if b.get("type") == "text").strip()
-    except Exception:
+    except urllib.error.HTTPError as e:
+        try: detail = e.read().decode()[:200]
+        except Exception: detail = str(e)
+        _igbot_log_error("Ответ Claude", "HTTP %s: %s" % (e.code, detail))
+        return None
+    except Exception as e:
+        _igbot_log_error("Ответ Claude", str(e))
         return None
 
 _bot_sent = {}   # (customer, text) -> ts: что бот отправлял (чтобы отличить эхо бота от ответа человека)
@@ -1343,23 +1430,29 @@ def igbot_handle(sender, recipient, text):
         if not s["enabled"] or not (CFG.get("ANTHROPIC_API_KEY") and supa_on()):
             return
         hist = _igbot_history(recipient, sender, 40)
-        # передача человеку: если в диалоге есть хоть один ответ ОПЕРАТORA — бот молчит
+        # передача человеку: если в диалоге есть хоть один ответ ОПЕРАТОРА — бот молчит
         for r in hist:
             if r.get("direction") == "out" and (r.get("raw") or {}).get("by") == "human":
+                _igbot_bump("handoffs")
                 return
         reply = _igbot_generate(hist, s)
         if not reply:
             return
         _igbot_mark_sent(sender, reply)
-        ig_send(sender, reply, recipient)
+        try:
+            ig_send(sender, reply, recipient)
+        except Exception as e:
+            _igbot_log_error("Отправка в Instagram", str(e))
+            return
+        _igbot_bump("replies")
         try:
             _supa("POST", "ig_inbox", "",
                   {"company_id": COMPANY_ID, "sender_id": str(recipient), "recipient_id": str(sender),
                    "text": reply, "ts": int(time.time() * 1000), "direction": "out", "raw": {"by": "bot"}})
         except Exception:
             pass
-    except Exception:
-        pass
+    except Exception as e:
+        _igbot_log_error("Обработка сообщения", str(e))
 
 def igbot_learn(limit_msgs=2000):
     """Проанализировать прошлые переписки и собрать БАЗУ ЗНАНИЙ (товары, цены, частые ответы,
@@ -1406,9 +1499,78 @@ def igbot_learn(limit_msgs=2000):
     except Exception as e:
         return {"ok": False, "error": str(e)}
     if not kb:
+        _igbot_log_error("Обучение", "Пустой ответ анализа")
         return {"ok": False, "error": "Пустой ответ анализа"}
-    _igbot_set({"kb": kb})
+    now = int(time.time())
+    s = _igbot_get()
+    nxt = (now + s["learn_every_days"] * 86400) if s.get("learn_every_days") else 0
+    _igbot_set({"kb": kb, "learn_last": now, "learn_next": nxt})
     return {"ok": True, "kb_len": len(kb), "msgs_analyzed": len(lines)}
+
+# ===== Видео/посты Instagram как источник знаний =====
+def _ig_shortcode(url):
+    """Достать shortcode из ссылки вида instagram.com/reel/XXXX/ или /p/XXXX/."""
+    m = re.search(r"instagram\.com/(?:reel|reels|p|tv)/([A-Za-z0-9_-]+)", url or "")
+    return m.group(1) if m else ""
+
+def igbot_fetch_source(url):
+    """По ссылке на наш пост/Reels Instagram вытащить ОПИСАНИЕ (caption) → в базу знаний бота.
+    Бот не «смотрит» видео, но использует текст описания (товары, цены, акции)."""
+    url = (url or "").strip()
+    if not url:
+        return {"ok": False, "error": "Пустая ссылка"}
+    code = _ig_shortcode(url)
+    title, text = "", ""
+    # 1) наш пост в кабинете — берём caption через Graph API (надёжно для своих постов)
+    if code and ads_on():
+        try:
+            iid = ads_ig_id()
+            if iid:
+                d = _ads_req("GET", str(iid) + "/media",
+                             {"fields": "caption,permalink,media_type,timestamp", "limit": 200})
+                for m in (d.get("data") or []):
+                    if code and code in (m.get("permalink") or ""):
+                        text = (m.get("caption") or "").strip()
+                        title = "%s · %s" % (m.get("media_type") or "пост", (m.get("timestamp") or "")[:10])
+                        break
+        except Exception as e:
+            _igbot_log_error("Источник (Graph)", str(e))
+    # 2) запасной путь — публичное oEmbed-описание страницы
+    if not text:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Shturval bot)"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                html = r.read(200000).decode("utf-8", "ignore")
+            m = re.search(r'<meta\s+property="og:description"\s+content="([^"]*)"', html)
+            if m:
+                text = re.sub(r"&quot;", '"', re.sub(r"&#039;", "'", m.group(1))).strip()
+        except Exception as e:
+            _igbot_log_error("Источник (страница)", str(e))
+    if not text:
+        return {"ok": False, "error": "Не удалось получить описание поста. Это ваш пост? Можно вставить текст вручную."}
+    s = _igbot_get()
+    srcs = [x for x in (s.get("sources") or []) if x.get("url") != url]
+    srcs.insert(0, {"url": url, "title": title or "Пост Instagram", "text": text[:2000], "added": int(time.time())})
+    _igbot_set({"sources": srcs[:30]})
+    return {"ok": True, "title": title, "text": text[:400], "count": len(srcs[:30])}
+
+def igbot_source_del(url):
+    s = _igbot_get()
+    srcs = [x for x in (s.get("sources") or []) if x.get("url") != (url or "")]
+    _igbot_set({"sources": srcs})
+    return {"ok": True, "count": len(srcs)}
+
+def _igbot_scheduler():
+    """Фоновый поток: авто-обучение по расписанию (learn_every_days) и подстраховка каталога в БД."""
+    while True:
+        try:
+            s = _igbot_get()
+            now = int(time.time())
+            if s.get("learn_every_days") and s.get("learn_next") and now >= s["learn_next"]:
+                igbot_learn()
+        except Exception:
+            pass
+        time.sleep(900)   # проверяем каждые 15 минут
 
 def _ig_eligible_targets(account=None, max_age_hours=24):
     """Диалоги в пределах 24-часового окна Instagram (можно писать первым)."""
@@ -3371,6 +3533,16 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.loads(self.rfile.read(length) or b"{}")
             except Exception:
                 return self._send(400, {"error": "плохой запрос"})
+            if self.path.startswith("/api/ig/bot/source/del"):
+                return self._send(200, igbot_source_del(body.get("url")))
+            if self.path.startswith("/api/ig/bot/source"):
+                try:
+                    return self._send(200, igbot_fetch_source(body.get("url")))
+                except Exception as e:
+                    return self._send(200, {"ok": False, "error": str(e)})
+            if self.path.startswith("/api/ig/bot/errors/clear"):
+                kv_save("igbot_errors", [])
+                return self._send(200, {"ok": True})
             return self._send(200, {"ok": True, "settings": _igbot_set(body)})
         if self.path.startswith("/api/ig/broadcast"):
             try:
@@ -3975,7 +4147,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/ig/bot"):
             return self._send(200, {"settings": _igbot_get(),
                                     "has_key": bool(CFG.get("ANTHROPIC_API_KEY")),
-                                    "default_prompt": IGBOT_DEFAULT_PROMPT})
+                                    "default_prompt": IGBOT_DEFAULT_PROMPT,
+                                    "stats": kv_load("igbot_stats") or {},
+                                    "errors": kv_load("igbot_errors") or []})
         if self.path.startswith("/api/chats"):
             if CFG.get("CHATPLACE_KEY"):
                 try:
@@ -4015,4 +4189,7 @@ if __name__ == "__main__":
     # фоновый анализ чатов → авто-раскладка по воронке
     if CFG.get("CHATPLACE_KEY"):
         threading.Thread(target=_chat_analyzer, daemon=True).start()
+    # авто-обучение ИИ-бота по расписанию
+    if CFG.get("ANTHROPIC_API_KEY"):
+        threading.Thread(target=_igbot_scheduler, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

@@ -1172,7 +1172,11 @@
   let curModule='crm', curTab='dash';
   function tabVisible(tab){
     if(tab==='set'||tab==='myday') return true;
-    if(tab.indexOf('rent')===0) return isOwner()||canSee('rent');
+    if(tab.indexOf('rent')===0){
+      // «rent» = весь раздел; иначе по под-доступу: rentcars→rent_cars, rentdash→rent_dash и т.п.
+      if(isOwner()||canSee('rent')) return true;
+      return canSee('rent_'+tab.slice(4));
+    }
     if(tab==='hr') return isOwner()||USER.sections.indexOf('hr')>=0;
     if(tab==='ads'||tab==='adsreport'||tab==='adsanalysis') return isOwner()||canSee('ads');
     if(tab==='dash') return isOwner()||canSee('dash')||canSee('crm');
@@ -1294,14 +1298,19 @@
   function _delCk(k){ try{ document.cookie=k+'=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/'; }catch(e){} }
   function _lsGet(k){ try{ return localStorage.getItem(k)||''; }catch(e){ return ''; } }
   function _lsSet(k,v){ try{ localStorage.setItem(k,v||''); }catch(e){} }
-  function storageOK(){ try{ localStorage.setItem('_sturt','1'); var ok=localStorage.getItem('_sturt')==='1'; localStorage.removeItem('_sturt'); return ok||!!_getCk('_x')||(document.cookie.indexOf('_y')>=0)||navigator.cookieEnabled; }catch(e){ return navigator.cookieEnabled; } }
-  function getPw(){ return _lsGet(PW_KEY) || _getCk(PW_KEY) || _mem[PW_KEY] || ''; }
+  // sessionStorage = вход ТОЛЬКО для этой вкладки (демо по ссылке-входу не трогает основной вход в других вкладках)
+  function _ssGet(k){ try{ return sessionStorage.getItem(k)||''; }catch(e){ return ''; } }
+  function _ssSet(k,v){ try{ sessionStorage.setItem(k,v||''); }catch(e){} }
+  function _sessionMode(){ return !!_ssGet(PW_KEY); }   // в этой вкладке отдельный вход (по ссылке-входу)?
+  function getPw(){ if(_sessionMode()) return _ssGet(PW_KEY); return _mem[PW_KEY] || _lsGet(PW_KEY) || _getCk(PW_KEY) || ''; }
   function setPw(p){ _mem[PW_KEY]=p||''; _lsSet(PW_KEY,p); _setCk(PW_KEY,p); }
-  function getLg(){ return _lsGet(LG_KEY) || _getCk(LG_KEY) || _mem[LG_KEY] || ''; }
+  function getLg(){ if(_sessionMode()) return _ssGet(LG_KEY); return _mem[LG_KEY] || _lsGet(LG_KEY) || _getCk(LG_KEY) || ''; }
   function setLg(l){ _mem[LG_KEY]=l||''; _lsSet(LG_KEY,l||''); _setCk(LG_KEY,l||''); }
-  function getCachedUser(){ try{ var s=_lsGet(USER_KEY)||_getCk(USER_KEY)||_mem[USER_KEY]; return s?JSON.parse(s):null; }catch(e){ return null; } }
-  function setCachedUser(d){ var s=JSON.stringify(d); _mem[USER_KEY]=s; _lsSet(USER_KEY,s); _setCk(USER_KEY,s); }
-  function clearPw(){ _mem={}; try{localStorage.removeItem(PW_KEY);localStorage.removeItem(LG_KEY);localStorage.removeItem(USER_KEY);}catch(e){} _delCk(PW_KEY); _delCk(LG_KEY); _delCk(USER_KEY); try{ history.replaceState(null,'',location.pathname); }catch(e){} }
+  function getCachedUser(){ try{ var s=_sessionMode()?_ssGet(USER_KEY):(_mem[USER_KEY]||_lsGet(USER_KEY)||_getCk(USER_KEY)); return s?JSON.parse(s):null; }catch(e){ return null; } }
+  function setCachedUser(d){ var s=JSON.stringify(d); if(_sessionMode()){ _ssSet(USER_KEY,s); return; } _mem[USER_KEY]=s; _lsSet(USER_KEY,s); _setCk(USER_KEY,s); }
+  function clearPw(){ var sess=_sessionMode(); _mem={}; try{sessionStorage.removeItem(PW_KEY);sessionStorage.removeItem(LG_KEY);sessionStorage.removeItem(USER_KEY);}catch(e){}
+    if(!sess){ try{localStorage.removeItem(PW_KEY);localStorage.removeItem(LG_KEY);localStorage.removeItem(USER_KEY);}catch(e){} _delCk(PW_KEY); _delCk(LG_KEY); _delCk(USER_KEY); }
+    try{ history.replaceState(null,'',location.pathname); }catch(e){} }
   // работает ли хранилище браузера (localStorage или cookie)?
   function _storageWorks(){
     try{ localStorage.setItem('_sw','1'); var a=localStorage.getItem('_sw')==='1'; localStorage.removeItem('_sw'); if(a) return true; }catch(e){}
@@ -1486,8 +1495,11 @@
       var _kp=new URLSearchParams(location.search).get('key');
       if(_kp){
         var dec=_kp; try{ dec=decodeURIComponent(escape(atob(_kp))); }catch(e){ dec=_kp; }
-        if(dec.indexOf(':')>0){ var ix=dec.indexOf(':'); setLg(dec.slice(0,ix)); setPw(dec.slice(ix+1)); }
-        else { setLg(''); setPw(dec); }
+        var _lgv='', _pwv=dec;
+        if(dec.indexOf(':')>0){ var ix=dec.indexOf(':'); _lgv=dec.slice(0,ix); _pwv=dec.slice(ix+1); }
+        // вход по ссылке — ТОЛЬКО для этой вкладки (sessionStorage), не трогаем основной вход
+        _ssSet(LG_KEY,_lgv); _ssSet(PW_KEY,_pwv);
+        try{ sessionStorage.removeItem(USER_KEY); }catch(e){}   // профиль перезапросим под этот вход
       }
     }catch(e){}
     const hasCreds=!!getPw(); const cached=getCachedUser();
@@ -1508,9 +1520,11 @@
     else showLogin(true);
   })();
   function logout(){
+    var sess=_sessionMode();
     clearPw();
-    // на общем устройстве — стираем ВСЕ данные приложения, чтобы следующий не увидел чужое
-    try{ Object.keys(localStorage).filter(k=>k.indexOf('shturval_')===0).forEach(k=>localStorage.removeItem(k)); }catch(e){}
+    // на общем устройстве — стираем ВСЕ данные приложения, чтобы следующий не увидел чужое.
+    // НО если это вкладка-демо (вход по ссылке) — не трогаем основной вход/данные в localStorage.
+    if(!sess){ try{ Object.keys(localStorage).filter(k=>k.indexOf('shturval_')===0).forEach(k=>localStorage.removeItem(k)); }catch(e){} }
     try{ CRM={clients:[],deals:[],tasks:[],activity:[]}; _crmCloudReady=false; }catch(e){}
     showLogin(true);
   }
@@ -4322,8 +4336,10 @@
   async function dpSetFact(dep,val){ const v=dpNum(val); if(v===null) return; await dpPost({action:'setfact',department:dep,fact:v}); }
   function renderDeptPlans(){
     const wrap=document.getElementById('hr-plans'); if(!wrap) return;
-    const canEditPlan=isOwner()||((USER.sections||[]).indexOf('hr')>=0);
-    if(!canEditPlan){ wrap.innerHTML=''; return; }    // планы отделов — владелец и HR/Кадры
+    // «Планы по отделам — продажи в день» — только для владельца магазина (Бизмарт).
+    // У прокатных/других компаний этого блока нет (продаж нет).
+    const canEditPlan=isOwner();
+    if(!canEditPlan){ wrap.innerHTML=''; return; }
     if(!DEPT_PLANS.length){ wrap.innerHTML=''; return; }
     const ed=true;
     const inp='padding:5px 8px;width:115px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:13px';
@@ -4358,12 +4374,17 @@
     document.getElementById('emp-depts').innerHTML=[...set].map(d=>'<option value="'+esc(d)+'">').join('');
   }
   const EMP_SECS=[['deals','Сделки и переписка'],['crmdash','CRM рабочий стол'],['prod','Товары'],['sales','Продажи'],['clients','Клиенты'],['analytics','Аналитика'],['fin','Финансы'],['supl','Поставщики'],['hr','Кадры'],['rent','Авто Рент'],['ai','ИИ-помощник'],['dash','Дашборд Магазина']];
+  // под-разделы Авто Рента — чтобы выдавать сотруднику только нужные вкладки
+  const RENT_SUBS=[['rent_dash','🚗 Авто Рент — Дашборд'],['rent_cars','🚗 Авто Рент — Машины'],['rent_list','🚗 Авто Рент — Аренды'],['rent_exp','🚗 Авто Рент — Расходы'],['rent_handed','🚗 Авто Рент — Сдано'],['rent_analysis','🚗 Авто Рент — Анализ'],['rent_plan','🚗 Авто Рент — План']];
   // разделы, доступные ЭТОЙ компании = разделы её владельца (у Бизмарта «all» = все).
   // Чтобы в прокатной компании сотруднику нельзя было выдать Сделки/CRM/Товары и т.п.
   function _companySecs(){
     if(isOwner()) return EMP_SECS;                       // владелец «всё» (Бизмарт) — все разделы
     const allow=new Set(USER.sections||[]);
-    return EMP_SECS.filter(([k])=>allow.has(k));
+    let opts=[];
+    if(allow.has('rent')) opts=opts.concat(RENT_SUBS);   // прокат: дать выбор отдельных вкладок аренды
+    EMP_SECS.forEach(([k,l])=>{ if(k!=='rent' && allow.has(k)) opts.push([k,l]); });  // прочие разделы компании
+    return opts;
   }
   function renderEmpSecs(active){
     const set=new Set(active||[]);
