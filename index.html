@@ -1188,6 +1188,7 @@
     supl:{icon:'🤝',label:'Поставщики'}, fin:{icon:'💰',label:'Финансы'}, exp:{icon:'💸',label:'Расходы'},
     myday:{icon:'🎯',label:'Мой день'}, hr:{icon:'🗓',label:'Кадры'},
     ads:{icon:'📣',label:'Реклама'}, adsreport:{icon:'📑',label:'Отчёты по рекламе'}, adsanalysis:{icon:'🔬',label:'Анализ'},
+    iginbox:{icon:'📷',label:'Instagram + бот'},
     ai:{icon:'🤖',label:'ИИ-помощник'}, sim:{icon:'📊',label:'Симулятор'},
     rentdash:{icon:'📊',label:'Дашборд'}, rentcars:{icon:'🚗',label:'Машины'},
     rentlist:{icon:'🔑',label:'Аренда авто'}, rentexp:{icon:'🧾',label:'Расходы'},
@@ -1198,6 +1199,7 @@
   const MODULES=[
     {key:'crm',  icon:'🧲', label:'CRM',     tabs:['crmdash','deals','tasks','clients','crm']},
     {key:'mkt',  icon:'📣', label:'Реклама', tabs:['ads','adsreport','adsanalysis']},
+    {key:'ig',   icon:'📷', label:'Instagram', tabs:['iginbox']},
     {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','analytics','supl','fin','exp']},
     {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','rentcars','rentlist','rentexp','renthanded','rentanalysis','rentplan','rentclients','rentcalendar']},
     {key:'team', icon:'👥', label:'Команда', tabs:['myday','hr']},
@@ -1213,6 +1215,7 @@
     }
     if(tab==='hr') return isOwner()||USER.sections.indexOf('hr')>=0;
     if(tab==='ads'||tab==='adsreport'||tab==='adsanalysis') return isOwner()||canSee('ads');
+    if(tab==='iginbox') return isOwner()||canSee('chats');
     if(tab==='dash') return isOwner()||canSee('dash')||canSee('crm');
     if(tab==='sim') return isOwner()||canSee('ai')||canSee('analytics')||canSee('dash');
     return canSee(tab);
@@ -1225,6 +1228,7 @@
     else if(tab==='ads') loadAds();
     else if(tab==='adsreport') loadAdsReport();
     else if(tab==='adsanalysis') loadAdsAnalysis();
+    else if(tab==='iginbox') loadIgInbox();
     else if(tab==='clients') renderClients();
     else if(tab==='ai') aiInit();
     else if(tab==='sim') simInit();
