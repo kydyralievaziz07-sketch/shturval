@@ -1300,11 +1300,8 @@
     if(base===undefined) base=API_BASE;
     const r=await fetch(base+path,opts);
     if(r.status===401){
-      // разовый 401 не выкидываем сразу — перепроверяем вход (мог быть сбой сервера)
-      try{
-        const chk=await fetch(ONEC_BASE+'/api/auth',{headers:{'X-Auth':p||'',  'X-Login':lg||''}});
-        if(chk.status===401){ clearPw(); showLogin(true); }
-      }catch(_){}
+      // НЕ выкидываем автоматически (сервер мог моргнуть/проснуться). Просто сообщаем вызвавшему.
+      // Из входа выходим только вручную кнопкой «Выход» — чтобы не нервировать повторными логинами.
       throw new Error('unauthorized');
     }
     if(r.status===403){ throw new Error('forbidden'); }
@@ -1448,14 +1445,14 @@
   // при загрузке: решаем, показывать вход или сразу сайт
   (async function bootAuth(){
     const hasCreds=!!getPw(); const cached=getCachedUser();
-    // Вход уже сохранён на этом устройстве → сразу показываем сайт по сохранённому профилю,
-    // НЕ заставляя вводить логин/пароль. Разлогиним только если сервер ЯВНО скажет «неверно».
-    if(hasCreds && cached){
-      applyUser(cached); showLogin(false);
+    // Вход уже сохранён на этом устройстве → СРАЗУ показываем сайт, НЕ заставляя логиниться.
+    // Сами НИКОГДА не выкидываем (даже если сервер моргнул/спит) — выход только кнопкой «Выход».
+    if(hasCreds){
+      if(cached) applyUser(cached); showLogin(false);
       if(canSee('crm')||canSee('dash')) loadCRM(); if(canSee('dash')) loadDashSales();
       const res=await checkAuth();
-      if(res===false){ clearPw(); showLogin(true); }   // пароль реально не подошёл
-      else if(res&&res.ok){ applyUser(res); applyAccess(); }  // тихо освежили права/имя
+      if(res&&res.ok){ applyUser(res); applyAccess(); }   // тихо освежили имя/права, профиль запомнили
+      else if(!cached){ /* профиля ещё нет, но сервер не ответил — покажем хотя бы Настройки */ applyUser({name:'',sections:['all']}); applyAccess(); }
       return;
     }
     // Сохранённого входа нет — обычная проверка
