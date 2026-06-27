@@ -780,8 +780,8 @@
       <div class="card" style="display:flex;flex-direction:column;height:72vh;padding:0;overflow:hidden">
         <div style="padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">
           <div style="font-size:18px">🤖</div>
-          <div><div style="font-weight:700">Помощник магазина Бизмарт</div>
-          <div style="font-size:12px;color:var(--muted)">Знает твои товары, продажи, клиентов и переписки. Отвечает только про магазин.</div></div>
+          <div><div style="font-weight:700" id="ai-hdr-title">Помощник магазина Бизмарт</div>
+          <div style="font-size:12px;color:var(--muted)" id="ai-hdr-sub">Знает твои товары, продажи, клиентов и переписки. Отвечает только про магазин.</div></div>
         </div>
         <div id="ai-msgs" style="flex:1;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:12px"></div>
         <div style="padding:10px 14px;border-top:1px solid var(--line)">
@@ -1398,6 +1398,7 @@
         if(typeof rentResetCache==='function') rentResetCache();
         try{ CRM={clients:[],deals:[],tasks:[],activity:[]}; _crmCloudReady=false; }catch(e){}
         try{ window._prodCache=null; window._salesCache=null; }catch(e){}
+        try{ aiInited=false; AI_HISTORY=[]; var _am=document.getElementById('ai-msgs'); if(_am) _am.innerHTML=''; }catch(e){}
       }
       window._curWho=_who;
     }catch(e){}
@@ -3632,8 +3633,22 @@
   }
   function aiInit(){
     if(aiInited) return; aiInited=true;
-    aiBubble('ai','👋 Я — помощник магазина Бизмарт. Спрашивай про товары, продажи, клиентов, переписки и остатки. На вопросы не про магазин отвечать не буду.');
-    const chips=['Почему клиенты сливаются?','Какие товары сейчас самые ходовые?','Что срочно пополнить на складе?','Сколько продаж за неделю и на какую сумму?'];
+    // прокат-компания (не владелец «всё», есть аренда, нет магазина) → помощник про аренду
+    var rental = !isOwner() && (USER.sections||[]).some(function(s){return s==='rent'||s.indexOf('rent_')===0;}) && !canSee('prod') && !canSee('sales') && !canSee('dash');
+    var T=document.getElementById('ai-hdr-title'), S=document.getElementById('ai-hdr-sub'), I=document.getElementById('ai-input'), chips;
+    if(rental){
+      if(T) T.textContent='Помощник по аренде авто';
+      if(S) S.textContent='Знает твой парк, аренды, выручку, долги и аналитику. Отвечает про прокат.';
+      if(I) I.placeholder='Спроси про прокат: «какая машина выгоднее?»';
+      aiBubble('ai','👋 Я — помощник по аренде авто. Спрашивай про машины, аренды, выручку, прибыль, долги и загрузку парка.');
+      chips=['Какая машина приносит больше всего?','Кто из клиентов должен деньги?','Сколько заработали в этом месяце?','Какие машины простаивают?'];
+    } else {
+      if(T) T.textContent='Помощник магазина Бизмарт';
+      if(S) S.textContent='Знает твои товары, продажи, клиентов и переписки. Отвечает только про магазин.';
+      if(I) I.placeholder='Спроси про магазин: «почему клиенты сливаются?»';
+      aiBubble('ai','👋 Я — помощник магазина Бизмарт. Спрашивай про товары, продажи, клиентов, переписки и остатки. На вопросы не про магазин отвечать не буду.');
+      chips=['Почему клиенты сливаются?','Какие товары сейчас самые ходовые?','Что срочно пополнить на складе?','Сколько продаж за неделю и на какую сумму?'];
+    }
     const cb=document.getElementById('ai-chips');
     if(cb) cb.innerHTML=chips.map(c=>'<button class="btn ghost" style="padding:5px 10px;font-size:12px;font-weight:400" onclick="aiAsk(this.textContent)">'+esc(c)+'</button>').join('');
   }

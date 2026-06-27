@@ -2421,25 +2421,64 @@ def ai_local_answer(question, crm):
             "• «причины отказов»\n• «топ категорий по деньгам»\n• «стоимость склада»\n\n"
             "💬 Свободный диалог и анализ переписок включатся, когда подключим ИИ-движок (ключ Anthropic).")
 
-def ai_answer(question, crm, history):
+AI_SYSTEM_RENT = (
+    "Ты — деловой ИИ-помощник компании по АРЕНДЕ АВТО (прокат). "
+    "Отвечай ТОЛЬКО про этот прокат: машины и парк, аренды, выручка, прибыль, долги клиентов, "
+    "расходы, сдано руководителю, загрузка машин, какая машина выгоднее, клиенты, аналитика. "
+    "Если вопрос не про прокат (погода, политика, общее) — вежливо откажись одной фразой и предложи спросить про аренду. "
+    "Валюта — сом (KGS). Отвечай по-русски, кратко и по делу, с конкретными цифрами из данных ниже. "
+    "Если данных не хватает — честно скажи. Когда уместно — давай практичные советы владельцу проката."
+)
+
+def _ai_context_rent(company):
+    """Сводка по прокату для ИИ (из rent_build данной компании)."""
+    try:
+        b = rent_build(None, company)
+    except Exception:
+        return "Нет данных по аренде."
+    s = b.get("summary", {}); d = b.get("data", {})
+    parts = ["ИТОГО: выручка(касса) {} сом, прибыль {} сом, расходы {} сом, долги клиентов {} сом, "
+             "сдано руководителю {} сом, остаток прибыли {} сом.".format(
+        s.get("revenue"), s.get("profit"), s.get("expenses"), s.get("debts"), s.get("handed"), s.get("balance")),
+        "Парк: всего {}, свободно {}, в аренде {}, на ремонте {}. Аренд {}, активных {}. "
+        "Средний чек {} сом, средняя длительность {} дн, маржа {}.".format(
+        s.get("cars_total"), s.get("cars_free"), s.get("cars_rented"), s.get("cars_repair"),
+        s.get("rentals_total"), s.get("rentals_active"), s.get("avg_check"), s.get("avg_days"), s.get("margin"))]
+    ca = d.get("caranalysis") or []
+    if ca:
+        parts.append("По машинам (прибыль): " + "; ".join("%s — %s сом" % (c["model"], c["profit"]) for c in ca[:8]))
+    months = d.get("months") or []
+    if months:
+        parts.append("По месяцам: " + "; ".join("%s: выр %s, приб %s" % (m["month"], m["revenue"], m["profit"]) for m in months[:6]))
+    cl = d.get("clients") or []
+    if cl:
+        parts.append("Топ клиентов: " + "; ".join("%s (%s аренд, %s сом, долг %s)" % (c["name"], c["count"], c["revenue"], c["debt"]) for c in cl[:6]))
+    return "\n".join(parts)
+
+def ai_answer(question, crm, history, user=None):
     key = CFG.get("ANTHROPIC_API_KEY", "")
     if not key:
         return {"free_mode": True, "answer": ai_local_answer(question, crm)}
-    ql = (question or "").lower()
-    want_chats = any(w in ql for w in ["перепис", "диалог", "чат", "клиент", "сливают", "сливаются",
-                                       "уход", "отказ", "почему не", "возраж"])
-    context = _ai_context(crm, want_chats)
+    co = (user or {}).get("company") or COMPANY_ID
+    if co != COMPANY_ID:                      # не Бизмарт → компания-прокат: контекст и промпт про аренду
+        system = AI_SYSTEM_RENT
+        ctx = "ДАННЫЕ ПРОКАТА (на сейчас):\n" + _ai_context_rent(co)
+    else:
+        ql = (question or "").lower()
+        want_chats = any(w in ql for w in ["перепис", "диалог", "чат", "клиент", "сливают", "сливаются",
+                                           "уход", "отказ", "почему не", "возраж"])
+        system = AI_SYSTEM
+        ctx = "ДАННЫЕ МАГАЗИНА (на сейчас):\n" + _ai_context(crm, want_chats)
     msgs = []
     for h in (history or [])[-6:]:
         role = h.get("role"); content = h.get("content")
         if role in ("user", "assistant") and content:
             msgs.append({"role": role, "content": str(content)})
-    msgs.append({"role": "user",
-                 "content": "ДАННЫЕ МАГАЗИНА (на сейчас):\n" + context + "\n\nВОПРОС: " + question})
+    msgs.append({"role": "user", "content": ctx + "\n\nВОПРОС: " + question})
     body = json.dumps({
         "model": CFG.get("ANTHROPIC_MODEL"),
         "max_tokens": 1024,
-        "system": AI_SYSTEM,
+        "system": system,
         "messages": msgs,
     }).encode("utf-8")
     req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, headers={
@@ -3658,7 +3697,7 @@ class Handler(BaseHTTPRequestHandler):
             q = (body.get("question") or "").strip()
             if not q:
                 return self._send(400, {"error": "пустой вопрос"})
-            return self._send(200, ai_answer(q, body.get("crm"), body.get("history")))
+            return self._send(200, ai_answer(q, body.get("crm"), body.get("history"), self._user()))
         if self.path.startswith("/api/payroll"):
             u = self._user()
             secs = u.get("sections", []) if u else []
