@@ -1302,7 +1302,7 @@
   // временно скрытые модули — прячем ИКОНКУ у тех, кто видит их только через «all» (владелец-Бизмарт).
   // У кого есть ПРЯМОЙ доступ к разделу (напр. FREE WAYS с 'rent') — модуль остаётся.
   // Чтобы вернуть «Авто Рент» владельцу — очистить массив: const HIDDEN_MODULES=[];
-  const HIDDEN_MODULES=['rent'];
+  const HIDDEN_MODULES=[];
   function _explicitModule(key){
     if(key==='rent') return (USER.sections||[]).some(function(s){ return s==='rent'||s.indexOf('rent_')===0; });
     return (USER.sections||[]).indexOf(key)>=0;
