@@ -398,6 +398,8 @@
     <section id="tab-rentplan" class="hide"><div id="rent-plan"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-rentclients" class="hide"><div id="rent-clients"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-rentcalendar" class="hide"><div id="rent-calendar"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
+    <section id="tab-rentnotes" class="hide"><div id="rent-notes"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
+    <section id="tab-renttasks" class="hide"><div id="rent-tasks"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
 
     <section id="tab-dash">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
@@ -497,6 +499,9 @@
           <div class="head" id="wa-title">← Выберите диалог слева</div>
           <div class="msgs" id="wa-msgs"></div>
           <div class="replybox">
+            <input type="file" id="wa-file" style="display:none" onchange="if(this.files[0]){waSendFile(this.files[0]);this.value='';}">
+            <button class="btn" title="Прикрепить файл, фото или видео" onclick="document.getElementById('wa-file').click()">📎</button>
+            <button class="btn" id="wa-mic" title="Записать голосовое" onclick="waToggleVoice()">🎤</button>
             <input id="wa-reply" placeholder="Ответить клиенту в WhatsApp…" onkeydown="if(event.key==='Enter')waSend()">
             <button class="btn" onclick="waSend()">Отправить</button>
           </div>
@@ -1238,6 +1243,8 @@
     adsreport:["Отчёты по рекламе","Метрики кампаний: расход, охват, клики, переписки, цена результата"],
     adsanalysis:["Анализ рекламы","Какая аудитория и площадки работают лучше"],
     rentdash :["Авто Рент — Дашборд","Сводка по аренде авто"],
+    renttasks :["Задачи","Задания от руководителя"],
+    rentnotes :["Заметки","Доска заметок (например, по ремонту)"],
     rentcars :["Машины","Автопарк аренды"],
     rentlist :["Аренда авто","Кто, что и на сколько взял"],
     rentalert :["Требует внимания","Сдачи авто и должники"],
@@ -1262,7 +1269,7 @@
     iginbox:{icon:'📷',label:'Instagram + бот'},
     wainbox:{icon:'🟢',label:'WhatsApp + бот'},
     ai:{icon:'🤖',label:'ИИ-помощник'}, sim:{icon:'📊',label:'Симулятор'},
-    rentdash:{icon:'📊',label:'Дашборд'}, rentcars:{icon:'🚗',label:'Машины'},
+    rentdash:{icon:'📊',label:'Дашборд'}, renttasks:{icon:'🗂',label:'Задачи'}, rentnotes:{icon:'📌',label:'Заметки'}, rentcars:{icon:'🚗',label:'Машины'},
     rentlist:{icon:'🔑',label:'Аренда авто'}, rentalert:{icon:'🔔',label:'Требует внимания'}, rentexp:{icon:'🧾',label:'Расходы'},
     renthanded:{icon:'📤',label:'Сдано'},
     rentanalysis:{icon:'📊',label:'Анализ по машинам'}, rentplan:{icon:'🎯',label:'План'},
@@ -1274,7 +1281,7 @@
     {key:'ig',   icon:'📷', label:'Instagram', tabs:['iginbox']},
     {key:'wa',   icon:'🟢', label:'WhatsApp', tabs:['wainbox']},
     {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','analytics','supl','fin','exp']},
-    {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','rentcars','rentlist','rentalert','rentexp','renthanded','rentanalysis','rentplan','rentclients','rentcalendar']},
+    {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','renttasks','rentnotes','rentcars','rentlist','rentalert','rentexp','renthanded','rentanalysis','rentplan','rentclients','rentcalendar']},
     {key:'team', icon:'👥', label:'Команда', tabs:['myday','hr']},
     {key:'ai',   icon:'🤖', label:'ИИ',      tabs:['ai','sim']}
   ];
@@ -1287,8 +1294,10 @@
     if(tab.indexOf('rent')===0){
       // «rent» = весь раздел; иначе по под-доступу: rentcars→rent_cars, rentdash→rent_dash и т.п.
       if(isOwner()||canSee('rent')) return true;
-      // «Требует внимания» видно всем, у кого есть любой доступ к прокату
-      if(tab==='rentalert') return (USER.sections||[]).some(function(s){return s.indexOf('rent')===0;});
+      // «Требует внимания» — только владельцу (должники/сдачи авто)
+      if(tab==='rentalert') return isCabinetOwner();
+      // «Заметки» и «Задачи» видят все сотрудники проката (заметки — читают, задачи — свои)
+      if(tab==='rentnotes'||tab==='renttasks') return (USER.sections||[]).some(function(s){return s.indexOf('rent')===0;});
       return canSee('rent_'+tab.slice(4));
     }
     if(tab==='hr') return isOwner()||USER.sections.indexOf('hr')>=0;
@@ -1334,6 +1343,8 @@
     else if(tab==='exp') renderExpPage();
     else if(tab==='supl') loadSuppliers();
     else if(tab==='rentdash') rentDispatch('dash');
+    else if(tab==='renttasks') rentDispatch('tasks');
+    else if(tab==='rentnotes') rentDispatch('notes');
     else if(tab==='rentcars') rentDispatch('cars');
     else if(tab==='rentlist') rentDispatch('list');
     else if(tab==='rentalert') rentDispatch('alert');
@@ -3537,7 +3548,8 @@
       if(box.dataset.sig===sig && !first) return;
       const atBottom=(box.scrollHeight-box.scrollTop-box.clientHeight)<70;
       box.dataset.sig=sig;
-      box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+(m.t==='out'?'out':'in')+'">'+linkify(m.x)+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>').join(''):'<div style="padding:10px;color:var(--muted)">Нет сообщений</div>';
+      box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+(m.t==='out'?'out':'in')+'">'+waBubbleBody(m)+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>').join(''):'<div style="padding:10px;color:var(--muted)">Нет сообщений</div>';
+      waHydrateMedia(box);
       if(first||atBottom) box.scrollTop=box.scrollHeight;
     }catch(e){ if(first) box.innerHTML='<div style="padding:10px;color:var(--muted)">Не удалось загрузить.</div>'; }
   }
@@ -3554,6 +3566,85 @@
       else { if(b){ b.innerHTML=esc(t)+' <span style="opacity:.7;font-size:11px">⚠️ не доставлено</span>'; b.style.background='var(--red)'; }
         box.insertAdjacentHTML('beforeend','<div style="font-size:12px;color:#ffb84d;padding:4px 8px">⚠️ '+esc(sendErrText(d.error||''))+'</div>'); inp.value=t; }
     }catch(e){ const b=document.getElementById(bid); if(b){ b.innerHTML=esc(t)+' ⚠️'; b.style.background='var(--red)'; } inp.value=t; }
+  }
+  // ——— Медиа в WhatsApp: показ входящих/исходящих фото, видео, файлов и голосовых ———
+  function waMediaType(mime){ mime=(mime||'').toLowerCase();
+    if(mime.indexOf('image/')===0) return mime.indexOf('webp')>=0?'sticker':'image';
+    if(mime.indexOf('video/')===0) return 'video';
+    if(mime.indexOf('audio/')===0) return 'audio';
+    return 'document'; }
+  function waBubbleBody(m){
+    if(m.med){
+      const t=m.mtype, id=esc(m.med), cap=m.x?'<div style="margin-top:4px">'+linkify(m.x)+'</div>':'';
+      if(t==='image'||t==='sticker') return '<img data-wamedia="'+id+'" style="max-width:230px;max-height:300px;border-radius:8px;cursor:pointer;display:block" onclick="waOpenMedia(\''+id+'\',\''+esc(m.fname||'image')+'\')" title="Открыть">'+cap;
+      if(t==='audio') return '<audio data-wamedia="'+id+'" controls preload="none" style="max-width:240px;height:40px"></audio>'+cap;
+      if(t==='video') return '<video data-wamedia="'+id+'" controls preload="none" style="max-width:240px;border-radius:8px;display:block"></video>'+cap;
+      return '<a href="#" onclick="waOpenMedia(\''+id+'\',\''+esc(m.fname||'file')+'\');return false" style="color:inherit;text-decoration:underline">📎 '+esc(m.fname||'файл')+'</a>'+cap;
+    }
+    return linkify(m.x);
+  }
+  const waMediaCache={};                               // id → objectURL (чтобы не качать повторно)
+  async function waFetchMedia(id){
+    if(waMediaCache[id]) return waMediaCache[id];
+    const r=await apiFetch('/api/wa/media?id='+encodeURIComponent(id)+'&phone='+encodeURIComponent(waCur.account_id),{},ONEC_BASE);
+    const b=await r.blob(); const u=URL.createObjectURL(b); waMediaCache[id]=u; return u;
+  }
+  async function waHydrateMedia(box){
+    if(!box||!waCur) return;
+    const els=box.querySelectorAll('[data-wamedia]:not([data-loaded])');
+    for(const el of els){
+      el.setAttribute('data-loaded','1');
+      const id=el.getAttribute('data-wamedia');
+      try{ el.src=await waFetchMedia(id); }
+      catch(e){ /* медиа недоступно — оставляем пустым */ }
+    }
+  }
+  async function waOpenMedia(id,fname){
+    try{
+      const u=await waFetchMedia(id);
+      const a=document.createElement('a'); a.href=u; a.download=fname||'file'; a.target='_blank'; document.body.appendChild(a); a.click(); a.remove();
+    }catch(e){ alert('Не удалось открыть файл.'); }
+  }
+  function fileToB64(file){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(String(fr.result).split(',')[1]||''); fr.onerror=rej; fr.readAsDataURL(file); }); }
+  async function waSendFile(file){
+    if(!file) return;
+    if(!waCur){ alert('Сначала выбери диалог слева.'); return; }
+    if(file.size>16*1024*1024){ alert('Файл больше 16 МБ — WhatsApp не примет такой размер.'); return; }
+    const box=document.getElementById('wa-msgs'); const bid='waf'+Date.now();
+    const label=waMediaType(file.type)==='audio'?'🎤 голосовое':(waMediaType(file.type)==='image'?'📷 фото':'📎 '+esc(file.name||'файл'));
+    box.insertAdjacentHTML('beforeend','<div class="bubble out" id="'+bid+'">'+label+' <span style="opacity:.6;font-size:11px">⏳ отправка…</span></div>'); box.scrollTop=box.scrollHeight;
+    try{
+      const b64=await fileToB64(file);
+      const r=await apiFetch('/api/wa/media',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:waCur.account_id,customer_id:waCur.customer_id,type:waMediaType(file.type),mime:file.type,filename:file.name||'file',data_b64:b64})},ONEC_BASE);
+      const d=await r.json(); const b=document.getElementById(bid);
+      if(d.ok){ if(b){ b.innerHTML=label+' <span style="opacity:.7;font-size:11px">✓ отправлено</span>'; } box.dataset.sig=''; waLoadThread(true); }
+      else { if(b){ b.innerHTML=label+' <span style="opacity:.7;font-size:11px">⚠️ не доставлено</span>'; b.style.background='var(--red)'; }
+        box.insertAdjacentHTML('beforeend','<div style="font-size:12px;color:#ffb84d;padding:4px 8px">⚠️ '+esc(d.error||'не удалось отправить')+'</div>'); }
+    }catch(e){ const b=document.getElementById(bid); if(b){ b.innerHTML=label+' ⚠️'; b.style.background='var(--red)'; } }
+  }
+  let waRec=null, waChunks=[], waStream=null;
+  async function waToggleVoice(){
+    const btn=document.getElementById('wa-mic');
+    if(waRec && waRec.state==='recording'){ waRec.stop(); return; }
+    if(!waCur){ alert('Сначала выбери диалог слева.'); return; }
+    if(!navigator.mediaDevices || !window.MediaRecorder){ alert('Браузер не поддерживает запись голосовых.'); return; }
+    try{ waStream=await navigator.mediaDevices.getUserMedia({audio:true}); }
+    catch(e){ alert('Нет доступа к микрофону. Разреши доступ в браузере.'); return; }
+    let mime=''; if(MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) mime='audio/ogg;codecs=opus';
+    else if(MediaRecorder.isTypeSupported('audio/mp4')) mime='audio/mp4';
+    else if(MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) mime='audio/webm;codecs=opus';
+    waChunks=[]; try{ waRec=new MediaRecorder(waStream, mime?{mimeType:mime}:undefined); }catch(e){ waRec=new MediaRecorder(waStream); }
+    waRec.ondataavailable=e=>{ if(e.data&&e.data.size) waChunks.push(e.data); };
+    waRec.onstop=async()=>{
+      btn.textContent='🎤'; btn.style.color=''; btn.title='Записать голосовое';
+      try{ waStream.getTracks().forEach(t=>t.stop()); }catch(e){}
+      const type=(waChunks[0]&&waChunks[0].type)||mime||'audio/ogg';
+      const ext=type.indexOf('ogg')>=0?'ogg':(type.indexOf('mp4')>=0?'m4a':(type.indexOf('webm')>=0?'webm':'ogg'));
+      const blob=new Blob(waChunks,{type:type.split(';')[0]});
+      if(!blob.size){ return; }
+      await waSendFile(new File([blob],'voice.'+ext,{type:type.split(';')[0]}));
+    };
+    waRec.start(); btn.textContent='⏹'; btn.style.color='#ff4d4d'; btn.title='Остановить и отправить';
   }
   function startWaAuto(){
     if(waTimer) return;
@@ -5273,7 +5364,7 @@
   }
   function rAddBtn(type,label){ return '<button class="btn" style="padding:6px 14px;font-size:13px;margin-bottom:12px" onclick="openRentForm(\''+type+'\')">➕ '+label+'</button>'; }
 
-  var RENT_CONT={dash:'rent-dash',cars:'rent-cars',list:'rent-list',alert:'rent-alert',exp:'rent-exp',handed:'rent-handed',analysis:'rent-analysis',plan:'rent-plan',clients:'rent-clients',calendar:'rent-calendar'};
+  var RENT_CONT={dash:'rent-dash',tasks:'rent-tasks',notes:'rent-notes',cars:'rent-cars',list:'rent-list',alert:'rent-alert',exp:'rent-exp',handed:'rent-handed',analysis:'rent-analysis',plan:'rent-plan',clients:'rent-clients',calendar:'rent-calendar'};
   function rentDispatch(view){
     RENT_CUR=view;
     if(RENT){ rentRenderCur(); return; }
@@ -5293,7 +5384,7 @@
     if(el) el.innerHTML='<div class="card" style="border-color:var(--red)"><b>Не удалось загрузить данные аренды.</b><div style="color:var(--muted);font-size:13px;margin-top:6px">'+esc(RENT_ERR)+'</div><button class="btn ghost" style="margin-top:10px;padding:6px 12px;font-size:13px" onclick="RENT_ERR=\'\';rentDispatch(RENT_CUR)">↻ Повторить</button></div>';
   }
   function rentRenderCur(){
-    ({dash:renderRentDash,cars:renderRentCars,list:renderRentList,alert:renderRentAlert,exp:renderRentExp,handed:renderRentHanded,analysis:renderRentAnalysis,plan:renderRentPlan,clients:renderRentClients,calendar:renderRentCalendar}[RENT_CUR]||renderRentDash)();
+    ({dash:renderRentDash,tasks:renderRentTasks,notes:renderRentNotes,cars:renderRentCars,list:renderRentList,alert:renderRentAlert,exp:renderRentExp,handed:renderRentHanded,analysis:renderRentAnalysis,plan:renderRentPlan,clients:renderRentClients,calendar:renderRentCalendar}[RENT_CUR]||renderRentDash)();
   }
   // отправка изменения на сервер
   function rentPost(action,payload){

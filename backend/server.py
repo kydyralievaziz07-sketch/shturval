@@ -225,6 +225,7 @@ SECTION_OF = [
     ("/api/ig/broadcast", "chats"), ("/api/ig/bot", "chats"),
     ("/api/wa/conversations", "chats"), ("/api/wa/thread", "chats"),
     ("/api/wa/reply", "chats"), ("/api/wa/accounts", "chats"),
+    ("/api/wa/media", "chats"),
     ("/api/assistant", "ai"),
     ("/api/ads", "ads"),
 ]
@@ -391,7 +392,7 @@ def rent_doc(company=None):
     d = kv_load(key)
     if not isinstance(d, dict):
         d = {}
-    for k in ("cars", "rentals", "expenses", "handed", "salary", "undercollect"):
+    for k in ("cars", "rentals", "expenses", "handed", "salary", "undercollect", "notes", "rtasks"):
         if not isinstance(d.get(k), list):
             d[k] = []
     d.setdefault("seq", 0)
@@ -683,7 +684,12 @@ def rent_build(period=None, company=None):
                      "undercollect": [fh(u) for u in under], "months": months_list,
                      "caranalysis": car_an, "plan": plan_block,
                      "abc": abc, "weekdays": weekdays, "best_weekday": best_wd, "daily": daily,
-                     "clients": clients},
+                     "clients": clients,
+                     "notes": sorted(d.get("notes", []), key=lambda x: x.get("ts", 0), reverse=True),
+                     "rtasks": sorted(d.get("rtasks", []), key=lambda x: (x.get("status") == "done", -x.get("ts", 0))),
+                     "staff": [{"login": (v.get("login") or "").lower(), "name": (v.get("name") or v.get("login") or ""),
+                                "role": (v.get("role") or "")}
+                               for v in company_users(company or COMPANY_ID) if not v.get("owner")]},
             "summary": summary, "periods": periods, "synced": time.strftime("%d.%m.%Y %H:%M")}
     _RENT_BUILD_CACHE[ckey] = (time.time(), result)
     return result
@@ -697,8 +703,10 @@ def rent_apply(action, p, company=None, user=None):
     who = user.get("name") or user.get("login") or ""
     now_ms = int(time.time() * 1000)
     # машины и план — только владелец (полный контроль)
-    if action in ("add_car", "edit_car", "del_car", "set_plan", "set_commission", "set_currency") and not is_owner:
-        return {"error": "Машины, план и оплату может менять только владелец"}
+    if action in ("add_car", "edit_car", "del_car", "set_plan", "set_commission", "set_currency",
+                  "add_note", "edit_note", "del_note",
+                  "add_rtask", "edit_rtask", "del_rtask") and not is_owner:
+        return {"error": "Машины, план, оплату, заметки и задачи может менять только владелец"}
     def keep(lst, _id):
         return [x for x in lst if x.get("id") != _id]
     def find(lst, _id):
@@ -756,11 +764,12 @@ def rent_apply(action, p, company=None, user=None):
         d["cars"].append(stamp_new({"id": _rent_newid(d, "M"), "ts": now_ms,
             "model": p.get("model", ""), "plate": p.get("plate", ""), "price": p.get("price", ""),
             "deposit": p.get("deposit", ""), "cost": p.get("cost", ""),
+            "sold_price": p.get("sold_price", ""), "sold_date": p.get("sold_date", ""),
             "status": (p.get("status") or "Свободна"), "note": p.get("note", "")}))
     elif action == "edit_car":
         c = find(d["cars"], p.get("id"))
         if c:
-            for f in ("model", "plate", "price", "deposit", "cost", "status", "note"):
+            for f in ("model", "plate", "price", "deposit", "cost", "sold_price", "sold_date", "status", "note"):
                 if f in p:
                     c[f] = p[f]
             stamp_edit(c)
@@ -780,6 +789,39 @@ def rent_apply(action, p, company=None, user=None):
         for lg, pct in (p.get("map") or {}).items():
             comm[str(lg).lower()] = _rnum(pct)
         d["commissions"] = comm
+    elif action == "add_note":
+        d["notes"].append(stamp_new({"id": _rent_newid(d, "NT"), "ts": now_ms,
+            "text": p.get("text", "")}))
+    elif action == "edit_note":
+        n = find(d["notes"], p.get("id"))
+        if n:
+            if "text" in p:
+                n["text"] = p["text"]
+            stamp_edit(n)
+    elif action == "del_note":
+        d["notes"] = keep(d["notes"], p.get("id"))
+    elif action == "add_rtask":
+        d["rtasks"].append(stamp_new({"id": _rent_newid(d, "TK"), "ts": now_ms,
+            "text": p.get("text", ""), "assignee": (str(p.get("assignee") or "")).lower(),
+            "due": p.get("due", ""), "status": "open"}))
+    elif action == "edit_rtask":
+        t = find(d["rtasks"], p.get("id"))
+        if t:
+            for f in ("text", "assignee", "due", "status"):
+                if f in p:
+                    t[f] = (str(p[f]).lower() if f == "assignee" else p[f])
+            stamp_edit(t)
+    elif action == "del_rtask":
+        d["rtasks"] = keep(d["rtasks"], p.get("id"))
+    elif action == "done_rtask":
+        # отметить выполнение может владелец ИЛИ исполнитель своей задачи
+        t = find(d["rtasks"], p.get("id"))
+        if t:
+            mylogin = (user.get("login") or "").lower()
+            if not is_owner and (t.get("assignee") or "") != mylogin:
+                return {"error": "Можно отмечать только свои задачи"}
+            t["status"] = "open" if (t.get("status") == "done") else "done"
+            t["done_by"] = who; t["done_ts"] = now_ms
     elif action == "import":
         return rent_import(d, p, company, who, now_ms)
     else:
@@ -1850,6 +1892,93 @@ def wa_send(to, text, from_phone_id=None):
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.loads(r.read().decode() or "{}")
 
+# поддерживаемые WhatsApp типы аудио (для голосовых). webm (Chrome) Meta НЕ принимает.
+WA_AUDIO_OK = ("audio/ogg", "audio/mpeg", "audio/mp4", "audio/aac", "audio/amr")
+
+def wa_media_type(mime):
+    """Свести MIME-тип файла к типу сообщения WhatsApp."""
+    m = (mime or "").lower()
+    if m.startswith("image/"):
+        return "sticker" if "webp" in m else "image"
+    if m.startswith("video/"):
+        return "video"
+    if m.startswith("audio/"):
+        return "audio"
+    return "document"
+
+def wa_upload_media(phone_id, data, mime, filename="file"):
+    """Загрузить байты в Meta (/media) и вернуть media_id для последующей отправки."""
+    token = wa_token_for(phone_id) if phone_id else CFG.get("WA_TOKEN", "")
+    if not (token and phone_id):
+        raise RuntimeError("WhatsApp не подключён (нет токена или номера).")
+    boundary = "----shturval%d" % int(time.time() * 1000)
+    def field(name, val):
+        return ('--%s\r\nContent-Disposition: form-data; name="%s"\r\n\r\n%s\r\n'
+                % (boundary, name, val)).encode("utf-8")
+    head = field("messaging_product", "whatsapp") + field("type", mime or "application/octet-stream")
+    fhdr = ('--%s\r\nContent-Disposition: form-data; name="file"; filename="%s"\r\nContent-Type: %s\r\n\r\n'
+            % (boundary, filename, mime or "application/octet-stream")).encode("utf-8")
+    body = head + fhdr + data + ("\r\n--%s--\r\n" % boundary).encode("utf-8")
+    url = WA_GRAPH + "/" + _q(phone_id) + "/media"
+    req = urllib.request.Request(url, data=body, method="POST",
+                                 headers={"Authorization": "Bearer " + token,
+                                          "Content-Type": "multipart/form-data; boundary=" + boundary,
+                                          "User-Agent": "Shturval/1.0"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.loads(r.read().decode() or "{}").get("id", "")
+
+def wa_send_media(to, mtype, media_id, from_phone_id=None, caption="", filename=""):
+    """Отправить медиа-сообщение по уже загруженному media_id."""
+    phone_id = str(from_phone_id or CFG.get("WA_PHONE_ID", "") or "")
+    token = wa_token_for(phone_id) if phone_id else CFG.get("WA_TOKEN", "")
+    if not (token and phone_id):
+        raise RuntimeError("WhatsApp не подключён (нет токена или номера).")
+    obj = {"id": media_id}
+    if caption and mtype in ("image", "video", "document"):
+        obj["caption"] = caption
+    if filename and mtype == "document":
+        obj["filename"] = filename
+    url = WA_GRAPH + "/" + _q(phone_id) + "/messages"
+    body = json.dumps({"messaging_product": "whatsapp", "to": str(to),
+                       "type": mtype, mtype: obj}).encode()
+    req = urllib.request.Request(url, data=body, method="POST",
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": "Bearer " + token,
+                                          "User-Agent": "Shturval/1.0"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read().decode() or "{}")
+
+def wa_reply_media(account_id, customer_id, mtype, media_id, caption="", filename="", mime="", by="human"):
+    """Оператор отправил клиенту медиа: отправить и сохранить в историю."""
+    wa_send_media(customer_id, mtype, media_id, account_id, caption=caption, filename=filename)
+    try:
+        _supa("POST", "wa_inbox", "",
+              {"company_id": COMPANY_ID, "sender_id": str(account_id),
+               "recipient_id": str(customer_id), "text": caption or "",
+               "ts": int(time.time() * 1000), "direction": "out",
+               "raw": {"by": by, "type": mtype, "media_id": media_id,
+                       "mime": mime, "filename": filename, "caption": caption}})
+    except Exception:
+        pass
+
+def wa_media_download(media_id, phone_id=None):
+    """Скачать медиа по media_id из Meta. Возвращает (байты, mime)."""
+    token = wa_token_for(str(phone_id or "")) if phone_id else CFG.get("WA_TOKEN", "")
+    if not token:
+        token = CFG.get("WA_TOKEN", "")
+    if not token:
+        raise RuntimeError("нет токена WhatsApp")
+    req1 = urllib.request.Request(WA_GRAPH + "/" + _q(str(media_id)),
+                                  headers={"Authorization": "Bearer " + token, "User-Agent": "Shturval/1.0"})
+    with urllib.request.urlopen(req1, timeout=30) as r:
+        meta = json.loads(r.read().decode() or "{}")
+    murl = meta.get("url", ""); mime = meta.get("mime_type", "application/octet-stream")
+    if not murl:
+        raise RuntimeError("медиа недоступно")
+    req2 = urllib.request.Request(murl, headers={"Authorization": "Bearer " + token, "User-Agent": "Shturval/1.0"})
+    with urllib.request.urlopen(req2, timeout=60) as r:
+        return r.read(), mime
+
 # имена клиентов по их WhatsApp-номеру (приходят прямо в webhook → живых запросов не нужно).
 _wa_names = {}
 _wa_names_ts = 0
@@ -1996,10 +2125,21 @@ def wa_thread(account_id, customer_id):
         acc, cust = _wa_pair(r)
         if acc == str(account_id) and cust == str(customer_id):
             ts = int(r.get("ts") or 0)
-            typ = (r.get("raw") or {}).get("type") or ""
-            x = r.get("text", "") or (_WA_TYPE_LABEL.get(typ, "") if typ and typ != "text" else "")
+            raw = r.get("raw") or {}
+            typ = raw.get("type") or ""
+            med = ""; mime = ""; fname = ""; cap = ""
+            if typ in ("image", "audio", "video", "document", "sticker"):
+                sub = raw.get(typ) or {}
+                med = sub.get("id") or raw.get("media_id") or ""
+                mime = sub.get("mime_type") or raw.get("mime") or ""
+                fname = sub.get("filename") or raw.get("filename") or ""
+                cap = sub.get("caption") or raw.get("caption") or ""
+            if med:
+                x = cap                                # реальная подпись, без авто-ярлыка
+            else:
+                x = r.get("text", "") or (_WA_TYPE_LABEL.get(typ, "") if typ and typ != "text" else "")
             msgs.append({"t": ("out" if r.get("direction") == "out" else "in"),
-                         "x": x, "ts": ts,
+                         "x": x, "ts": ts, "mtype": typ, "med": med, "mime": mime, "fname": fname,
                          "tm": time.strftime("%d.%m %H:%M", time.localtime(ts / 1000)) if ts > 1e12
                                else (time.strftime("%d.%m %H:%M", time.localtime(ts)) if ts else "")})
     msgs.sort(key=lambda m: m["ts"])
@@ -4139,6 +4279,46 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send(200, {"ok": False, "error": "WhatsApp: " + str(e)})
             return self._send(200, {"ok": True})
+        if self.path.startswith("/api/wa/media"):
+            # Оператор отправляет клиенту файл/фото/видео/голосовое (data_b64 — содержимое файла).
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            acc = str(body.get("account_id") or ""); cust = str(body.get("customer_id") or "")
+            mime = (body.get("mime") or "").strip()
+            mtype = (body.get("type") or wa_media_type(mime)).strip()
+            fname = (body.get("filename") or "file").strip()
+            cap = (body.get("caption") or "").strip()
+            b64 = body.get("data_b64") or ""
+            if not acc or not cust or not b64:
+                return self._send(400, {"error": "нужны account_id, customer_id и data_b64"})
+            # голосовые/аудио: WhatsApp принимает только ogg/mp3/mp4/aac/amr (НЕ webm от Chrome)
+            if mtype == "audio" and not any(mime.startswith(x) for x in WA_AUDIO_OK):
+                return self._send(200, {"ok": False, "error":
+                    "Этот браузер записал голосовое в формате, который WhatsApp не принимает (нужен OGG/Opus). "
+                    "Запишите в Safari или Firefox, либо прикрепите готовый аудиофайл."})
+            try:
+                data = base64.b64decode(b64)
+            except Exception:
+                return self._send(400, {"error": "плохие данные файла"})
+            if len(data) > 16 * 1024 * 1024:
+                return self._send(200, {"ok": False, "error": "Файл больше 16 МБ — WhatsApp не примет."})
+            try:
+                media_id = wa_upload_media(acc, data, mime, fname)
+                if not media_id:
+                    return self._send(200, {"ok": False, "error": "Meta не приняла файл (нет media_id)."})
+                wa_reply_media(acc, cust, mtype, media_id, caption=cap, filename=fname, mime=mime)
+            except urllib.error.HTTPError as e:
+                try:
+                    det = json.loads(e.read().decode() or "{}").get("error", {}).get("message", "")
+                except Exception:
+                    det = str(e)
+                return self._send(200, {"ok": False, "error": "WhatsApp: " + (det or str(e))})
+            except Exception as e:
+                return self._send(200, {"ok": False, "error": "WhatsApp: " + str(e)})
+            return self._send(200, {"ok": True})
         if self.path.startswith("/api/ig/bot"):
             u = self._user(); secs = u.get("sections", []) if u else []
             if not (u and ("all" in secs or "chats" in secs)):
@@ -4816,6 +4996,26 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, wa_thread(acc, cust))
             except Exception as e:
                 return self._send(200, {"msgs": [], "error": str(e)})
+        if self.path.startswith("/api/wa/media"):
+            # Прокси: скачиваем медиа из Meta (нужен токен) и отдаём браузеру для показа/прослушивания.
+            p = _parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            mid = (p.get("id") or [""])[0]; phone = (p.get("phone") or [""])[0]
+            if not mid:
+                return self._send(400, {"error": "нужен id медиа"})
+            try:
+                data, mime = wa_media_download(mid, phone)
+            except Exception as e:
+                return self._send(200, {"error": "медиа недоступно: " + str(e)})
+            self.send_response(200)
+            self.send_header("Content-Type", mime or "application/octet-stream")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "private, max-age=86400")
+            self.end_headers()
+            try:
+                self.wfile.write(data)
+            except Exception:
+                pass
+            return
         if self.path.startswith("/api/wa/accounts"):
             return self._send(200, {"accounts": [{"display": a.get("display"), "phone_id": a.get("phone_id")}
                                                  for a in wa_accounts()]})
