@@ -22,7 +22,30 @@
     --red:#ff5b5b; --green:#37d39a; --amber:#ffb84d; --purple:#b08bff;
   }
   body.brand .topnav,body.brand .sidebar{background:#000}
-  /* переключатель темы — 3 кнопки */
+  /* WhatsApp-тема (тёмно-зелёная, как в WhatsApp) */
+  body.wa{
+    --bg:#0b141a; --panel:#111b21; --panel2:#202c33; --line:#2a3942;
+    --text:#e9edef; --muted:#8696a0; --accent:#00a884; --green:#25d366;
+    --red:#f15c6d; --amber:#ffb84d; --purple:#a78bfa;
+  }
+  body.wa .topnav,body.wa .sidebar{background:#0a1318}
+  body.wa .bubble.out{background:#005c4b;color:#e9edef}
+  body.wa .bubble.in{background:#202c33}
+  /* фирменная тёмная (Bizmart — синий #33509A + жёлтый #F1BC37) */
+  body.branddark{
+    --bg:#0c1424; --panel:#13203a; --panel2:#1b2c4d; --line:#27395f;
+    --text:#eaf0fa; --muted:#9fb0cc; --accent:#4a6fc7; --green:#39d98a;
+    --red:#ff6b6b; --amber:#F1BC37; --purple:#a78bfa;
+  }
+  body.branddark .topnav,body.branddark .sidebar{background:#0a1120}
+  /* фирменная светлая (Bizmart — синий + жёлтый на светлом) */
+  body.brandlight{
+    --bg:#eef2f8; --panel:#ffffff; --panel2:#e9f0fb; --line:#d6e0ef;
+    --text:#15233f; --muted:#5e6e88; --accent:#33509A; --green:#1fab78;
+    --red:#e0556a; --amber:#d99a00; --purple:#7c5cff;
+  }
+  body.brandlight .topnav,body.brandlight .sidebar{background:#33509A}
+  /* переключатель темы */
   .thsel button{padding:7px 12px;font-size:13px}
   .thsel button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
   *{box-sizing:border-box;margin:0;padding:0}
@@ -181,6 +204,45 @@
   .bubble.out{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:4px}
   .replybox{padding:12px;border-top:1px solid var(--line);display:flex;gap:8px;background:var(--panel)}
   .replybox input{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 14px;color:var(--text);font-family:inherit}
+
+  /* ====== WhatsApp-режим: раздел на всю высоту, страница НЕ скроллится — скроллят только список и переписка ====== */
+  body.tab-wa .main{overflow:hidden;display:flex;flex-direction:column;padding:0}
+  body.tab-wa #tab-wainbox{flex:1;min-height:0;display:flex;flex-direction:column;margin:0}
+  body.tab-wa #tab-wainbox .inbox{flex:1;min-height:0;height:auto;border:none;border-radius:0;grid-template-columns:380px 1fr}
+  body.tab-wa #tab-wainbox>.note{display:none}            /* подсказки сверху убираем — место под переписку */
+  body.tab-wa .chatview{background:var(--bg)}
+  .chatview{position:relative}
+  .wa-head{display:flex;align-items:center;gap:10px}
+  .wa-headacts{display:flex;gap:15px;font-size:17px;align-items:center}
+  .wa-headacts span{cursor:pointer;opacity:.8;transition:.12s}
+  .wa-headacts span:hover{opacity:1}
+  .wa-profile{position:absolute;top:0;right:0;bottom:0;width:310px;max-width:85%;background:var(--panel);border-left:1px solid var(--line);
+    transform:translateX(100%);transition:transform .2s ease;z-index:25;display:flex;flex-direction:column;box-shadow:-8px 0 24px rgba(0,0,0,.18)}
+  .wa-profile.open{transform:translateX(0)}
+  .wa-profile-head{display:flex;align-items:center;gap:12px;padding:14px;border-bottom:1px solid var(--line);font-size:15px;flex-shrink:0}
+  .wa-prof-name{text-align:center;padding:18px 14px;border-bottom:1px solid var(--line)}
+  .wa-prof-ava{width:84px;height:84px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:34px;margin:0 auto 10px}
+  .wa-prof-sec{padding:12px 14px;border-bottom:1px solid var(--line)}
+  .wa-prof-sec h5{font-size:12px;color:var(--muted);font-weight:600;margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px}
+  .wa-gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+  .wa-gallery img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;cursor:pointer;background:var(--panel2)}
+  .wa-filelist a{display:flex;align-items:center;gap:8px;padding:7px 0;color:var(--text);text-decoration:none;font-size:13px;border-bottom:1px solid var(--line)}
+  .wa-popmenu{position:absolute;top:46px;right:12px;background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    box-shadow:0 8px 24px rgba(0,0,0,.25);z-index:30;min-width:210px;overflow:hidden;padding:4px}
+  .wa-popmenu div{padding:9px 12px;font-size:13px;cursor:pointer;border-radius:7px}
+  .wa-popmenu div:hover{background:var(--panel2)}
+  /* левая колонка: шапка (заголовок+поиск+фильтры) фиксирована, список скроллится */
+  .wa-left{display:flex;flex-direction:column;min-height:0;min-width:0;border-right:1px solid var(--line);background:var(--panel)}
+  .wa-listhead{padding:12px 13px 10px;border-bottom:1px solid var(--line);flex-shrink:0}
+  .wa-listtitle{font-size:16px;font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:9px}
+  .wa-listtitle small{font-size:11px;color:var(--muted);font-weight:400}
+  .wa-search{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:18px;padding:8px 14px;color:var(--text);font-family:inherit;font-size:13px;outline:none}
+  .wa-search:focus{border-color:var(--accent)}
+  .wa-filters{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+  .wa-chip{padding:5px 12px;border-radius:16px;font-size:12px;cursor:pointer;background:var(--panel2);color:var(--muted);border:1px solid var(--line);white-space:nowrap;transition:.12s;user-select:none}
+  .wa-chip:hover{color:var(--text)}
+  .wa-chip.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .wa-left .chatlist{flex:1;min-height:0;border-right:none}
 
   /* polish & доступность */
   .card.kpi{transition:transform .15s,border-color .15s}
@@ -491,12 +553,30 @@
 
     <!-- WHATSAPP (прямой, WhatsApp Cloud API от Meta) -->
     <section id="tab-wainbox" class="hide">
-      <div class="note" id="wa-status" style="margin-bottom:14px">🟢 Переписки из WhatsApp <b>напрямую</b> (официальный Cloud API). Номера: <span id="wa-accs">…</span></div>
-      <div class="note" style="margin-bottom:14px;font-size:12px">💡 Тот же ИИ-бот «Акылай» (вкладка Instagram → «ИИ-бот») отвечает и здесь. ⚠️ WhatsApp разрешает свободный текст только в течение <b>24 часов</b> после сообщения клиента — позже доходят лишь готовые шаблоны.</div>
       <div class="inbox">
-        <div class="chatlist" id="wa-list"></div>
+        <div class="wa-left">
+          <div class="wa-listhead">
+            <div class="wa-listtitle">🟢 WhatsApp <small id="wa-accs">…</small></div>
+            <input id="wa-search" class="wa-search" placeholder="🔍 Поиск по имени или номеру…" oninput="renderWaList()" autocomplete="off">
+            <div class="wa-filters">
+              <span class="wa-chip active" id="waf-all" onclick="waSetFilter('all')">Все</span>
+              <span class="wa-chip" id="waf-unread" onclick="waSetFilter('unread')">Непрочитанные</span>
+              <span class="wa-chip" id="waf-fav" onclick="waSetFilter('fav')">Избранные</span>
+              <span class="wa-chip" id="waf-arch" onclick="waSetFilter('arch')">Архив</span>
+            </div>
+          </div>
+          <div class="chatlist" id="wa-list"></div>
+        </div>
         <div class="chatview">
-          <div class="head" id="wa-title">← Выберите диалог слева</div>
+          <div class="head wa-head">
+            <div id="wa-title" style="flex:1;min-width:0;cursor:pointer" onclick="if(waCur)waToggleProfile()">← Выберите диалог слева</div>
+            <div class="wa-headacts" id="wa-headacts" style="display:none">
+              <span title="Профиль и медиа" onclick="waToggleProfile()">ⓘ</span>
+              <span id="wa-favbtn" title="Избранное" onclick="waHeadFav()">☆</span>
+              <span id="wa-archbtn" title="В архив" onclick="waHeadArch()">🗄️</span>
+              <span title="Ещё" onclick="waMenu(event)">⋮</span>
+            </div>
+          </div>
           <div class="msgs" id="wa-msgs"></div>
           <div class="replybox">
             <input type="file" id="wa-file" style="display:none" onchange="if(this.files[0]){waSendFile(this.files[0]);this.value='';}">
@@ -504,6 +584,19 @@
             <button class="btn" id="wa-mic" title="Записать голосовое" onclick="waToggleVoice()">🎤</button>
             <input id="wa-reply" placeholder="Ответить клиенту в WhatsApp…" onkeydown="if(event.key==='Enter')waSend()">
             <button class="btn" onclick="waSend()">Отправить</button>
+          </div>
+          <!-- Боковая панель: профиль клиента + медиа-галерея -->
+          <div class="wa-profile" id="wa-profile">
+            <div class="wa-profile-head"><span onclick="waToggleProfile(false)" style="cursor:pointer;font-size:18px">✕</span> <b>Профиль клиента</b></div>
+            <div id="wa-profile-body" style="overflow-y:auto;flex:1"></div>
+          </div>
+          <!-- Контекстное меню «Ещё» -->
+          <div class="wa-popmenu" id="wa-popmenu" style="display:none">
+            <div onclick="waMarkUnread()">🔵 Отметить непрочитанным</div>
+            <div onclick="waHeadFav()">⭐ В избранное / убрать</div>
+            <div onclick="waHeadArch()">🗄️ В архив / вернуть</div>
+            <div onclick="waToggleProfile(true)">🖼️ Медиа и профиль</div>
+            <div onclick="waCloseChat()">✖️ Закрыть чат</div>
           </div>
         </div>
       </div>
@@ -909,9 +1002,12 @@
         <div class="set-row">
           <span class="lbl">🎨 Тема оформления</span>
           <div class="thsel" style="display:flex;gap:6px;flex-wrap:wrap">
-            <button class="btn ghost" id="thbtn-dark" onclick="setTheme('dark')">🌙 Тёмная</button>
+            <button class="btn ghost" id="thbtn-dark" onclick="setTheme('dark')">🌙 Тёмно-синяя</button>
             <button class="btn ghost" id="thbtn-light" onclick="setTheme('light')">☀️ Светлая</button>
-            <button class="btn ghost" id="thbtn-brand" onclick="setTheme('brand')">🏁 Фирменная</button>
+            <button class="btn ghost" id="thbtn-brand" onclick="setTheme('brand')">🏁 FREE WAYS</button>
+            <button class="btn ghost" id="thbtn-wa" onclick="setTheme('wa')">🟢 WhatsApp</button>
+            <button class="btn ghost" id="thbtn-branddark" onclick="setTheme('branddark')">🔵 Bizmart тёмная</button>
+            <button class="btn ghost" id="thbtn-brandlight" onclick="setTheme('brandlight')">🟡 Bizmart светлая</button>
           </div>
         </div>
         <div class="set-row" id="set-row-fx">
@@ -1360,6 +1456,7 @@
     const mod=MODULES.find(m=>m.tabs.indexOf(tab)>=0); if(mod) curModule=mod.key;
     document.querySelectorAll('main section').forEach(s=>s.classList.add('hide'));
     const sec=document.getElementById('tab-'+tab); if(sec) sec.classList.remove('hide');
+    document.body.classList.toggle('tab-wa', tab==='wainbox');   // WhatsApp на всю высоту, без скролла страницы
     if(titles[tab]){ const pt=document.getElementById('page-title'),ps=document.getElementById('page-sub'); let _t0=titles[tab][0]; if(tab==='rentdash') _t0=rentBrand()+' — Дашборд'; if(pt)pt.textContent=_t0; if(ps)ps.textContent=titles[tab][1]; }
     renderTopNav(); renderSubmenu();
     dispatchTab(tab);
@@ -1574,7 +1671,8 @@
     if(ra) ra.style.display=(all||canSee('crm')||canSee('deals')||canSee('chats'))?'':'none';
     // блок оплаты менеджеров проката — только владельцу кабинета проката
     var rp=document.getElementById('set-rentpay');
-    if(rp){ var showPay=(typeof rentIsOwner==='function'&&rentIsOwner()&&(canSee('rent')||canSee('rent_dash')||canSee('rent_list'))); rp.style.display=showPay?'':'none'; if(showPay) loadRentPay(); }
+    // оплата+валюта проката — ТОЛЬКО в кабинете проката (Freeways). В Бизмарте (полный кабинет) этого блока нет.
+    if(rp){ var showPay=(typeof rentIsOwner==='function'&&rentIsOwner()&&typeof isRentCabinet==='function'&&isRentCabinet()); rp.style.display=showPay?'':'none'; if(showPay) loadRentPay(); }
     // долларовый тумблер (FX, для магазина) прячем в кабинете проката — там своя валюта
     var fx=document.getElementById('set-row-fx'); if(fx) fx.style.display=(typeof isRentCabinet==='function'&&isRentCabinet())?'none':'';
     applyAvatar();
@@ -2842,13 +2940,13 @@
     updateFx(); renderAll();
   }
   // --- ТЕМА (тумблер: выкл = тёмная, вкл = светлая) ---
+  var THEMES=['dark','light','brand','wa','branddark','brandlight'];
   function setTheme(t){
-    if(t!=='light'&&t!=='brand') t='dark';
-    document.body.classList.remove('light','brand');
-    if(t==='light') document.body.classList.add('light');
-    else if(t==='brand') document.body.classList.add('brand');
+    if(THEMES.indexOf(t)<0) t='dark';
+    document.body.classList.remove('light','brand','wa','branddark','brandlight');
+    if(t!=='dark') document.body.classList.add(t);     // 'dark' = базовая тёмно-синяя (без класса)
     try{ localStorage.setItem('shturval_theme', t); }catch(e){}
-    ['dark','light','brand'].forEach(function(x){ var b=document.getElementById('thbtn-'+x); if(b) b.classList.toggle('active', x===t); });
+    THEMES.forEach(function(x){ var b=document.getElementById('thbtn-'+x); if(b) b.classList.toggle('active', x===t); });
   }
   (function(){
     let th='dark'; try{ th=localStorage.getItem('shturval_theme')||'dark'; }catch(e){} setTheme(th);
@@ -3509,7 +3607,7 @@
   }
 
   // ===== Раздел WhatsApp (прямые переписки, WhatsApp Cloud API) =====
-  let WA_CONVOS=[], waCur=null, waAccounts=[], waTimer=null, waTick=0;
+  let WA_CONVOS=[], waCur=null, waAccounts=[], waTimer=null, waTick=0, waThreadMsgs=[];
   async function loadWaInbox(){
     const list=document.getElementById('wa-list');
     if(list && !WA_CONVOS.length) list.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">Загрузка…</div>';
@@ -3520,35 +3618,121 @@
       renderWaList();
     }catch(e){ if(list&&!WA_CONVOS.length) list.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">Сервер просыпается — обнови через минуту.</div>'; }
   }
+  // ——— фильтры/флаги диалогов (избранное, архив, непрочитанное) — в localStorage по логину ———
+  let waFilter='all';
+  function waFlags(){ try{ return JSON.parse(localStorage.getItem('wa_flags_'+(getLg()||'x'))||'{}'); }catch(e){ return {}; } }
+  function waFlagsSave(f){ try{ localStorage.setItem('wa_flags_'+(getLg()||'x'), JSON.stringify(f)); }catch(e){} }
+  function waKey(c){ return (c.account_id||'')+'|'+(c.customer_id||''); }
+  function waIsFav(c){ const f=waFlags(); return !!(f.fav&&f.fav[waKey(c)]); }
+  function waIsArch(c){ const f=waFlags(); return !!(f.arch&&f.arch[waKey(c)]); }
+  function waUnread(c){ const f=waFlags(); const seen=(f.seen&&f.seen[waKey(c)])||0; return c.last_dir!=='out' && (Number(c.last_ts)||0)>seen; }
+  function waToggleFav(k){ const f=waFlags(); f.fav=f.fav||{}; if(f.fav[k])delete f.fav[k]; else f.fav[k]=1; waFlagsSave(f); renderWaList(); }
+  function waToggleArch(k){ const f=waFlags(); f.arch=f.arch||{}; if(f.arch[k])delete f.arch[k]; else f.arch[k]=1; waFlagsSave(f); renderWaList(); }
+  function waMarkSeen(c){ if(!c)return; const f=waFlags(); f.seen=f.seen||{}; f.seen[waKey(c)]=Date.now(); waFlagsSave(f); }
+  function waSetFilter(fl){ waFilter=fl; ['all','unread','fav','arch'].forEach(x=>{const b=document.getElementById('waf-'+x); if(b)b.classList.toggle('active', x===fl);}); renderWaList(); }
   function renderWaList(){
     const list=document.getElementById('wa-list'); if(!list) return;
     if(!WA_CONVOS.length){ list.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">Пока нет переписок. Когда клиент напишет на ваш номер WhatsApp — диалог появится здесь.</div>'; return; }
-    list.innerHTML=WA_CONVOS.map((c,i)=>{
+    const q=((document.getElementById('wa-search')||{}).value||'').trim().toLowerCase();
+    let items=WA_CONVOS.map((c,i)=>({c,i})).filter(({c})=>{
+      const arch=waIsArch(c);
+      if(waFilter==='arch') return arch;
+      if(arch) return false;                          // архивные прячем из остальных фильтров
+      if(waFilter==='unread') return waUnread(c);
+      if(waFilter==='fav') return waIsFav(c);
+      return true;
+    });
+    if(q) items=items.filter(({c})=>(((c.customer||'')+' '+(c.customer_id||'')).toLowerCase().indexOf(q)>=0));
+    if(!items.length){ list.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">'+(q?'Ничего не найдено.':'Здесь пусто.')+'</div>'; return; }
+    list.innerHTML=items.map(({c,i})=>{
       const active=(waCur&&waCur.account_id===c.account_id&&waCur.customer_id===c.customer_id);
-      return '<div onclick="openWaThread('+i+')" style="padding:11px 13px;border-bottom:1px solid var(--line);cursor:pointer;'+(active?'background:var(--panel2)':'')+'">'+
-        '<div style="display:flex;justify-content:space-between;gap:6px"><b style="font-size:14px">'+esc(c.customer||c.customer_id)+'</b><span style="font-size:11px;color:var(--muted)">'+(c.last_ts?igTime(c.last_ts):'')+'</span></div>'+
-        '<div style="font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(c.last_dir==='out'?'Вы: ':'')+esc(c.last_text||'')+'</div>'+
-        '<div style="font-size:11px;color:#25D366;margin-top:2px">🟢 '+esc(c.account)+'</div>'+
+      const fav=waIsFav(c), unread=waUnread(c), arch=waIsArch(c), key=waKey(c);
+      return '<div onclick="openWaThread('+i+')" style="padding:10px 13px;border-bottom:1px solid var(--line);cursor:pointer;'+(active?'background:var(--panel2)':'')+'">'+
+        '<div style="display:flex;justify-content:space-between;gap:6px;align-items:center">'+
+          '<b style="font-size:14px;'+(unread?'font-weight:700':'')+'">'+(fav?'⭐ ':'')+esc(c.customer||c.customer_id)+'</b>'+
+          '<span style="font-size:11px;color:var(--muted)">'+(c.last_ts?igTime(c.last_ts):'')+'</span></div>'+
+        '<div style="display:flex;justify-content:space-between;gap:6px;align-items:center;margin-top:1px">'+
+          '<div style="font-size:12px;color:'+(unread?'var(--text)':'var(--muted)')+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1">'+(c.last_dir==='out'?'Вы: ':'')+esc(c.last_text||'')+'</div>'+
+          (unread?'<span style="background:#25D366;min-width:10px;height:10px;border-radius:50%;display:inline-block"></span>':'')+
+        '</div>'+
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:3px">'+
+          '<span style="font-size:11px;color:#25D366">🟢 '+esc(c.account)+'</span>'+
+          '<span style="font-size:13px;display:flex;gap:10px">'+
+            '<span title="Избранное" onclick="event.stopPropagation();waToggleFav(\''+key+'\')" style="cursor:pointer">'+(fav?'⭐':'☆')+'</span>'+
+            '<span title="'+(arch?'Вернуть из архива':'В архив')+'" onclick="event.stopPropagation();waToggleArch(\''+key+'\')" style="cursor:pointer;opacity:.8">'+(arch?'📥':'🗄️')+'</span>'+
+          '</span>'+
+        '</div>'+
       '</div>';
     }).join('');
   }
   async function openWaThread(i){
-    const c=WA_CONVOS[i]; if(!c) return; waCur=c; renderWaList();
+    const c=WA_CONVOS[i]; if(!c) return; waCur=c; waThreadMsgs=[]; waMarkSeen(c); renderWaList();
+    const acts=document.getElementById('wa-headacts'); if(acts) acts.style.display='flex';
+    waUpdateHeadIcons(); waProfileShow(false); waCloseMenu();
     document.getElementById('wa-title').innerHTML='<b>'+esc(c.customer||c.customer_id)+'</b> <span style="color:var(--muted);font-size:12px">· 🟢 '+esc(c.account)+'</span>';
     const box=document.getElementById('wa-msgs'); if(box){ box.innerHTML='<div style="padding:10px;color:var(--muted)">Загрузка…</div>'; box.dataset.sig=''; }
     await waLoadThread(true);
+  }
+  // ——— Шапка диалога: профиль, медиа-галерея, избранное/архив/меню ———
+  function waUpdateHeadIcons(){
+    if(!waCur) return;
+    const fb=document.getElementById('wa-favbtn'); if(fb) fb.textContent=waIsFav(waCur)?'⭐':'☆';
+    const ab=document.getElementById('wa-archbtn'); if(ab){ ab.textContent=waIsArch(waCur)?'📥':'🗄️'; ab.title=waIsArch(waCur)?'Вернуть из архива':'В архив'; }
+  }
+  function waHeadFav(){ if(!waCur)return; waToggleFav(waKey(waCur)); waUpdateHeadIcons(); waCloseMenu(); if(document.getElementById('wa-profile').classList.contains('open')) waRenderProfile(); }
+  function waHeadArch(){ if(!waCur)return; waToggleArch(waKey(waCur)); waUpdateHeadIcons(); waCloseMenu(); if(document.getElementById('wa-profile').classList.contains('open')) waRenderProfile(); }
+  function waMenu(e){ if(e)e.stopPropagation(); const m=document.getElementById('wa-popmenu'); if(m) m.style.display=(m.style.display==='none'||!m.style.display?'block':'none'); }
+  function waCloseMenu(){ const m=document.getElementById('wa-popmenu'); if(m) m.style.display='none'; }
+  function waMarkUnread(){ if(!waCur)return; const f=waFlags(); f.seen=f.seen||{}; f.seen[waKey(waCur)]=0; waFlagsSave(f); waCloseMenu(); waCloseChat(); }
+  function waCloseChat(){
+    waCur=null; waThreadMsgs=[]; waCloseMenu(); waProfileShow(false);
+    const t=document.getElementById('wa-title'); if(t) t.innerHTML='← Выберите диалог слева';
+    const acts=document.getElementById('wa-headacts'); if(acts) acts.style.display='none';
+    const box=document.getElementById('wa-msgs'); if(box){ box.innerHTML=''; box.dataset.sig=''; }
+    renderWaList();
+  }
+  function waProfileShow(open){ const p=document.getElementById('wa-profile'); if(p) p.classList.toggle('open', !!open); }
+  function waToggleProfile(force){
+    const p=document.getElementById('wa-profile'); if(!p) return;
+    if(!waCur){ p.classList.remove('open'); return; }
+    const willOpen=(typeof force==='boolean')?force:!p.classList.contains('open');
+    if(willOpen) waRenderProfile();
+    p.classList.toggle('open', willOpen); waCloseMenu();
+  }
+  function waRenderProfile(){
+    const c=waCur, body=document.getElementById('wa-profile-body'); if(!c||!body) return;
+    const name=esc(c.customer||c.customer_id);
+    const initial=esc(((c.customer||c.customer_id||'?').trim()[0]||'?').toUpperCase());
+    const imgs=waThreadMsgs.filter(m=>m.med&&(m.mtype==='image'||m.mtype==='sticker'));
+    const files=waThreadMsgs.filter(m=>m.med&&(m.mtype==='document'||m.mtype==='video'||m.mtype==='audio'));
+    let h='<div class="wa-prof-name"><div class="wa-prof-ava">'+initial+'</div>'+
+      '<div style="font-size:17px;font-weight:700">'+name+'</div>'+
+      '<div style="color:var(--muted);font-size:13px;margin-top:3px">+'+esc(c.customer_id)+'</div>'+
+      '<div style="color:#25D366;font-size:12px;margin-top:4px">🟢 '+esc(c.account)+'</div></div>';
+    h+='<div class="wa-prof-sec" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">'+
+      '<button class="btn ghost" style="font-size:12px" onclick="waHeadFav()">'+(waIsFav(c)?'⭐ В избранном':'☆ В избранное')+'</button>'+
+      '<button class="btn ghost" style="font-size:12px" onclick="waHeadArch()">'+(waIsArch(c)?'📥 Из архива':'🗄️ В архив')+'</button></div>';
+    h+='<div class="wa-prof-sec"><h5>Медиа · '+imgs.length+'</h5>'+
+      (imgs.length?'<div class="wa-gallery">'+imgs.map(m=>'<img data-wamedia="'+esc(m.med)+'" onclick="waOpenMedia(\''+esc(m.med)+'\',\'image\')">').join('')+'</div>':'<div style="color:var(--muted);font-size:12px">Пока нет фото и стикеров</div>')+'</div>';
+    h+='<div class="wa-prof-sec"><h5>Файлы · '+files.length+'</h5>'+
+      (files.length?'<div class="wa-filelist">'+files.map(m=>'<a href="#" onclick="waOpenMedia(\''+esc(m.med)+'\',\''+esc(m.fname||'file')+'\');return false">'+(m.mtype==='audio'?'🎤':(m.mtype==='video'?'🎬':'📎'))+' '+esc(m.fname||m.mtype)+'</a>').join('')+'</div>':'<div style="color:var(--muted);font-size:12px">Пока нет файлов</div>')+'</div>';
+    h+='<div class="wa-prof-sec" style="font-size:12px;color:var(--muted);border-bottom:none">ⓘ WhatsApp разрешает свободный текст только <b>24 часа</b> после последнего сообщения клиента. Позже — только готовые шаблоны. ИИ-бот «Акылай» (Instagram → «ИИ-бот») отвечает и здесь.</div>';
+    body.innerHTML=h;
+    waHydrateMedia(body);
   }
   async function waLoadThread(first){
     const c=waCur; const box=document.getElementById('wa-msgs'); if(!c||!box) return;
     try{
       const r=await apiFetch('/api/wa/thread?account='+encodeURIComponent(c.account_id)+'&customer='+encodeURIComponent(c.customer_id)+'&_='+Date.now(),{},ONEC_BASE);
       const d=await r.json(); if(waCur!==c) return; const msgs=d.msgs||[];
+      waThreadMsgs=msgs;                               // для галереи/профиля
       const last=msgs[msgs.length-1];
       const sig=msgs.length+'|'+(last?(last.ts+':'+last.x):'');
       if(box.dataset.sig===sig && !first) return;
       const atBottom=(box.scrollHeight-box.scrollTop-box.clientHeight)<70;
       box.dataset.sig=sig;
       box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+(m.t==='out'?'out':'in')+'">'+waBubbleBody(m)+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>').join(''):'<div style="padding:10px;color:var(--muted)">Нет сообщений</div>';
+      waMarkSeen(c);                                   // открытый диалог считаем прочитанным
       waHydrateMedia(box);
       if(first||atBottom) box.scrollTop=box.scrollHeight;
     }catch(e){ if(first) box.innerHTML='<div style="padding:10px;color:var(--muted)">Не удалось загрузить.</div>'; }
@@ -3576,7 +3760,8 @@
   function waBubbleBody(m){
     if(m.med){
       const t=m.mtype, id=esc(m.med), cap=m.x?'<div style="margin-top:4px">'+linkify(m.x)+'</div>':'';
-      if(t==='image'||t==='sticker') return '<img data-wamedia="'+id+'" style="max-width:230px;max-height:300px;border-radius:8px;cursor:pointer;display:block" onclick="waOpenMedia(\''+id+'\',\''+esc(m.fname||'image')+'\')" title="Открыть">'+cap;
+      if(t==='sticker') return '<img data-wamedia="'+id+'" style="width:130px;max-width:60%;display:block;background:transparent" title="Стикер">'+cap;
+      if(t==='image') return '<img data-wamedia="'+id+'" style="max-width:230px;max-height:300px;border-radius:8px;cursor:pointer;display:block" onclick="waOpenMedia(\''+id+'\',\''+esc(m.fname||'image')+'\')" title="Открыть">'+cap;
       if(t==='audio') return '<audio data-wamedia="'+id+'" controls preload="none" style="max-width:240px;height:40px"></audio>'+cap;
       if(t==='video') return '<video data-wamedia="'+id+'" controls preload="none" style="max-width:240px;border-radius:8px;display:block"></video>'+cap;
       return '<a href="#" onclick="waOpenMedia(\''+id+'\',\''+esc(m.fname||'file')+'\');return false" style="color:inherit;text-decoration:underline">📎 '+esc(m.fname||'файл')+'</a>'+cap;
@@ -3648,6 +3833,11 @@
   }
   function startWaAuto(){
     if(waTimer) return;
+    // закрывать меню «Ещё» при клике вне его
+    document.addEventListener('click',function(e){
+      const m=document.getElementById('wa-popmenu'); if(!m||m.style.display==='none') return;
+      if(!m.contains(e.target) && !(e.target.closest && e.target.closest('.wa-headacts'))) waCloseMenu();
+    });
     waTimer=setInterval(()=>{
       const tb=document.getElementById('tab-wainbox'); if(!tb||tb.classList.contains('hide')) return;
       waTick++;
@@ -5396,7 +5586,7 @@
       });
   }
   function rentDel(type,id){
-    var names={rental:'аренду',expense:'расход',handed:'запись «сдано»',car:'машину'};
+    var names={rental:'аренду',expense:'расход',handed:'запись «сдано»',car:'машину',note:'заметку',rtask:'задачу'};
     if(!confirm('Удалить '+(names[type]||'запись')+'? Это нельзя отменить.')) return;
     rentPost('del_'+type,{id:id}).catch(function(e){ alert('Не удалось удалить: '+e.message); });
   }
@@ -5508,8 +5698,12 @@
   var RENT_SOLD_OPEN=false;
   function carIsSold(c){ return ((c.status||'').toLowerCase().indexOf('продан')>=0); }
   function rentToggleSold(){ RENT_SOLD_OPEN=!RENT_SOLD_OPEN; renderRentCars(); }
-  function rentSellCar(id){ if(!confirm('Отметить машину как ПРОДАННУЮ? Она уедет в скрытый архив «Проданные авто». История и расчёты сохранятся, из активного парка пропадёт.')) return;
-    rentPost('edit_car',{id:id,status:'Продана'}).catch(function(e){ alert('Не получилось: '+e.message); }); }
+  function rentSellCar(id){
+    var c=(rentD().cars||[]).filter(function(x){return x.id===id;})[0]||{};
+    if(!confirm('Отметить машину «'+(c.model||'')+'» как ПРОДАННУЮ? Она уедет в архив «Проданные авто». История и расчёты сохранятся, из активного парка пропадёт.')) return;
+    var v=prompt('За сколько продали машину? Сумма в '+MUNIT()+' (можно оставить пустым и вписать позже):', (c.sold_price?rnum(c.sold_price):''));
+    if(v===null) return;
+    rentPost('edit_car',{id:id,status:'Продана',sold_price:(v||'').trim(),sold_date:isoToRu(todayIso())}).catch(function(e){ alert('Не получилось: '+e.message); }); }
   function rentRestoreCar(id){ rentPost('edit_car',{id:id,status:'Свободна'}).then(function(){ RENT_SOLD_OPEN=true; }).catch(function(e){ alert('Не получилось: '+e.message); }); }
   function _carRow(c,archived){
     var acts;
@@ -5528,24 +5722,53 @@
       '<td '+RT_TD+' style="text-align:right">'+(c.cost?esc(c.cost):'<span style="color:var(--muted)">—</span>')+'</td>'+
       '<td '+RT_TD+'>'+rstatusChip(c.status)+'</td>'+acts+'</tr>';
   }
+  // строка архива проданной машины — с ценой покупки/продажи и прибылью
+  function _soldRow(c){
+    var cost=rnum(c.cost), sp=rnum(c.sold_price), prof=sp-cost;
+    var pc=prof>0?'var(--green)':(prof<0?'var(--red)':'var(--muted)');
+    var acts=rentIsOwner()
+      ? ('<td '+RT_TD+' style="white-space:nowrap;text-align:right">'+
+         '<button class="btn ghost" title="Вернуть в парк" style="padding:3px 8px;font-size:13px;color:var(--green)" onclick="rentRestoreCar(\''+c.id+'\')">↩︎</button> '+
+         '<button class="btn ghost" title="Изменить (в т.ч. цену продажи)" style="padding:3px 8px;font-size:13px" onclick="openRentForm(\'car\',\''+c.id+'\')">✏️</button> '+
+         '<button class="btn ghost" title="Удалить навсегда" style="padding:3px 8px;font-size:13px;color:var(--red)" onclick="rentDel(\'car\',\''+c.id+'\')">🗑</button></td>')
+      : '<td '+RT_TD+' style="text-align:right;color:var(--muted)">🔒</td>';
+    return '<tr><td '+RT_TD+' style="color:var(--muted)">'+esc(c.id||'')+'</td><td '+RT_TD+'><b>'+esc(c.model||'')+'</b></td>'+
+      '<td '+RT_TD+'>'+(c.plate?esc(c.plate):'<span style="color:var(--muted)">—</span>')+'</td>'+
+      '<td '+RT_TD+' style="text-align:right">'+(cost?fmt(cost):'—')+'</td>'+
+      '<td '+RT_TD+' style="text-align:right">'+(sp?fmt(sp):'<span style="color:var(--muted)">не указана</span>')+'</td>'+
+      '<td '+RT_TD+' style="text-align:right;color:'+pc+'"><b>'+((sp||cost)?fmt(prof):'—')+'</b></td>'+acts+'</tr>';
+  }
   function renderRentCars(){
     var b=document.getElementById('rent-cars'); if(!b) return;
     var all=rentD().cars||[];
     var active=all.filter(function(c){ return !carIsSold(c); });
-    var sold=all.filter(carIsSold);
-    var head=['ID','Модель','Госномер','Цена/сутки','Залог','Стоимость','Статус',''];
     var own=rentIsOwner();
-    var note=own?'🚗 Автопарк — '+active.length+' машин. Цена/сутки, залог и стоимость покупки в '+MUNIT()+'. ➕ добавить · ✏️ изменить · 💰 продать (в архив) · 🗑 удалить.'
-                :'🚗 Автопарк — '+active.length+' машин. 🔒 Изменять машины может только владелец — вам доступен просмотр.';
     var cnt=function(w){ return active.filter(function(c){ return (c.status||'').toLowerCase().indexOf(w)>=0; }).length; };
     var park='<div class="card" style="margin-bottom:14px"><h3>🚗 Парк</h3><div class="kpis" style="grid-template-columns:repeat(4,1fr);margin:0">'+
       kpiCard('Всего машин',active.length)+kpiCard('Свободно',cnt('свобод'))+kpiCard('В аренде',cnt('аренд'))+kpiCard('На ремонте',cnt('ремонт'))+'</div></div>';
-    var main=park+(own?rAddBtn('car','Машина'):'')+'<div class="note" style="margin-bottom:12px">'+note+'</div>'+
+    // сотрудник видит ТОЛЬКО общий статус парка, без списка машин
+    if(!own){
+      b.innerHTML=park+'<div class="note">🔒 Список машин и цены видит только владелец. Вам доступен общий статус парка: сколько всего машин, свободно, в аренде и на ремонте.</div>';
+      return;
+    }
+    // владелец — полный список + продажа + архив проданных с прибылью
+    var sold=all.filter(carIsSold);
+    var head=['ID','Модель','Госномер','Цена/сутки','Залог','Стоимость','Статус',''];
+    var note='🚗 Автопарк — '+active.length+' машин. Цена/сутки, залог и стоимость покупки в '+MUNIT()+'. ➕ добавить · ✏️ изменить · 💰 продать (в архив) · 🗑 удалить.';
+    var main=park+rAddBtn('car','Машина')+'<div class="note" style="margin-bottom:12px">'+note+'</div>'+
       rtable(head, active.map(function(c){ return _carRow(c,false); }).join(''));
     var arch='';
     if(sold.length){
+      var soldHead=['ID','Модель','Госномер','Покупка','Продажа','Прибыль',''];
+      var totCost=0,totSold=0;
+      sold.forEach(function(c){ totCost+=rnum(c.cost); totSold+=rnum(c.sold_price); });
+      var totProf=totSold-totCost;
+      var sfoot='<tfoot><tr><td '+RT_TD+' colspan="3" style="text-align:right;color:var(--muted)">Итого ('+sold.length+'):</td>'+
+        '<td '+RT_TD+' style="text-align:right"><b>'+fmt(totCost)+'</b></td>'+
+        '<td '+RT_TD+' style="text-align:right"><b>'+fmt(totSold)+'</b></td>'+
+        '<td '+RT_TD+' style="text-align:right;color:'+(totProf>=0?'var(--green)':'var(--red)')+'"><b>'+fmt(totProf)+'</b></td><td '+RT_TD+'></td></tr></tfoot>';
       arch='<div style="margin-top:18px"><button class="btn ghost" style="padding:7px 14px;font-size:14px" onclick="rentToggleSold()">🗄 Проданные авто ('+sold.length+') '+(RENT_SOLD_OPEN?'▲':'▼')+'</button>'+
-        (RENT_SOLD_OPEN?('<div style="margin-top:12px"><div class="note" style="margin-bottom:10px">Архив проданных машин — в активный парк и анализ не входят. Можно вернуть (↩︎) или удалить совсем.</div>'+rtable(head, sold.map(function(c){ return _carRow(c,true); }).join('')))+'</div>':'')+'</div>';
+        (RENT_SOLD_OPEN?('<div style="margin-top:12px"><div class="note" style="margin-bottom:10px">Архив проданных машин — в активный парк и анализ не входят. <b>Прибыль = цена продажи − стоимость покупки</b>. Цену продажи можно вписать/исправить через ✏️. Можно вернуть (↩︎) или удалить совсем.</div>'+rtable(soldHead, sold.map(_soldRow).join(''), sfoot))+'</div>':'')+'</div>';
     }
     b.innerHTML=main+arch;
   }
@@ -5872,10 +6095,65 @@
       .map(function(c){ return '<option value="'+esc(c.model)+'"'+((c.model===sel)?' selected':'')+'>'+esc(c.model)+'</option>'; }).join('');
   }
   function _selOpts(arr,sel){ return arr.map(function(o){ return '<option'+((o===sel)?' selected':'')+'>'+esc(o)+'</option>'; }).join(''); }
+  // формат времени из ms-метки (для заметок/задач)
+  function rentTsFmt(ms){ if(!ms) return ''; try{ var d=new Date(ms),p=function(n){return(n<10?'0':'')+n;}; return p(d.getDate())+'.'+p(d.getMonth()+1)+'.'+d.getFullYear()+' '+p(d.getHours())+':'+p(d.getMinutes()); }catch(e){ return ''; } }
+
+  // ---------- ЗАМЕТКИ (доска: владелец пишет, сотрудники читают) ----------
+  function renderRentNotes(){
+    var b=document.getElementById('rent-notes'); if(!b) return;
+    var notes=rentD().notes||[]; var own=rentIsOwner();
+    var intro=own
+      ? '📌 <b>Доска заметок.</b> Пиши сюда заметки (например, что по ремонту) — их видят все сотрудники проката. Менять может только владелец.'
+      : '📌 <b>Заметки от руководителя.</b> Только просмотр.';
+    var add=own?'<div style="margin-bottom:14px"><button class="btn" onclick="openRentForm(\'note\',\'\')">➕ Добавить заметку</button></div>':'';
+    var list=notes.map(function(n){
+      var when=rentTsFmt(n.edit_ts||n.ts);
+      var acts=own?('<div style="margin-top:10px;display:flex;gap:8px"><button class="btn ghost" style="padding:3px 12px;font-size:13px" onclick="openRentForm(\'note\',\''+n.id+'\')">✏️ Изменить</button><button class="btn ghost" style="padding:3px 12px;font-size:13px;color:var(--red)" onclick="rentDel(\'note\',\''+n.id+'\')">🗑 Удалить</button></div>'):'';
+      return '<div class="card" style="margin-bottom:12px"><div style="white-space:pre-wrap;font-size:14px;line-height:1.55">'+esc(n.text||'')+'</div>'+
+        '<div style="margin-top:10px;font-size:12px;color:var(--muted)">🧑‍💼 '+esc(n.by||'—')+(when?(' · '+when):'')+(n.edit_by&&n.edit_by!==n.by?(' · правил: '+esc(n.edit_by)):'')+'</div>'+acts+'</div>';
+    }).join('');
+    if(!notes.length) list='<div class="card"><span style="color:var(--muted);font-size:13px">Пока заметок нет.'+(own?' Нажми «➕ Добавить заметку».':'')+'</span></div>';
+    b.innerHTML=add+'<div class="note" style="margin-bottom:14px">'+intro+'</div>'+list;
+  }
+
+  // ---------- ЗАДАЧИ (пульт руководителя: владелец ставит, исполнитель отмечает) ----------
+  function rentTaskDone(id){ rentPost('done_rtask',{id:id}).catch(function(e){ alert('Не получилось: '+e.message); }); }
+  function renderRentTasks(){
+    var b=document.getElementById('rent-tasks'); if(!b) return;
+    var D=rentD(); var tasks=D.rtasks||[]; var staff=D.staff||[]; var own=rentIsOwner();
+    var mylogin=((USER.login||'')+'').toLowerCase();
+    var nameOf=function(lg){ var s=staff.filter(function(x){return x.login===lg;})[0]; return s?s.name:(lg||'—'); };
+    var visible=own?tasks:tasks.filter(function(t){ return (t.assignee||'')===mylogin; });
+    var intro=own
+      ? '🗂 <b>Пульт задач.</b> Ставь задания сотрудникам — исполнитель отметит «Выполнено», а ты видишь статус.'
+      : '🗂 <b>Твои задачи от руководителя.</b> Отметь «Выполнено», когда сделаешь.';
+    var add=own?'<div style="margin-bottom:14px"><button class="btn" onclick="openRentForm(\'rtask\',\'\')">➕ Поставить задачу</button></div>':'';
+    var openT=visible.filter(function(t){return t.status!=='done';});
+    var doneT=visible.filter(function(t){return t.status==='done';});
+    var rowOf=function(t){
+      var dn=t.status==='done';
+      var canDone=own||(t.assignee||'')===mylogin;
+      var btn=canDone?('<button class="btn'+(dn?' ghost':'')+'" style="padding:5px 12px;font-size:13px" onclick="rentTaskDone(\''+t.id+'\')">'+(dn?'↩︎ Вернуть':'✓ Выполнено')+'</button>'):'';
+      var ownActs=own?(' <button class="btn ghost" style="padding:5px 10px;font-size:13px" onclick="openRentForm(\'rtask\',\''+t.id+'\')">✏️</button><button class="btn ghost" style="padding:5px 10px;font-size:13px;color:var(--red)" onclick="rentDel(\'rtask\',\''+t.id+'\')">🗑</button>'):'';
+      var meta='👤 '+esc(nameOf(t.assignee||''))+(t.due?(' · ⏰ '+esc(t.due)):'')+(dn&&t.done_by?(' · ✅ '+esc(t.done_by)+(t.done_ts?(' '+rentTsFmt(t.done_ts)):'')):'');
+      return '<div class="card" style="margin-bottom:10px;'+(dn?'opacity:.62':'')+'"><div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">'+
+        '<div style="flex:1;min-width:200px"><div style="font-size:14px;'+(dn?'text-decoration:line-through;color:var(--muted)':'')+'">'+esc(t.text||'')+'</div>'+
+        '<div style="margin-top:6px;font-size:12px;color:var(--muted)">'+meta+'</div></div>'+
+        '<div style="white-space:nowrap">'+btn+ownActs+'</div></div></div>';
+    };
+    var html=add+'<div class="note" style="margin-bottom:14px">'+intro+'</div>';
+    if(!visible.length){ html+='<div class="card"><span style="color:var(--muted);font-size:13px">Задач нет.'+(own?' Нажми «➕ Поставить задачу».':'')+'</span></div>'; }
+    else{
+      html+='<h3 style="margin:6px 0 10px">🔵 В работе ('+openT.length+')</h3>'+(openT.length?openT.map(rowOf).join(''):'<div class="note" style="margin-bottom:14px">Активных задач нет 👍</div>');
+      if(doneT.length) html+='<h3 style="margin:18px 0 10px">✅ Выполнено ('+doneT.length+')</h3>'+doneT.map(rowOf).join('');
+    }
+    b.innerHTML=html;
+  }
+
   function openRentForm(type,id){
-    var D=rentD(), rec=null, listMap={rental:'rentals',expense:'expenses',handed:'handed',car:'cars'};
+    var D=rentD(), rec=null, listMap={rental:'rentals',expense:'expenses',handed:'handed',car:'cars',note:'notes',rtask:'rtasks'};
     if(id){ rec=(D[listMap[type]]||[]).filter(function(x){return x.id===id;})[0]||null; }
-    var titleMap={rental:'аренду',expense:'расход',handed:'«сдано»',car:'машину'};
+    var titleMap={rental:'аренду',expense:'расход',handed:'«сдано»',car:'машину',note:'заметку',rtask:'задачу'};
     var title=(id?'✏️ Изменить ':'➕ Добавить ')+titleMap[type];
     var html='';
     if(type==='rental'){
@@ -5908,7 +6186,20 @@
         '<div class="row"><div><label>Цена/сутки, '+MUNIT()+'</label><input type="number" inputmode="numeric" id="rf-price" value="'+((rec&&rnum(rec.price))||'')+'" placeholder="0"></div>'+
         '<div><label>Залог, '+MUNIT()+'</label><input type="number" inputmode="numeric" id="rf-deposit" value="'+((rec&&rnum(rec.deposit))||'')+'" placeholder="0"></div></div>'+
         '<label>Стоимость покупки, '+MUNIT()+'</label><input type="number" inputmode="numeric" id="rf-cost" value="'+((rec&&rnum(rec.cost))||'')+'" placeholder="за сколько купили">'+
+        '<label>Цена продажи, '+MUNIT()+' <span style="color:var(--muted);font-weight:400;font-size:11px">— если машину продали</span></label><input type="number" inputmode="numeric" id="rf-soldprice" value="'+((rec&&rnum(rec.sold_price))||'')+'" placeholder="за сколько продали">'+
         '<label>Статус</label><select id="rf-status">'+_selOpts(['Свободна','В аренде','На ремонте','Продана'],(rec&&rec.status)||'Свободна')+'</select>';
+    } else if(type==='note'){
+      html=
+        '<label>Текст заметки *</label>'+
+        '<textarea id="rf-text" rows="5" style="width:100%;padding:10px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:14px;resize:vertical;font-family:inherit" placeholder="Например: Kia Seltos 01KG777 — заменить тормозные колодки до пятницы">'+esc(rec&&rec.text||'')+'</textarea>'+
+        '<div style="font-size:12px;color:var(--muted);margin-top:8px">Заметку увидят все сотрудники проката. Менять её можешь только ты (владелец).</div>';
+    } else if(type==='rtask'){
+      var sopts=(rentD().staff||[]).map(function(s){ return '<option value="'+esc(s.login)+'"'+(rec&&rec.assignee===s.login?' selected':'')+'>'+esc(s.name)+(s.role?(' — '+esc(s.role)):'')+'</option>'; }).join('');
+      html=
+        '<label>Кому поручить *</label><select id="rf-assignee"><option value="">— выбрать сотрудника —</option>'+sopts+'</select>'+
+        '<label>Что сделать *</label>'+
+        '<textarea id="rf-text" rows="3" style="width:100%;padding:10px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:14px;resize:vertical;font-family:inherit" placeholder="Например: помыть и подготовить RR Westminster к выдаче">'+esc(rec&&rec.text||'')+'</textarea>'+
+        '<label>Срок (необязательно)</label><input id="rf-due" value="'+esc(rec&&rec.due||'')+'" placeholder="напр. до пятницы / 30.06">';
     }
     document.getElementById('rentmodal').innerHTML='<h3>'+title+'</h3>'+html+
       '<div id="rf-msg" style="font-size:13px;margin-top:10px;min-height:16px;color:var(--red)"></div>'+
@@ -5935,8 +6226,15 @@
       if(!p.date){ msg.textContent='Укажите дату.'; return; }
       if(!p.sum){ msg.textContent='Укажите сумму.'; return; }
     } else if(type==='car'){
-      p.model=_v('rf-model'); p.plate=_v('rf-plate'); p.price=_v('rf-price'); p.deposit=_v('rf-deposit'); p.cost=_v('rf-cost'); p.status=_v('rf-status');
+      p.model=_v('rf-model'); p.plate=_v('rf-plate'); p.price=_v('rf-price'); p.deposit=_v('rf-deposit'); p.cost=_v('rf-cost'); p.sold_price=_v('rf-soldprice'); p.status=_v('rf-status');
       if(!p.model){ msg.textContent='Укажите модель.'; return; }
+    } else if(type==='note'){
+      p.text=_v('rf-text');
+      if(!p.text){ msg.textContent='Напишите текст заметки.'; return; }
+    } else if(type==='rtask'){
+      p.assignee=_v('rf-assignee'); p.text=_v('rf-text'); p.due=_v('rf-due');
+      if(!p.assignee){ msg.textContent='Выберите, кому поручить задачу.'; return; }
+      if(!p.text){ msg.textContent='Напишите, что нужно сделать.'; return; }
     }
     if(id) p.id=id;
     var btn=document.getElementById('rf-save'); btn.disabled=true; btn.textContent='Сохраняю…';
