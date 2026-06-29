@@ -1536,7 +1536,7 @@
       html:'<b>'+(x.qty<=0?'Закончился товар.':'Заканчивается.')+'</b> «'+esc(x.title||'')+'» — '+(x.qty||0)+' шт.'}));
     // --- АВТО РЕНТ: сдачи авто (сегодня/завтра/просрочка) + должники ---
     try{
-      if(typeof RENT!=='undefined' && RENT && RENT.data){
+      if(typeof RENT!=='undefined' && RENT && RENT.data && (typeof rentIsOwner==='function'&&rentIsOwner())){
         var D=RENT.data;
         (D.rentals||[]).forEach(function(r){
           var u=(typeof rentUrg==='function')?rentUrg(r):null;
@@ -1675,8 +1675,13 @@
     renderTopNav(); renderSubmenu(); openTab(curTab);
     // колокольчик «Требует внимания» — торговля ИЛИ прокат (должники + сдачи авто)
     const bell=document.getElementById('bell-btn');
-    const _rentAcc=canSee('rent')||(USER.sections||[]).some(function(s){return s.indexOf('rent')===0;});
-    if(bell){ bell.style.display=(isOwner()||canSee('prod')||canSee('crm')||canSee('dash')||_rentAcc)?'':'none'; }
+    const _rentCab=(typeof isRentCabinet==='function'&&isRentCabinet());
+    if(bell){
+      // обновления (колокольчик): в прокате — ТОЛЬКО владельцу; в торговле — владелец/CRM/товары/дашборд
+      const showBell=_rentCab ? (typeof isCabinetOwner==='function'&&isCabinetOwner())
+                              : (isOwner()||canSee('prod')||canSee('crm')||canSee('dash'));
+      bell.style.display=showBell?'':'none';
+    }
     const u=document.querySelector('.user'); if(u&&u.childNodes[0]) u.childNodes[0].nodeValue=(USER.name||'Пользователь')+' ';
     const av=document.querySelector('.avatar'); if(av) av.textContent=(USER.name||'?').slice(0,1).toUpperCase();
     updateSettings();
