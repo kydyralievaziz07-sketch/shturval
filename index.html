@@ -1543,9 +1543,7 @@
           if(u) items.push({cls:(u.tag.indexOf('🔴')>=0?'red':'warn'),
             html:'<b>'+u.tag+'.</b> '+esc(r.model||'')+(r.renter?' · '+esc(r.renter):'')+(r.phone?' · <a href="tel:'+esc((r.phone||'').replace(/[^0-9+]/g,''))+'" style="color:inherit">'+esc(r.phone)+'</a>':'')+' (сдача '+esc(r.end||'')+')'});
         });
-        (D.rentals||[]).filter(function(r){ return rnum(r.debt)>0; }).forEach(function(r){
-          items.push({cls:'red',html:'<b>Долг '+esc(r.debt)+' '+MUNIT()+'.</b> '+esc(r.model||'')+(r.renter?' · '+esc(r.renter):'')+(r.phone?' · <a href="tel:'+esc((r.phone||'').replace(/[^0-9+]/g,''))+'" style="color:inherit">'+esc(r.phone)+'</a>':'')});
-        });
+        // в колокольчике — ТОЛЬКО про сдачу машин (когда вернуть). Долги показываем в разделе «Требует внимания».
       }
     }catch(e){}
     const box=document.getElementById('notif-list');
