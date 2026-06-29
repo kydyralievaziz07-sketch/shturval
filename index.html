@@ -1391,7 +1391,7 @@
       // «rent» = весь раздел; иначе по под-доступу: rentcars→rent_cars, rentdash→rent_dash и т.п.
       if(isOwner()||canSee('rent')) return true;
       // «Требует внимания» — только владельцу (должники/сдачи авто)
-      if(tab==='rentalert') return isCabinetOwner();
+      if(tab==='rentalert') return (USER.sections||[]).some(function(s){return s.indexOf('rent')===0;});
       // «Заметки» и «Задачи» видят все сотрудники проката (заметки — читают, задачи — свои)
       if(tab==='rentnotes'||tab==='renttasks') return (USER.sections||[]).some(function(s){return s.indexOf('rent')===0;});
       return canSee('rent_'+tab.slice(4));
@@ -5513,6 +5513,8 @@
   function rentS(){ return (RENT&&RENT.summary)||{}; }
   // владелец проката (полный контроль: машины, план, импорт). Менеджеры — только операции.
   function rentIsOwner(){ return (typeof isCabinetOwner==='function') && isCabinetOwner(); }
+  // право писать заметки: владелец ИЛИ сотрудник с доступом «rent_notes_edit» (напр. администратор)
+  function canEditNotes(){ return rentIsOwner() || ((USER.sections||[]).indexOf('rent_notes_edit')>=0); }
   function rnum(s){ return parseInt(String(s==null?'':s).replace(/[^\d-]/g,''),10)||0; }
   function rsom(s){ s=(s==null?'':String(s)).trim(); return s?('<b>'+esc(s)+'</b> <span style="color:var(--muted);font-size:12px">'+MUNIT()+'</span>'):'<span style="color:var(--muted)">—</span>'; }
   function isoToRu(s){ s=(s||'').trim(); var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s); return m?(m[3]+'.'+m[2]+'.'+m[1]):s; }
@@ -5686,8 +5688,22 @@
         '<span><b>'+esc(r.model||'')+'</b>'+(r.renter?' · '+esc(r.renter):'')+(r.phone?' · <a href="tel:'+esc((r.phone||'').replace(/[^0-9+]/g,''))+'" style="color:var(--muted);text-decoration:none">'+esc(r.phone)+'</a>':'')+'</span>'+
         '<span style="color:var(--red);white-space:nowrap;font-weight:600">'+esc(r.debt||'')+' '+MUNIT()+'</span></div>';
     }).join('');
+    // СОТРУДНИК: только сдача сегодня (🟠) и завтра (🟡) — без просрочки и без долгов
+    if(!rentIsOwner()){
+      var soon=due.filter(function(x){ return x.u.tag.indexOf('просрочка')<0; });
+      var soonRows=soon.map(function(x){
+        return '<div style="display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)">'+
+          '<span><b>'+esc(x.r.model||'')+'</b>'+(x.r.renter?' · '+esc(x.r.renter):'')+(x.r.phone?' · <a href="tel:'+esc((x.r.phone||'').replace(/[^0-9+]/g,''))+'" style="color:var(--muted);text-decoration:none">'+esc(x.r.phone)+'</a>':'')+'</span>'+
+          '<span style="color:'+x.u.col+';white-space:nowrap;font-weight:600">'+x.u.tag+' ('+esc(x.r.end||'')+')</span></div>';
+      }).join('');
+      var eh='<div class="note" style="margin-bottom:14px">🔔 <b>Требует внимания</b> — ближайшие сдачи авто (🟠 сегодня · 🟡 завтра).</div>';
+      eh+='<div class="card"><h3>🚗 Сдача авто'+(soon.length?(' ('+soon.length+')'):'')+'</h3>'+
+        (soon.length?soonRows:'<div style="color:var(--muted);font-size:13px;margin-top:6px">Ближайших сдач нет 👍</div>')+'</div>';
+      b.innerHTML=eh; return;
+    }
+    // ВЛАДЕЛЕЦ: всё — сдачи (включая просрочку) + должники
     var html='<div class="note" style="margin-bottom:14px">🔔 <b>Требует внимания</b> — сдачи авто (🟡 завтра · 🟠 сегодня · 🔴 просрочка) и должники.</div>';
-    html+='<div class="card" style="margin-bottom:14px'+(due.some(function(x){return x.u.tag[0]==='🔴';})?';border-color:var(--red)':'')+'"><h3>🚗 Сдача авто'+(due.length?(' ('+due.length+')'):'')+'</h3>'+
+    html+='<div class="card" style="margin-bottom:14px'+(due.some(function(x){return x.u.tag.indexOf('просрочка')>=0;})?';border-color:var(--red)':'')+'"><h3>🚗 Сдача авто'+(due.length?(' ('+due.length+')'):'')+'</h3>'+
       (due.length?attRows:'<div style="color:var(--muted);font-size:13px;margin-top:6px">Ближайших сдач нет 👍</div>')+'</div>';
     html+='<div class="card"><h3>📕 Должники'+(debtors.length?(' ('+debtors.length+')'):'')+'</h3>'+
       (debtors.length?debtRows:'<div style="color:var(--muted);font-size:13px;margin-top:6px">Должников нет 👍</div>')+'</div>';
@@ -6101,9 +6117,9 @@
   // ---------- ЗАМЕТКИ (доска: владелец пишет, сотрудники читают) ----------
   function renderRentNotes(){
     var b=document.getElementById('rent-notes'); if(!b) return;
-    var notes=rentD().notes||[]; var own=rentIsOwner();
+    var notes=rentD().notes||[]; var own=canEditNotes();
     var intro=own
-      ? '📌 <b>Доска заметок.</b> Пиши сюда заметки (например, что по ремонту) — их видят все сотрудники проката. Менять может только владелец.'
+      ? '📌 <b>Доска заметок.</b> Пиши сюда заметки (например, что по ремонту) — их видят все сотрудники проката.'
       : '📌 <b>Заметки от руководителя.</b> Только просмотр.';
     var add=own?'<div style="margin-bottom:14px"><button class="btn" onclick="openRentForm(\'note\',\'\')">➕ Добавить заметку</button></div>':'';
     var list=notes.map(function(n){

@@ -703,10 +703,14 @@ def rent_apply(action, p, company=None, user=None):
     who = user.get("name") or user.get("login") or ""
     now_ms = int(time.time() * 1000)
     # машины и план — только владелец (полный контроль)
+    # Заметки: владелец ИЛИ сотрудник с правом «rent_notes_edit» (напр. администратор)
+    can_notes = is_owner or ("rent_notes_edit" in (user.get("sections") or []))
+    if action in ("add_note", "edit_note", "del_note") and not can_notes:
+        return {"error": "Писать заметки может владелец или сотрудник с правом на заметки"}
+    # Машины, план, оплата, задачи — только владелец
     if action in ("add_car", "edit_car", "del_car", "set_plan", "set_commission", "set_currency",
-                  "add_note", "edit_note", "del_note",
                   "add_rtask", "edit_rtask", "del_rtask") and not is_owner:
-        return {"error": "Машины, план, оплату, заметки и задачи может менять только владелец"}
+        return {"error": "Машины, план, оплату и задачи может менять только владелец"}
     def keep(lst, _id):
         return [x for x in lst if x.get("id") != _id]
     def find(lst, _id):
