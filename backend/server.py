@@ -3397,6 +3397,13 @@ def payroll_view(user, rec=None, commission=0, commission_pct=10):
         elif days.get(d) == "p":
             accrued += rate; present_days += 1
     accrued = round(accrued); hours_month = round(hours_month, 1)
+    # Оплачиваемые выходные: до N пропущенных дней в месяц считаем выходными и оплачиваем
+    # (магазин формально работает каждый день, но сотруднику положены выходные).
+    # Кап: present + partial + выходные ≤ 30 — чтобы не превысить полный оклад.
+    weekends = int(float(user.get("weekend_days"))) if user.get("weekend_days") not in (None, "") else 4
+    paid_weekends = max(0, min(weekends, 30 - present_days - partial_days)) if (present_days + partial_days) > 0 else 0
+    if paid_weekends > 0 and rate > 0:
+        accrued = round(accrued + paid_weekends * rate)
     bonus = float(r.get("bonus") or 0); adv = float(r.get("advance") or 0)
     return {"name": name, "login": user.get("login", ""),
             "role": user.get("role", ""), "department": user.get("department", ""),
@@ -3404,6 +3411,7 @@ def payroll_view(user, rec=None, commission=0, commission_pct=10):
             "sections": user.get("sections", []),
             "salary_month": sal, "daily_rate": rate, "bonus_month": float(user.get("bonus_month") or 0),
             "present_days": present_days, "partial_days": partial_days,
+            "paid_weekends": paid_weekends, "weekend_days": weekends,
             "accrued": accrued, "bonus": bonus,
             "hourly_rate": hourly_rate, "shift_hours": SHIFT_HOURS,
             "hours_month": hours_month, "hours_today": float(hrs.get(today) or 0),
