@@ -213,6 +213,7 @@
   body.tab-wa .chatview{background:var(--bg)}
   .chatview{position:relative}
   .wa-head{display:flex;align-items:center;gap:10px}
+  .wa-back{display:none;font-size:22px;line-height:1;cursor:pointer;color:var(--text);padding-right:4px;flex-shrink:0}
   .wa-headacts{display:flex;gap:15px;font-size:17px;align-items:center}
   .wa-headacts span{cursor:pointer;opacity:.8;transition:.12s}
   .wa-headacts span:hover{opacity:1}
@@ -373,6 +374,17 @@
     .inbox{grid-template-columns:1fr;height:auto}
     .chatlist{max-height:240px}
     .msgs{min-height:300px}
+
+    /* WhatsApp на телефоне — одна панель за раз (как в обычном WhatsApp) */
+    body.tab-wa #tab-wainbox .inbox{display:flex;flex-direction:column;grid-template-columns:none}
+    body.tab-wa .wa-left{display:flex;width:100%;flex:1;min-height:0;border-right:none}
+    body.tab-wa .wa-left .chatlist{max-height:none;flex:1}
+    body.tab-wa .chatview{display:none}
+    body.tab-wa.wa-open .wa-left{display:none}
+    body.tab-wa.wa-open .chatview{display:flex;flex-direction:column;flex:1;min-height:0}
+    body.tab-wa .wa-back{display:inline-flex;align-items:center}
+    body.tab-wa .msgs{min-height:0}
+    body.tab-wa .wa-profile{width:100%;max-width:100%}
   }
 
   /* СИМУЛЯТОР «ЧТО ЕСЛИ» — ползунки с кружком по центру */
@@ -574,6 +586,7 @@
         </div>
         <div class="chatview">
           <div class="head wa-head">
+            <span class="wa-back" onclick="waCloseChat()" title="Назад к списку">←</span>
             <div id="wa-title" style="flex:1;min-width:0;cursor:pointer" onclick="if(waCur)waToggleProfile()">← Выберите диалог слева</div>
             <div class="wa-headacts" id="wa-headacts" style="display:none">
               <span title="Профиль и медиа" onclick="waToggleProfile()">ⓘ</span>
@@ -1469,6 +1482,7 @@
     document.querySelectorAll('main section').forEach(s=>s.classList.add('hide'));
     const sec=document.getElementById('tab-'+tab); if(sec) sec.classList.remove('hide');
     document.body.classList.toggle('tab-wa', tab==='wainbox');   // WhatsApp на всю высоту, без скролла страницы
+    document.body.classList.toggle('wa-open', tab==='wainbox' && !!waCur);  // мобильный: переписка только если выбран чат
     if(titles[tab]){ const pt=document.getElementById('page-title'),ps=document.getElementById('page-sub'); let _t0=titles[tab][0]; if(tab==='rentdash') _t0=rentBrand()+' — Дашборд'; if(pt)pt.textContent=_t0; if(ps)ps.textContent=titles[tab][1]; }
     renderTopNav(); renderSubmenu();
     dispatchTab(tab);
@@ -3679,6 +3693,7 @@
   }
   async function openWaThread(i){
     const c=WA_CONVOS[i]; if(!c) return; waCur=c; waThreadMsgs=[]; waMarkSeen(c); renderWaList();
+    document.body.classList.add('wa-open');   // мобильный: показать переписку на весь экран
     const acts=document.getElementById('wa-headacts'); if(acts) acts.style.display='flex';
     waUpdateHeadIcons(); waProfileShow(false); waCloseMenu();
     document.getElementById('wa-title').innerHTML='<b>'+esc(c.customer||c.customer_id)+'</b> <span style="color:var(--muted);font-size:12px">· 🟢 '+esc(c.account)+'</span>';
@@ -3698,6 +3713,7 @@
   function waMarkUnread(){ if(!waCur)return; const f=waFlags(); f.seen=f.seen||{}; f.seen[waKey(waCur)]=0; waFlagsSave(f); waCloseMenu(); waCloseChat(); }
   function waCloseChat(){
     waCur=null; waThreadMsgs=[]; waCloseMenu(); waProfileShow(false);
+    document.body.classList.remove('wa-open');   // мобильный: вернуться к списку
     const t=document.getElementById('wa-title'); if(t) t.innerHTML='← Выберите диалог слева';
     const acts=document.getElementById('wa-headacts'); if(acts) acts.style.display='none';
     const box=document.getElementById('wa-msgs'); if(box){ box.innerHTML=''; box.dataset.sig=''; }
