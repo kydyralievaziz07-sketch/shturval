@@ -231,6 +231,9 @@
     box-shadow:0 8px 24px rgba(0,0,0,.25);z-index:30;min-width:210px;overflow:hidden;padding:4px}
   .wa-popmenu div{padding:9px 12px;font-size:13px;cursor:pointer;border-radius:7px}
   .wa-popmenu div:hover{background:var(--panel2)}
+  .wa-modal{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px}
+  .wa-modal-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;width:430px;max-width:100%;max-height:90vh;overflow-y:auto}
+  .wa-modal-head{display:flex;justify-content:space-between;align-items:center;padding:15px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
   /* левая колонка: шапка (заголовок+поиск+фильтры) фиксирована, список скроллится */
   .wa-left{display:flex;flex-direction:column;min-height:0;min-width:0;border-right:1px solid var(--line);background:var(--panel)}
   .wa-listhead{padding:12px 13px 10px;border-bottom:1px solid var(--line);flex-shrink:0}
@@ -556,7 +559,9 @@
       <div class="inbox">
         <div class="wa-left">
           <div class="wa-listhead">
-            <div class="wa-listtitle">🟢 WhatsApp <small id="wa-accs">…</small></div>
+            <div class="wa-listtitle">🟢 WhatsApp <small id="wa-accs">…</small>
+              <span style="margin-left:auto;cursor:pointer;font-size:16px" title="Мой профиль WhatsApp" onclick="waMyProfile()">👤</span>
+            </div>
             <input id="wa-search" class="wa-search" placeholder="🔍 Поиск по имени или номеру…" oninput="renderWaList()" autocomplete="off">
             <div class="wa-filters">
               <span class="wa-chip active" id="waf-all" onclick="waSetFilter('all')">Все</span>
@@ -598,6 +603,13 @@
             <div onclick="waToggleProfile(true)">🖼️ Медиа и профиль</div>
             <div onclick="waCloseChat()">✖️ Закрыть чат</div>
           </div>
+        </div>
+      </div>
+      <!-- Модальное окно: МОЙ профиль WhatsApp (как видят клиенты) -->
+      <div class="wa-modal" id="wa-myprofile" style="display:none" onclick="if(event.target===this)waCloseMyProfile()">
+        <div class="wa-modal-card">
+          <div class="wa-modal-head"><b>👤 Мой профиль WhatsApp</b><span onclick="waCloseMyProfile()" style="cursor:pointer;font-size:20px">✕</span></div>
+          <div id="wa-myprofile-body"></div>
         </div>
       </div>
     </section>
@@ -3720,6 +3732,40 @@
     body.innerHTML=h;
     waHydrateMedia(body);
   }
+  // ——— МОЙ профиль WhatsApp (как видят клиенты Bizmart) ———
+  function waCloseMyProfile(){ const m=document.getElementById('wa-myprofile'); if(m) m.style.display='none'; }
+  async function waMyProfile(){
+    const m=document.getElementById('wa-myprofile'), body=document.getElementById('wa-myprofile-body'); if(!m||!body) return;
+    m.style.display='flex'; body.innerHTML='<div style="padding:26px;color:var(--muted);text-align:center">Загрузка профиля…</div>';
+    try{
+      const phone=(waAccounts[0]&&waAccounts[0].phone_id)||'';
+      const r=await apiFetch('/api/wa/profile'+(phone?('?phone='+encodeURIComponent(phone)):''),{},ONEC_BASE);
+      const d=await r.json();
+      if(d.error){ body.innerHTML='<div style="padding:20px;color:var(--amber)">⚠️ '+esc(d.error)+'</div>'; return; }
+      const p=d.profile||{}, n=d.number||{};
+      const pic=p.profile_picture_url;
+      const name=esc(n.verified_name||(waAccounts[0]&&waAccounts[0].display)||'Мой бизнес');
+      const initial=esc(((name||'B').trim()[0]||'B').toUpperCase());
+      const qmap={GREEN:'🟢 Высокое',YELLOW:'🟡 Среднее',RED:'🔴 Низкое',UNKNOWN:'— пока не определено'};
+      const vmap={RETAIL:'Розничная торговля',OTHER:'Другое',ECOMMERCE:'Интернет-магазин',GROCERY:'Продукты'};
+      let h='<div style="text-align:center;padding:20px 16px;border-bottom:1px solid var(--line)">'+
+        (pic?'<img src="'+esc(pic)+'" style="width:96px;height:96px;border-radius:50%;object-fit:cover">':'<div class="wa-prof-ava" style="width:96px;height:96px;font-size:38px;margin-bottom:0">'+initial+'</div>')+
+        '<div style="font-size:19px;font-weight:700;margin-top:10px">'+name+'</div>'+
+        '<div style="color:var(--muted);font-size:14px;margin-top:2px">'+esc(n.display_phone_number||'')+'</div>'+
+        (n.code_verification_status==='VERIFIED'?'<div style="color:#25D366;font-size:12px;margin-top:5px">✓ Номер подтверждён</div>':'')+
+      '</div>';
+      function row(label,val){ return val?('<div class="wa-prof-sec"><h5>'+label+'</h5><div style="font-size:13px;white-space:pre-wrap;word-break:break-word">'+esc(val)+'</div></div>'):''; }
+      h+=row('Описание', p.description);
+      h+=row('О компании', p.about);
+      h+=row('Адрес', p.address);
+      h+=row('Эл. почта', p.email);
+      h+=row('Сайты', (p.websites||[]).join('\n'));
+      h+=row('Категория', vmap[p.vertical]||p.vertical);
+      h+=row('Качество номера (оценка Meta)', qmap[n.quality_rating]||n.quality_rating);
+      h+='<div class="wa-prof-sec" style="font-size:12px;color:var(--muted);border-bottom:none">ⓘ Так вас видят клиенты в WhatsApp. Изменить профиль (фото, описание, адрес) можно в Meta Business Suite → этот аккаунт WhatsApp.</div>';
+      body.innerHTML=h;
+    }catch(e){ body.innerHTML='<div style="padding:20px;color:var(--amber)">⚠️ Не удалось загрузить профиль (сервер мог заснуть — попробуй ещё раз).</div>'; }
+  }
   async function waLoadThread(first){
     const c=waCur; const box=document.getElementById('wa-msgs'); if(!c||!box) return;
     try{
@@ -3823,13 +3869,52 @@
     waRec.onstop=async()=>{
       btn.textContent='🎤'; btn.style.color=''; btn.title='Записать голосовое';
       try{ waStream.getTracks().forEach(t=>t.stop()); }catch(e){}
-      const type=(waChunks[0]&&waChunks[0].type)||mime||'audio/ogg';
-      const ext=type.indexOf('ogg')>=0?'ogg':(type.indexOf('mp4')>=0?'m4a':(type.indexOf('webm')>=0?'webm':'ogg'));
-      const blob=new Blob(waChunks,{type:type.split(';')[0]});
+      const type=((waChunks[0]&&waChunks[0].type)||mime||'audio/ogg').split(';')[0];
+      let blob=new Blob(waChunks,{type:type});
       if(!blob.size){ return; }
-      await waSendFile(new File([blob],'voice.'+ext,{type:type.split(';')[0]}));
+      // WhatsApp принимает ogg/mp3/mp4/aac/amr. webm (Chrome) — конвертируем в MP3 в браузере.
+      const ok=['audio/ogg','audio/mp4','audio/mpeg','audio/aac','audio/amr'];
+      let ext=type.indexOf('ogg')>=0?'ogg':(type.indexOf('mp4')>=0?'m4a':'mp3');
+      if(!ok.some(t=>type.indexOf(t)===0)){
+        btn.style.color='#ffb84d'; btn.title='Обработка…';
+        try{ blob=await waToMp3(blob); ext='mp3'; }
+        catch(e){ /* конвертация не вышла — отправим как есть, бэкенд подскажет */ }
+        btn.style.color='';
+      }
+      await waSendFile(new File([blob],'voice.'+ext,{type:blob.type||type}));
     };
     waRec.start(); btn.textContent='⏹'; btn.style.color='#ff4d4d'; btn.title='Остановить и отправить';
+  }
+  // конвертация записанного аудио → MP3 (для браузеров, чей формат WhatsApp не принимает, напр. Chrome=webm)
+  function waLoadLame(){
+    return new Promise((res,rej)=>{
+      if(window.lamejs) return res();
+      const s=document.createElement('script');
+      s.src='https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js';
+      s.onload=()=>res(); s.onerror=()=>rej(new Error('Не удалось загрузить кодировщик MP3'));
+      document.head.appendChild(s);
+    });
+  }
+  function waFloatTo16(f){ const o=new Int16Array(f.length); for(let i=0;i<f.length;i++){ let s=Math.max(-1,Math.min(1,f[i])); o[i]=s<0?s*0x8000:s*0x7FFF; } return o; }
+  async function waToMp3(blob){
+    await waLoadLame();
+    const ab=await blob.arrayBuffer();
+    const Ctx=window.AudioContext||window.webkitAudioContext;
+    const ctx=new Ctx();
+    const audio=await ctx.decodeAudioData(ab);
+    try{ ctx.close(); }catch(e){}
+    const ch=audio.numberOfChannels>1?2:1, sr=audio.sampleRate;
+    const enc=new lamejs.Mp3Encoder(ch, sr, 128);
+    const L=waFloatTo16(audio.getChannelData(0));
+    const R=ch>1?waFloatTo16(audio.getChannelData(1)):null;
+    const block=1152, out=[];
+    for(let i=0;i<L.length;i+=block){
+      const lc=L.subarray(i,i+block);
+      let mp3=(ch>1)?enc.encodeBuffer(lc, R.subarray(i,i+block)):enc.encodeBuffer(lc);
+      if(mp3.length) out.push(new Int8Array(mp3));
+    }
+    const end=enc.flush(); if(end.length) out.push(new Int8Array(end));
+    return new Blob(out,{type:'audio/mpeg'});
   }
   function startWaAuto(){
     if(waTimer) return;

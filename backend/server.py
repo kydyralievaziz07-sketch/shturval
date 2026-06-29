@@ -225,7 +225,7 @@ SECTION_OF = [
     ("/api/ig/broadcast", "chats"), ("/api/ig/bot", "chats"),
     ("/api/wa/conversations", "chats"), ("/api/wa/thread", "chats"),
     ("/api/wa/reply", "chats"), ("/api/wa/accounts", "chats"),
-    ("/api/wa/media", "chats"),
+    ("/api/wa/media", "chats"), ("/api/wa/profile", "chats"),
     ("/api/assistant", "ai"),
     ("/api/ads", "ads"),
 ]
@@ -1982,6 +1982,24 @@ def wa_media_download(media_id, phone_id=None):
     req2 = urllib.request.Request(murl, headers={"Authorization": "Bearer " + token, "User-Agent": "Shturval/1.0"})
     with urllib.request.urlopen(req2, timeout=60) as r:
         return r.read(), mime
+
+def wa_business_profile(phone_id=None):
+    """Бизнес-профиль номера (как видят клиенты) + сведения о номере."""
+    phone_id = str(phone_id or CFG.get("WA_PHONE_ID", "") or "")
+    token = wa_token_for(phone_id) if phone_id else CFG.get("WA_TOKEN", "")
+    if not (token and phone_id):
+        raise RuntimeError("WhatsApp не подключён (нет токена или номера).")
+    hdr = {"Authorization": "Bearer " + token, "User-Agent": "Shturval/1.0"}
+    fields = "about,address,description,email,profile_picture_url,websites,vertical"
+    req = urllib.request.Request(WA_GRAPH + "/" + _q(phone_id) + "/whatsapp_business_profile?fields=" + fields, headers=hdr)
+    with urllib.request.urlopen(req, timeout=20) as r:
+        data = (json.loads(r.read().decode() or "{}").get("data") or [])
+    prof = data[0] if data else {}
+    req2 = urllib.request.Request(WA_GRAPH + "/" + _q(phone_id)
+                                  + "?fields=verified_name,display_phone_number,quality_rating,code_verification_status,platform_type", headers=hdr)
+    with urllib.request.urlopen(req2, timeout=20) as r:
+        num = json.loads(r.read().decode() or "{}")
+    return {"profile": prof, "number": num}
 
 # имена клиентов по их WhatsApp-номеру (приходят прямо в webhook → живых запросов не нужно).
 _wa_names = {}
@@ -5020,6 +5038,13 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             return
+        if self.path.startswith("/api/wa/profile"):
+            p = _parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            phone = (p.get("phone") or [""])[0]
+            try:
+                return self._send(200, wa_business_profile(phone))
+            except Exception as e:
+                return self._send(200, {"error": str(e)})
         if self.path.startswith("/api/wa/accounts"):
             return self._send(200, {"accounts": [{"display": a.get("display"), "phone_id": a.get("phone_id")}
                                                  for a in wa_accounts()]})
