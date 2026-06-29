@@ -702,15 +702,16 @@ def rent_apply(action, p, company=None, user=None):
     is_owner = bool(user.get("owner")) or ("all" in (user.get("sections") or []))
     who = user.get("name") or user.get("login") or ""
     now_ms = int(time.time() * 1000)
-    # машины и план — только владелец (полный контроль)
-    # Заметки: владелец ИЛИ сотрудник с правом «rent_notes_edit» (напр. администратор)
-    can_notes = is_owner or ("rent_notes_edit" in (user.get("sections") or []))
-    if action in ("add_note", "edit_note", "del_note") and not can_notes:
-        return {"error": "Писать заметки может владелец или сотрудник с правом на заметки"}
-    # Машины, план, оплата, задачи — только владелец
-    if action in ("add_car", "edit_car", "del_car", "set_plan", "set_commission", "set_currency",
-                  "add_rtask", "edit_rtask", "del_rtask") and not is_owner:
-        return {"error": "Машины, план, оплату и задачи может менять только владелец"}
+    # Заметки и задачи: владелец ИЛИ администратор (роль содержит «админ»).
+    # (доп. совместимость: старый токен rent_notes_edit в sections тоже даёт право)
+    role_l = (user.get("role") or "").lower()
+    is_admin = is_owner or ("админ" in role_l) or ("admin" in role_l) or ("rent_notes_edit" in (user.get("sections") or []))
+    if action in ("add_note", "edit_note", "del_note",
+                  "add_rtask", "edit_rtask", "del_rtask") and not is_admin:
+        return {"error": "Заметки и задачи может ставить и менять владелец или администратор"}
+    # Машины, план, оплата — только владелец
+    if action in ("add_car", "edit_car", "del_car", "set_plan", "set_commission", "set_currency") and not is_owner:
+        return {"error": "Машины, план и оплату может менять только владелец"}
     def keep(lst, _id):
         return [x for x in lst if x.get("id") != _id]
     def find(lst, _id):
@@ -818,11 +819,11 @@ def rent_apply(action, p, company=None, user=None):
     elif action == "del_rtask":
         d["rtasks"] = keep(d["rtasks"], p.get("id"))
     elif action == "done_rtask":
-        # отметить выполнение может владелец ИЛИ исполнитель своей задачи
+        # отметить выполнение может владелец/администратор ИЛИ исполнитель своей задачи
         t = find(d["rtasks"], p.get("id"))
         if t:
             mylogin = (user.get("login") or "").lower()
-            if not is_owner and (t.get("assignee") or "") != mylogin:
+            if not is_admin and (t.get("assignee") or "") != mylogin:
                 return {"error": "Можно отмечать только свои задачи"}
             t["status"] = "open" if (t.get("status") == "done") else "done"
             t["done_by"] = who; t["done_ts"] = now_ms

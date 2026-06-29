@@ -5598,8 +5598,10 @@
   function rentS(){ return (RENT&&RENT.summary)||{}; }
   // владелец проката (полный контроль: машины, план, импорт). Менеджеры — только операции.
   function rentIsOwner(){ return (typeof isCabinetOwner==='function') && isCabinetOwner(); }
-  // право писать заметки: владелец ИЛИ сотрудник с доступом «rent_notes_edit» (напр. администратор)
-  function canEditNotes(){ return rentIsOwner() || ((USER.sections||[]).indexOf('rent_notes_edit')>=0); }
+  // администратор проката: владелец ИЛИ роль содержит «админ» (плюс старый токен rent_notes_edit)
+  function isRentAdmin(){ var r=(USER.role||'').toLowerCase(); return rentIsOwner() || r.indexOf('админ')>=0 || r.indexOf('admin')>=0 || ((USER.sections||[]).indexOf('rent_notes_edit')>=0); }
+  // право писать заметки И ставить задачи — у владельца и администратора
+  function canEditNotes(){ return isRentAdmin(); }
   function rnum(s){ return parseInt(String(s==null?'':s).replace(/[^\d-]/g,''),10)||0; }
   function rsom(s){ s=(s==null?'':String(s)).trim(); return s?('<b>'+esc(s)+'</b> <span style="color:var(--muted);font-size:12px">'+MUNIT()+'</span>'):'<span style="color:var(--muted)">—</span>'; }
   function isoToRu(s){ s=(s||'').trim(); var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s); return m?(m[3]+'.'+m[2]+'.'+m[1]):s; }
@@ -6221,7 +6223,7 @@
   function rentTaskDone(id){ rentPost('done_rtask',{id:id}).catch(function(e){ alert('Не получилось: '+e.message); }); }
   function renderRentTasks(){
     var b=document.getElementById('rent-tasks'); if(!b) return;
-    var D=rentD(); var tasks=D.rtasks||[]; var staff=D.staff||[]; var own=rentIsOwner();
+    var D=rentD(); var tasks=D.rtasks||[]; var staff=D.staff||[]; var own=isRentAdmin();
     var mylogin=((USER.login||'')+'').toLowerCase();
     var nameOf=function(lg){ var s=staff.filter(function(x){return x.login===lg;})[0]; return s?s.name:(lg||'—'); };
     var visible=own?tasks:tasks.filter(function(t){ return (t.assignee||'')===mylogin; });
