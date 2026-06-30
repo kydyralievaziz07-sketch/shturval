@@ -662,6 +662,7 @@ def rent_build(period=None, company=None):
         "commission_pct": (int(float(d.get("commission_pct"))) if d.get("commission_pct") not in (None, "") else 10),
         "commissions": d.get("commissions") or {},
         "currency": (d.get("currency") or "сом"),
+        "som_per_usd": (float(d.get("som_per_usd")) if d.get("som_per_usd") not in (None, "") else 87.0),
     }
     # форматируем для показа (а raw — для редактирования формой)
     def fr(r):
@@ -711,7 +712,7 @@ def rent_apply(action, p, company=None, user=None):
                   "add_rtask", "edit_rtask", "del_rtask") and not is_admin:
         return {"error": "Заметки и задачи может ставить и менять владелец или администратор"}
     # Машины, план, оплата — только владелец
-    if action in ("add_car", "edit_car", "del_car", "set_plan", "set_commission", "set_currency") and not is_owner:
+    if action in ("add_car", "edit_car", "del_car", "set_plan", "set_commission", "set_currency", "set_fx") and not is_owner:
         return {"error": "Машины, план и оплату может менять только владелец"}
     def keep(lst, _id):
         return [x for x in lst if x.get("id") != _id]
@@ -786,6 +787,9 @@ def rent_apply(action, p, company=None, user=None):
     elif action == "set_currency":
         cur = (str(p.get("currency") or "").strip())[:8] or "сом"
         d["currency"] = cur
+    elif action == "set_fx":                       # курс сом за 1$ (для перевода оклада в зарплате)
+        fx = _rnum(p.get("som_per_usd"))
+        d["som_per_usd"] = fx if fx and fx > 0 else 87
     elif action == "set_commission":
         # общий % по умолчанию + персональные % по логинам
         dp = p.get("default_pct")
@@ -1495,7 +1499,9 @@ IGBOT_RU_RULES = (
 def _igbot_defaults():
     return {"enabled": False, "prompt": IGBOT_DEFAULT_PROMPT, "model": CFG.get("ANTHROPIC_MODEL"),
             "handoff_hours": 6, "kb": "", "sources": [], "learn_every_days": 0,
-            "learn_last": 0, "learn_next": 0, "lang": "client"}
+            "learn_last": 0, "learn_next": 0, "lang": "client",
+            # WhatsApp: бот отвечает не сразу, а только если человек не ответил wa_fallback_min минут
+            "wa_fallback": True, "wa_fallback_min": 60}
 
 def _igbot_get():
     s = kv_load("igbot_settings") or {}
@@ -1507,16 +1513,21 @@ def _igbot_get():
             "learn_every_days": int(s.get("learn_every_days") or 0),
             "learn_last": int(s.get("learn_last") or 0),
             "learn_next": int(s.get("learn_next") or 0),
-            "lang": s.get("lang") or "client"}
+            "lang": s.get("lang") or "client",
+            "wa_fallback": bool(s.get("wa_fallback", True)),
+            "wa_fallback_min": int(s.get("wa_fallback_min") or 60)}
 
 def _igbot_set(patch):
     cur = _igbot_get()
     for k in ("enabled", "prompt", "model", "handoff_hours", "kb", "sources",
-              "learn_every_days", "learn_last", "learn_next", "lang"):
+              "learn_every_days", "learn_last", "learn_next", "lang",
+              "wa_fallback", "wa_fallback_min"):
         if k in patch:
             cur[k] = patch[k]
     cur["enabled"] = bool(cur["enabled"])
     cur["handoff_hours"] = int(_num(cur["handoff_hours"]) or 6)
+    cur["wa_fallback"] = bool(cur.get("wa_fallback"))
+    cur["wa_fallback_min"] = max(5, int(_num(cur.get("wa_fallback_min")) or 60))
     cur["learn_every_days"] = int(_num(cur.get("learn_every_days")) or 0)
     if not isinstance(cur.get("sources"), list):
         cur["sources"] = []
@@ -1829,7 +1840,8 @@ def igbot_source_del(url):
     return {"ok": True, "count": len(srcs)}
 
 def _igbot_scheduler():
-    """Фоновый поток: авто-обучение по расписанию (learn_every_days) и подстраховка каталога в БД."""
+    """Фоновый поток: авто-обучение по расписанию (learn_every_days), запасной ответ
+    бота в WhatsApp (через час без ответа человека) и подстраховка каталога в БД."""
     while True:
         try:
             s = _igbot_get()
@@ -1838,7 +1850,11 @@ def _igbot_scheduler():
                 igbot_learn()
         except Exception:
             pass
-        time.sleep(900)   # проверяем каждые 15 минут
+        try:
+            _wa_fallback_sweep()      # WhatsApp: ответить клиентам, ждущим дольше wa_fallback_min
+        except Exception:
+            pass
+        time.sleep(300)   # проверяем каждые 5 минут
 
 def _ig_eligible_targets(account=None, max_age_hours=24):
     """Диалоги в пределах 24-часового окна Instagram (можно писать первым)."""
@@ -2349,19 +2365,33 @@ def _wabot_fire(sender, phone_id, key):
     except Exception:
         pass
 
-def wabot_handle(sender, phone_id, text=None):
+def wabot_handle(sender, phone_id, text=None, fallback=False):
     """ИИ-бот отвечает клиенту в WhatsApp. sender=клиент, phone_id=наш номер.
-    Те же настройки/правила, что у Instagram-бота. Передача человеку: если оператор
-    ответил в диалоге хоть раз — бот больше не вмешивается."""
+    Те же настройки/правила, что у Instagram-бота.
+    Два режима:
+    • Мгновенный (fallback=False) — бот отвечает через ~5 сек. Если оператор ответил
+      в диалоге хоть раз — бот больше не вмешивается.
+    • Запасной/«через час» (fallback=True, по умолчанию для WhatsApp) — мгновенно НЕ
+      отвечаем; через периодический обход бот пишет сам, только если последнее сообщение
+      клиента провисело без ответа дольше wa_fallback_min минут (см. _wa_fallback_sweep)."""
     try:
         s = _igbot_get()
         if not s["enabled"] or not (CFG.get("ANTHROPIC_API_KEY") and supa_on()):
             return
+        # В режиме «через час» мгновенный ответ не шлём — пусть сначала ответит человек.
+        if s.get("wa_fallback") and not fallback:
+            return
         hist = _wabot_history(phone_id, sender, 40)
-        for r in hist:
-            if r.get("direction") == "out" and (r.get("raw") or {}).get("by") == "human":
-                _igbot_bump("handoffs")
+        if fallback:
+            # Подстраховка от гонки: к моменту обхета человек мог уже ответить.
+            if not hist or hist[-1].get("direction") == "out":
                 return
+        else:
+            # Мгновенный режим: если оператор уже отвечал в диалоге — бот молчит.
+            for r in hist:
+                if r.get("direction") == "out" and (r.get("raw") or {}).get("by") == "human":
+                    _igbot_bump("handoffs")
+                    return
         reply = _igbot_generate(hist, s)
         if not reply:
             return
@@ -2380,6 +2410,41 @@ def wabot_handle(sender, phone_id, text=None):
             pass
     except Exception as e:
         _igbot_log_error("WhatsApp: обработка", str(e))
+
+def _wa_fallback_sweep():
+    """Запасной ответ бота в WhatsApp: если последнее сообщение в диалоге — от КЛИЕНТА
+    и провисело без ответа дольше wa_fallback_min минут (по умолчанию 60), «Акылай»
+    отвечает сам. Верхняя граница — 24 часа: вне 24-часового окна WhatsApp свободным
+    текстом писать нельзя, да и поздно реагировать. Запускается из планировщика."""
+    try:
+        s = _igbot_get()
+        if not s.get("enabled") or not s.get("wa_fallback"):
+            return
+        if not (CFG.get("ANTHROPIC_API_KEY") and supa_on()):
+            return
+        mins = max(5, int(s.get("wa_fallback_min") or 60))
+        now = time.time()
+        lo = mins * 60          # минимум висит без ответа
+        hi = 24 * 3600          # окно WhatsApp — позже писать нельзя
+        done = 0
+        for c in wa_conversations():
+            if c.get("last_dir") != "in":         # последним писал не клиент — отвечать некому
+                continue
+            ts = c.get("last_ts") or 0
+            ts_sec = ts / 1000.0 if ts > 1e12 else ts
+            age = now - ts_sec
+            if age < lo or age > hi:
+                continue
+            try:
+                wabot_handle(c.get("customer_id"), c.get("account_id"), None, fallback=True)
+                done += 1
+                time.sleep(1.0)                   # бережно к лимитам WhatsApp
+            except Exception:
+                pass
+            if done >= 30:                        # за один проход — не больше 30 ответов
+                break
+    except Exception:
+        pass
 
 # --- 1С (Yaros DataGate): товары, остатки, цены ---
 import base64
@@ -3651,7 +3716,16 @@ def rent_commissions(company=None, month=None):
 def _is_video_dept(dep):
     return "мобилограф" in (dep or "").lower()
 
-def payroll_view(user, rec=None, commission=0, commission_pct=10):
+def rent_fx(company=None):
+    """Курс сом за 1$ — для перевода оклада (хранится в сомах) в валюту кабинета проката ($)."""
+    try:
+        d = rent_doc(company)
+        v = d.get("som_per_usd")
+        return float(v) if (v not in (None, "") and float(v) > 0) else 87.0
+    except Exception:
+        return 87.0
+
+def payroll_view(user, rec=None, commission=0, commission_pct=10, fx=0):
     name = user.get("name", "")
     key = _pkey(user)                       # зарплата ведётся по логину (уникален)
     r = rec if rec is not None else payroll_rec(key, user.get("company"))
@@ -3665,12 +3739,16 @@ def payroll_view(user, rec=None, commission=0, commission_pct=10):
     # --- ПРОКАТ (другая компания, не магазин): оклад фиксированный + комиссия с аренд ---
     co_u = user.get("company") or COMPANY_ID
     if co_u != COMPANY_ID:
-        accrued = round(sal)
+        # Оклад вводится/хранится в СОМАХ, а кабинет проката ведёт учёт в $ →
+        # переводим оклад по курсу. Премия/аванс/комиссия уже в $ (как ввёл владелец).
+        _fx = float(fx) if (fx and float(fx) > 0) else 87.0
+        accrued = round(sal / _fx)                  # оклад: сом → $
         bonus = float(r.get("bonus") or 0); adv = float(r.get("advance") or 0)
         return {"name": name, "login": user.get("login", ""),
                 "role": user.get("role", ""), "department": dep,
                 "phone": user.get("phone", "") or "", "sections": user.get("sections", []),
-                "salary_month": sal, "daily_rate": float(user.get("daily_rate") or 0),
+                "salary_month": round(sal / _fx), "salary_som": round(sal), "fx": _fx,
+                "daily_rate": float(user.get("daily_rate") or 0),
                 "bonus_month": float(user.get("bonus_month") or 0),
                 "present_days": _present_in_month(days, m), "partial_days": 0,
                 "hours_month": 0, "hours_today": 0, "hours": {}, "hourly_rate": 0, "shift_hours": SHIFT_HOURS,
@@ -3756,6 +3834,7 @@ def payroll_all(company=None):
         except Exception:
             recs = None                     # не вышло — откат на поштучный режим
     comm_map, pct_for, default_pct = rent_commissions(co)   # комиссия проката за месяц (по полю `by`)
+    _fx_co = rent_fx(co)                                     # курс сом→$ для оклада (один на компанию)
     def _comm(v):
         return comm_map.get((v.get("name") or "").strip(), 0) or comm_map.get((v.get("login") or "").strip(), 0)
     def _cpct(v):
@@ -3769,9 +3848,9 @@ def payroll_all(company=None):
             continue
         seen.add(key)
         if recs is not None:
-            out.append(payroll_view(v, recs.get(key) or {}, _comm(v), _cpct(v)))   # без обращения к базе
+            out.append(payroll_view(v, recs.get(key) or {}, _comm(v), _cpct(v), _fx_co))   # без обращения к базе
         else:
-            out.append(payroll_view(v, None, _comm(v), _cpct(v)))
+            out.append(payroll_view(v, None, _comm(v), _cpct(v), _fx_co))
     return out
 
 # --- Планы по отделам (продажи/день) ---
@@ -4882,7 +4961,7 @@ class Handler(BaseHTTPRequestHandler):
             _cm, _pf, _dp = rent_commissions(tu.get("company"))
             _c = _cm.get((tu.get("name") or "").strip(), 0) or _cm.get((tu.get("login") or "").strip(), 0)
             _cp = _pf.get((tu.get("name") or "").strip(), _pf.get((tu.get("login") or "").strip(), _dp))
-            return self._send(200, {"ok": True, "view": payroll_view(tu, r, _c, _cp)})
+            return self._send(200, {"ok": True, "view": payroll_view(tu, r, _c, _cp, rent_fx(tu.get("company")))})
         if self.path.startswith("/api/deptplan"):
             u = self._user(); secs = u.get("sections", []) if u else []
             if not (u and ("all" in secs or "hr" in secs)):   # планы отделов — владелец и HR/Кадры
@@ -5218,7 +5297,7 @@ class Handler(BaseHTTPRequestHandler):
             _cm, _pf, _dp = rent_commissions(co)
             _c = _cm.get((u.get("name") or "").strip(), 0) or _cm.get((u.get("login") or "").strip(), 0)
             _cp = _pf.get((u.get("name") or "").strip(), _pf.get((u.get("login") or "").strip(), _dp))
-            return self._send(200, {"me": payroll_view(u, None, _c, _cp)})
+            return self._send(200, {"me": payroll_view(u, None, _c, _cp, rent_fx(co))})
         if self.path.startswith("/api/deptplan"):
             u = self._user(); secs = u.get("sections", []) if u else []
             if not (u and ("all" in secs or "hr" in secs)):   # планы отделов — владелец и HR

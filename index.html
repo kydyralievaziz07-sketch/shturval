@@ -436,7 +436,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.81.0<br>Владелец может менять логин и пароль сотрудников в Кадрах</div>
+      Штурвал v3.82.0<br>Зарплата проката: оклад в сомах → авто-перевод и показ в $</div>
   </aside>
 
   <!-- MAIN -->
@@ -1026,7 +1026,11 @@
             <button class="btn ghost" id="rcur-tg" onclick="rentSetCurrency('₸')">₸ тенге</button>
           </div>
         </div>
-        <div class="note" style="margin:12px 0 10px">Задай оклад сотруднику и процент комиссии с оформленных им аренд. Комиссия начисляется автоматически в зарплату.</div>
+        <div class="set-row">
+          <span class="lbl">💵 Курс сом за 1$ <span style="font-size:11px;color:var(--muted)">оклад вводится в сомах, в зарплате показываем в $ по этому курсу</span></span>
+          <input type="number" inputmode="numeric" id="set-rent-fx" placeholder="87" style="width:90px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--text)">
+        </div>
+        <div class="note" style="margin:12px 0 10px">Задай оклад сотруднику (в сомах) и процент комиссии с оформленных им аренд. Комиссия начисляется автоматически в зарплату.</div>
         <div id="set-rentpay-rows"></div>
         <div class="set-row" style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px">
           <span class="lbl">📊 Процент по умолчанию (% от аренды) <span style="font-size:11px;color:var(--muted)">если у сотрудника не задан свой</span></span>
@@ -1206,7 +1210,8 @@
       <div><label>Должность</label><input type="text" id="emp-role" placeholder="Например: Консультант"></div>
     </div>
     <label id="emp-salary-label">Зарплата в месяц, сом</label>
-    <input type="number" id="emp-salary" placeholder="0">
+    <input type="number" id="emp-salary" placeholder="0" oninput="empSalaryHint()">
+    <div id="emp-salary-usd" style="font-size:12px;color:var(--muted);margin-top:4px"></div>
     <div id="emp-comm-block" style="display:none">
       <label style="margin-top:8px">🚗 % за сдачу авто <span style="color:var(--muted);font-weight:400;font-size:11px">— комиссия с оформленных им аренд (напр. 10, 15, 20). Идёт в зарплату</span></label>
       <input type="number" id="emp-comm-pct" placeholder="напр. 10" min="0" max="100">
@@ -1661,7 +1666,19 @@
     var cb=document.getElementById('emp-comm-block'), vb=document.getElementById('emp-video-block');
     if(cb) cb.style.display=rc?'':'none';
     if(vb) vb.style.display=rc?'none':'';
-    var sl=document.getElementById('emp-salary-label'); if(sl) sl.textContent='Зарплата в месяц, '+MUNIT();
+    // оклад вводится в СОМАХ (потом переводим в $ кабинета по курсу), в магазине — как обычно
+    var sl=document.getElementById('emp-salary-label'); if(sl) sl.textContent='Зарплата в месяц, '+(rc?'сом':MUNIT());
+    empSalaryHint();
+  }
+  // курс сом→$ из сводки проката (для подсказки и формы); по умолчанию 87
+  function rentFx(){ try{ return (RENT&&RENT.summary&&+RENT.summary.som_per_usd)||87; }catch(e){ return 87; } }
+  // подсказка «≈ $X» под полем оклада (только в кабинете проката)
+  function empSalaryHint(){
+    var h=document.getElementById('emp-salary-usd'); if(!h) return;
+    var rc=(typeof isRentCabinet==='function'&&isRentCabinet());
+    if(!rc){ h.textContent=''; return; }
+    var som=parseFloat((document.getElementById('emp-salary').value||'').replace(/\s/g,'').replace(',','.'))||0;
+    h.textContent=som>0?('≈ '+Math.round(som/rentFx())+' '+MUNIT()+' (курс '+Math.round(rentFx())+' сом/$)'):'';
   }
   function applyUser(d){
     // ВАЖНО: пустой массив [] = «нет доступа к разделам» (только Мой день/Настройки),
@@ -1750,6 +1767,7 @@
     else _hlCur();
     var def=(RENT&&RENT.summary&&RENT.summary.commission_pct);
     var dEl=document.getElementById('set-comm-default'); if(dEl&&def!=null) dEl.value=def;
+    var fxEl=document.getElementById('set-rent-fx'); if(fxEl) fxEl.value=(RENT&&RENT.summary&&RENT.summary.som_per_usd)||87;
     apiFetch('/api/payroll',{},ONEC_BASE).then(function(r){return r.json();}).then(function(d){
       var list=(d&&d.all)||[];
       if(!list.length){ box.innerHTML='<div style="color:var(--muted);font-size:13px">Сотрудников пока нет.</div>'; return; }
@@ -1758,7 +1776,7 @@
         return '<div class="set-row" style="align-items:flex-start;flex-wrap:wrap;gap:8px" data-login="'+lg+'">'+
           '<span class="lbl" style="min-width:150px"><b>'+esc(v.name||v.login||'')+'</b>'+(v.department?'<div style="font-size:11px;color:var(--muted)">'+esc(v.department)+'</div>':'')+'</span>'+
           '<span style="display:flex;align-items:center;gap:6px"><span style="font-size:12px;color:var(--muted)">оклад</span>'+
-          '<input type="number" inputmode="numeric" class="rp-sal" value="'+(rnum(v.salary_month)||'')+'" placeholder="0" style="width:110px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--text)"></span>'+
+          '<input type="number" inputmode="numeric" class="rp-sal" value="'+(rnum(v.salary_som!=null?v.salary_som:v.salary_month)||'')+'" placeholder="0" title="Оклад в сомах" style="width:110px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--text)"></span>'+
           '<span style="display:flex;align-items:center;gap:6px"><span style="font-size:12px;color:var(--muted)">% от авто</span>'+
           '<input type="number" inputmode="numeric" class="rp-pct" value="'+(v.commission_pct!=null?v.commission_pct:'')+'" placeholder="10" style="width:70px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--text)"></span>'+
           '</div>';
@@ -1769,6 +1787,7 @@
     var msg=document.getElementById('set-rentpay-msg'); if(msg){ msg.style.color='var(--muted)'; msg.textContent='Сохраняю…'; }
     var rows=[].slice.call(document.querySelectorAll('#set-rentpay-rows .set-row'));
     var defPct=(document.getElementById('set-comm-default')||{}).value||'';
+    var fxVal=(document.getElementById('set-rent-fx')||{}).value||'';
     var map={}; var salTasks=[];
     rows.forEach(function(row){
       var lg=row.getAttribute('data-login'); if(!lg) return;
@@ -1778,6 +1797,8 @@
       salTasks.push(apiFetch('/api/team',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update',login:lg,salary_month:sal})},ONEC_BASE).then(function(r){return r.json();}));
     });
     Promise.all(salTasks).then(function(){
+      if(fxVal!=='' && +fxVal>0){ return apiFetch('/api/rent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_fx',som_per_usd:fxVal})},ONEC_BASE).then(function(r){return r.json();}); }
+    }).then(function(){
       return apiFetch('/api/rent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_commission',default_pct:defPct,map:map})},ONEC_BASE).then(function(r){return r.json();});
     }).then(function(d){
       if(d&&d.error) throw new Error(d.error);
@@ -1962,6 +1983,10 @@
     if(CUR==='USD') return '$'+Math.round(n/RATE).toLocaleString('ru-RU');
     return n.toLocaleString('ru-RU')+' сом';
   }
+  // число без валюты (валюту дописывает MUNIT() рядом) — для кабинета проката, где суммы уже в $
+  function nfmt(n){ return (Number(n)||0).toLocaleString('ru-RU'); }
+  // формат суммы для зарплатных окон: прокат → число (рядом MUNIT '$'), магазин → как было
+  function hfmt(n){ return (typeof isRentCabinet==='function'&&isRentCabinet()) ? nfmt(n) : fmt(n); }
   function esc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
   // превращаем ссылки в кликабельные (например, когда клиент пришёл с рекламы/сторис)
   function linkify(s){
@@ -3049,7 +3074,12 @@
   }
   // --- ВАЛЮТА: переключение сом / доллар с автоматическим курсом ---
   function mkMoney(som){const s=document.createElement('span');s.className='money';s.dataset.som=som;s.textContent=fmt(som);return s;}
-  function renderMoney(){document.querySelectorAll('.money').forEach(el=>el.textContent=fmt(el.dataset.som));}
+  function renderMoney(){
+    var rent=(typeof isRentCabinet==='function'&&isRentCabinet());
+    document.querySelectorAll('.money').forEach(function(el){
+      el.textContent = rent ? (nfmt(el.dataset.som)+' '+MUNIT()) : fmt(el.dataset.som);
+    });
+  }
   function renderAll(){renderMoney(); if(window._crmData) renderCRM(window._crmData);}
   function updateFx(){document.getElementById('fxnote').textContent = CUR==='USD' ? ('1$ ≈ '+Math.round(RATE)+' сом') : '';}
   // один раз помечаем все суммы в демо-части, чтобы потом пересчитывать
@@ -3579,6 +3609,11 @@
           +'</select></div>'
           +'<div><div style="font-size:12px;color:var(--muted);margin-bottom:4px">Пауза после ответа человека (часов)</div><input id="igbot-hh" type="number" min="1" max="72" value="'+(_igbot.handoff_hours||6)+'" style="'+SS+'"></div>'
         +'</div>'
+        +'<div style="border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px">'
+          +'<label style="display:flex;gap:10px;align-items:center;font-size:14px;margin-bottom:8px"><input type="checkbox" id="igbot-wafb" '+((_igbot.wa_fallback!==false)?'checked':'')+' style="width:17px;height:17px"> <b>🟢 WhatsApp: отвечать, только если человек не ответил</b></label>'
+          +'<div style="display:flex;gap:8px;align-items:center;font-size:13px;color:var(--muted)">Ждать ответа человека <input id="igbot-wafbmin" type="number" min="5" max="1440" value="'+(_igbot.wa_fallback_min||60)+'" style="width:90px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--text);font-family:inherit"> минут, потом бот пишет сам.</div>'
+          +'<div style="font-size:12px;color:var(--muted);margin-top:6px">Если галочка снята — бот в WhatsApp отвечает сразу (через ~5 сек), как в Instagram.</div>'
+        +'</div>'
         +'<div style="font-size:12px;color:var(--muted);margin-bottom:6px">💡 Если оператор ответит клиенту хоть раз (через Штурвал ИЛИ само приложение Instagram) — бот в этом диалоге больше не вмешивается. На свои же сообщения бот не отвечает.</div>'
         +'<div id="igbot-msg" style="font-size:13px;margin-bottom:8px"></div>'
         +'<button class="btn" id="igbot-save" onclick="saveIgBot()">💾 Сохранить правила</button>'
@@ -3634,6 +3669,8 @@
       prompt:(document.getElementById('igbot-prompt').value||'').trim(),
       model:document.getElementById('igbot-model').value,
       handoff_hours:Number(document.getElementById('igbot-hh').value)||6,
+      wa_fallback:document.getElementById('igbot-wafb').checked,
+      wa_fallback_min:Number(document.getElementById('igbot-wafbmin').value)||60,
       learn_every_days:Number(document.getElementById('igbot-learnevery').value)||0};
     if(body.learn_every_days){ const base=(_igbot.learn_last||Math.floor(Date.now()/1000)); body.learn_next=base+body.learn_every_days*86400; }
     else body.learn_next=0;
@@ -4345,19 +4382,19 @@
       if(v.to_receive!=null){
         sal='<div class="card" style="margin-top:16px"><h3>💼 Моя зарплата за месяц</h3>'+
           payBar('💰 Оклад (накоплено)',v.accrued||0,v.salary_month||0,'#39d98a')+
-          ((v.commission>0)?('<div style="display:flex;justify-content:space-between;font-size:14px;margin:4px 0"><span>🚗 Комиссия с аренд ('+(v.commission_pct||pct)+'%)</span><b style="color:#39d98a">'+fmt(v.commission)+' '+cur+'</b></div>'):'')+
+          ((v.commission>0)?('<div style="display:flex;justify-content:space-between;font-size:14px;margin:4px 0"><span>🚗 Комиссия с аренд ('+(v.commission_pct||pct)+'%)</span><b style="color:#39d98a">'+nfmt(v.commission)+' '+cur+'</b></div>'):'')+
           ((v.bonus>0)?payBar('🎁 Премия',v.bonus,v.bonus_month||0,'#a78bfa'):'')+
           ((v.advance>0)?payBar('💸 Аванс (взято)',v.advance,v.salary_month||0,'#ffb84d'):'')+
-          '<div style="border-top:1px solid var(--line);margin-top:6px;padding-top:12px;display:flex;justify-content:space-between;font-size:15px"><span>К выплате сейчас:</span><b>'+fmt(v.to_receive)+' '+cur+'</b></div></div>';
+          '<div style="border-top:1px solid var(--line);margin-top:6px;padding-top:12px;display:flex;justify-content:space-between;font-size:15px"><span>К выплате сейчас:</span><b>'+nfmt(v.to_receive)+' '+cur+'</b></div></div>';
       }
       box.innerHTML=
         '<div class="card" style="margin-bottom:16px"><div style="font-size:18px;font-weight:700">👋 Привет, '+esc(USER.name||'коллега')+'!</div>'+
           '<div style="color:var(--muted);font-size:13px;margin-top:3px">Сегодня '+todayRu+(USER.role?' · '+esc(USER.role):'')+'</div></div>'+
         '<div class="kpis" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">'+
           kpiCard('🔑 Сдал авто сегодня',cntToday)+
-          kpiCard('💵 На сумму сегодня',fmt(sumToday)+' '+cur)+
-          kpiCard('🤑 Заработал сегодня',fmt(earnToday)+' '+cur)+
-          kpiCard('🧾 Средний чек',fmt(avgToday)+' '+cur)+
+          kpiCard('💵 На сумму сегодня',nfmt(sumToday)+' '+cur)+
+          kpiCard('🤑 Заработал сегодня',nfmt(earnToday)+' '+cur)+
+          kpiCard('🧾 Средний чек',nfmt(avgToday)+' '+cur)+
         '</div>'+
         '<div class="card"><h3>📅 Мои аренды сегодня</h3>'+
           (todayR.length?todayR.map(function(r){ return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px"><span><b>'+esc(r.model||'')+'</b>'+(r.renter?' · '+esc(r.renter):'')+'</span><span>'+esc(r.got||'')+' '+cur+'</span></div>'; }).join(''):'<div style="color:var(--muted);font-size:13px">Сегодня ещё не оформлял аренд.</div>')+
@@ -4826,7 +4863,7 @@
     hraCur=cur||0;
     const word=kind==='advance'?'аванс':'премия';
     document.getElementById('hra-title').textContent=(kind==='advance'?'💸 Аванс':'🎁 Премия')+' — '+v.name;
-    document.getElementById('hra-sub').textContent='Текущий '+word+': '+fmt(hraCur)+' '+MUNIT()+'. Впиши, сколько ДОБАВИТЬ.';
+    document.getElementById('hra-sub').textContent='Текущий '+word+': '+hfmt(hraCur)+' '+MUNIT()+'. Впиши, сколько ДОБАВИТЬ.';
     document.getElementById('hra-label').textContent='Добавить, '+MUNIT();
     const inp=document.getElementById('hra-input'); inp.value='';            // пусто — вписываем только прибавку
     document.getElementById('hra-preview').textContent='';
@@ -4837,7 +4874,7 @@
     const add=parseFloat((document.getElementById('hra-input').value||'').replace(/\s/g,'').replace(',','.'));
     const p=document.getElementById('hra-preview');
     if(isNaN(add)){ p.textContent=''; return; }
-    p.innerHTML='Станет: <b style="color:var(--text)">'+fmt(hraCur)+' + '+fmt(add)+' = '+fmt(hraCur+add)+'</b> '+MUNIT();
+    p.innerHTML='Станет: <b style="color:var(--text)">'+hfmt(hraCur)+' + '+hfmt(add)+' = '+hfmt(hraCur+add)+'</b> '+MUNIT();
   }
   function closeHra(){ document.getElementById('hrambg').classList.remove('open'); hraLogin=null; }
   async function hraSave(mode){
@@ -5439,7 +5476,7 @@
     document.getElementById('emp-phone').value=v.phone||'';
     document.getElementById('emp-dept').value=v.department||'';
     document.getElementById('emp-role').value=v.role||'';
-    document.getElementById('emp-salary').value=v.salary_month||'';
+    document.getElementById('emp-salary').value=(v.salary_som!=null?v.salary_som:(v.salary_month||''));   // прокат: оклад в сомах
     document.getElementById('emp-video-rate').value=v.video_rate||'';
     var cp=document.getElementById('emp-comm-pct'); if(cp) cp.value=(v.commission_pct!=null?v.commission_pct:'');
     _toggleEmpPay();
@@ -5585,7 +5622,7 @@
     }
     const payInfo=v.salary_month
       ? '<div style="font-size:12px;color:var(--muted)">К выплате <b style="color:var(--text)"><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span></b>'+
-          ((v.advance||v.bonus)?(' <span style="opacity:.7">(ав '+fmt(v.advance)+' · пр '+fmt(v.bonus)+')</span>'):'')+'</div>'
+          ((v.advance||v.bonus)?(' <span style="opacity:.7">(ав '+hfmt(v.advance)+' · пр '+hfmt(v.bonus)+')</span>'):'')+'</div>'
       : '<div style="font-size:12px;color:var(--muted)">оклад не задан</div>';
     return '<div style="border-top:1px solid var(--line);padding:10px 14px">'+
       '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">'+
