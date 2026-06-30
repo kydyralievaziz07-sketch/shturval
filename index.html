@@ -212,6 +212,7 @@
   body.tab-wa #tab-wainbox>.note{display:none}            /* подсказки сверху убираем — место под переписку */
   body.tab-wa .chatview{background:var(--bg)}
   .chatview{position:relative}
+  #wa-source{padding:7px 14px;font-size:12px;background:rgba(37,211,102,.12);color:var(--text);border-bottom:1px solid var(--line)}
   .wa-head{display:flex;align-items:center;gap:10px}
   .wa-back{display:none;font-size:22px;line-height:1;cursor:pointer;color:var(--text);padding-right:4px;flex-shrink:0}
   .wa-headacts{display:flex;gap:15px;font-size:17px;align-items:center}
@@ -595,6 +596,7 @@
               <span title="Ещё" onclick="waMenu(event)">⋮</span>
             </div>
           </div>
+          <div id="wa-source" style="display:none"></div>
           <div class="msgs" id="wa-msgs"></div>
           <div class="replybox">
             <input type="file" id="wa-file" style="display:none" onchange="if(this.files[0]){waSendFile(this.files[0]);this.value='';}">
@@ -3720,6 +3722,7 @@
     const t=document.getElementById('wa-title'); if(t) t.innerHTML='← Выберите диалог слева';
     const acts=document.getElementById('wa-headacts'); if(acts) acts.style.display='none';
     const box=document.getElementById('wa-msgs'); if(box){ box.innerHTML=''; box.dataset.sig=''; }
+    const s=document.getElementById('wa-source'); if(s){ s.style.display='none'; s.innerHTML=''; }
     renderWaList();
   }
   function waProfileShow(open){ const p=document.getElementById('wa-profile'); if(p) p.classList.toggle('open', !!open); }
@@ -3791,6 +3794,14 @@
       const r=await apiFetch('/api/wa/thread?account='+encodeURIComponent(c.account_id)+'&customer='+encodeURIComponent(c.customer_id)+'&_='+Date.now(),{},ONEC_BASE);
       const d=await r.json(); if(waCur!==c) return; const msgs=d.msgs||[];
       waThreadMsgs=msgs;                               // для галереи/профиля
+      const srcEl=document.getElementById('wa-source');  // с какой рекламы пришёл клиент
+      if(srcEl){
+        if(d.source){
+          const pr=d.source.product||''; const ic=pr==='Бассейн'?'💦':(pr==='Чемоданы'?'🧳':'🎯');
+          srcEl.innerHTML='🎯 Пришёл с рекламы'+(pr?': '+ic+' <b>'+esc(pr)+'</b>':'');
+          srcEl.style.display='block';
+        } else { srcEl.style.display='none'; srcEl.innerHTML=''; }
+      }
       const last=msgs[msgs.length-1];
       const sig=msgs.length+'|'+(last?(last.ts+':'+last.x):'');
       if(box.dataset.sig===sig && !first) return;

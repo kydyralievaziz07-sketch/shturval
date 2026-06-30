@@ -1646,6 +1646,19 @@ def _igbot_generate(history, settings):
             for p in prods)
         system += ("\n\n=== ТОВАРЫ ИЗ КАТАЛОГА (1С, по запросу клиента — РЕАЛЬНЫЕ наличие и цены, "
                    "называй их уверенно, предлагай конкретные позиции) ===\n" + plist)
+    # С какой рекламы пришёл клиент (Click-to-WhatsApp) — сразу ведём по этому товару, НЕ переспрашиваем
+    try:
+        ref = wa_referral_info(history)
+    except Exception:
+        ref = None
+    if ref:
+        note = "\n\n=== ОТКУДА ПРИШЁЛ КЛИЕНТ (реклама) ===\n"
+        if ref.get("product"):
+            note += ("Клиент пришёл с рекламы про «%s». НЕ спрашивай, что ему нужно — ты уже знаешь. "
+                     "Сразу веди разговор про %s: предложи подходящую модель, цену и помоги оформить.\n"
+                     % (ref["product"], ref["product"].lower()))
+        note += "Текст объявления: " + (ref.get("body") or ref.get("headline") or "")[:300]
+        system += note
     body = json.dumps({"model": settings["model"], "max_tokens": 400,
                        "system": system, "messages": merged}).encode("utf-8")
     req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, headers={
@@ -2064,6 +2077,20 @@ _WA_TYPE_LABEL = {"image": "📷 фото", "video": "🎬 видео", "audio":
                   "voice": "🎤 голосовое", "document": "📎 документ", "sticker": "💟 стикер",
                   "location": "📍 геолокация", "contacts": "👤 контакт"}
 
+def wa_referral_info(rows):
+    """Из строк диалога достаёт рекламный referral (Click-to-WhatsApp) и определяет товар.
+    referral приходит в первом сообщении клиента, пришедшего по рекламе WhatsApp/Instagram."""
+    for r in rows:
+        ref = (r.get("raw") or {}).get("referral")
+        if ref:
+            t = ((ref.get("headline") or "") + " " + (ref.get("body") or "") + " "
+                 + (ref.get("source_url") or "")).lower()
+            prod = "Бассейн" if ("бассей" in t or "басей" in t) else ("Чемоданы" if "чемодан" in t else "")
+            return {"product": prod, "headline": ref.get("headline", "") or "",
+                    "body": (ref.get("body", "") or ""), "url": ref.get("source_url", "") or "",
+                    "ad_id": ref.get("source_id", "") or ""}
+    return None
+
 def wa_store_event(evt):
     """Разобрать webhook WhatsApp Cloud API и сохранить входящие сообщения в wa_inbox.
     Статусы (доставлено/прочитано) игнорируем — это не сообщения."""
@@ -2152,10 +2179,11 @@ def wa_conversations():
 
 def wa_thread(account_id, customer_id):
     """Сообщения одного диалога по возрастанию времени."""
-    msgs = []
+    msgs = []; pair_rows = []
     for r in wa_rows():
         acc, cust = _wa_pair(r)
         if acc == str(account_id) and cust == str(customer_id):
+            pair_rows.append(r)
             ts = int(r.get("ts") or 0)
             raw = r.get("raw") or {}
             typ = raw.get("type") or ""
@@ -2175,7 +2203,8 @@ def wa_thread(account_id, customer_id):
                          "tm": time.strftime("%d.%m %H:%M", time.localtime(ts / 1000)) if ts > 1e12
                                else (time.strftime("%d.%m %H:%M", time.localtime(ts)) if ts else "")})
     msgs.sort(key=lambda m: m["ts"])
-    return {"msgs": msgs, "customer": wa_customer_name(customer_id) or ("+" + str(customer_id))}
+    return {"msgs": msgs, "customer": wa_customer_name(customer_id) or ("+" + str(customer_id)),
+            "source": wa_referral_info(pair_rows)}
 
 def wa_reply(account_id, customer_id, text, by="human"):
     """Ответить клиенту с нужного номера и сохранить в историю.
