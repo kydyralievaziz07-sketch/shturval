@@ -1482,10 +1482,19 @@ IGBOT_LANG_RULES = (
     "• Эмодзи — уместно и редко (1, максимум 2 на сообщение), не в каждой строке."
 )
 
+# Если в настройках lang='ru' — отвечаем ТОЛЬКО на русском (для продающего бота WhatsApp).
+IGBOT_RU_RULES = (
+    "\n\n=== ЯЗЫК И ТОН (соблюдай строго) ===\n"
+    "• Отвечай ВСЕГДА ТОЛЬКО на русском языке, даже если клиент пишет на кыргызском, "
+    "английском или другом языке. Никогда не переходи на другой язык.\n"
+    "• Без канцелярита и роботных фраз. Тепло, коротко, по-человечески — как живой продавец.\n"
+    "• Эмодзи — уместно и редко (максимум 1 на сообщение)."
+)
+
 def _igbot_defaults():
     return {"enabled": False, "prompt": IGBOT_DEFAULT_PROMPT, "model": CFG.get("ANTHROPIC_MODEL"),
             "handoff_hours": 6, "kb": "", "sources": [], "learn_every_days": 0,
-            "learn_last": 0, "learn_next": 0}
+            "learn_last": 0, "learn_next": 0, "lang": "client"}
 
 def _igbot_get():
     s = kv_load("igbot_settings") or {}
@@ -1496,12 +1505,13 @@ def _igbot_get():
             "sources": s.get("sources") or [],
             "learn_every_days": int(s.get("learn_every_days") or 0),
             "learn_last": int(s.get("learn_last") or 0),
-            "learn_next": int(s.get("learn_next") or 0)}
+            "learn_next": int(s.get("learn_next") or 0),
+            "lang": s.get("lang") or "client"}
 
 def _igbot_set(patch):
     cur = _igbot_get()
     for k in ("enabled", "prompt", "model", "handoff_hours", "kb", "sources",
-              "learn_every_days", "learn_last", "learn_next"):
+              "learn_every_days", "learn_last", "learn_next", "lang"):
         if k in patch:
             cur[k] = patch[k]
     cur["enabled"] = bool(cur["enabled"])
@@ -1615,7 +1625,7 @@ def _igbot_generate(history, settings):
             merged.append(dict(m))
     if not merged or merged[-1]["role"] != "user":
         return None
-    system = settings["prompt"] + IGBOT_LANG_RULES
+    system = settings["prompt"] + (IGBOT_RU_RULES if settings.get("lang") == "ru" else IGBOT_LANG_RULES)
     if settings.get("kb"):
         system += ("\n\n=== ЗНАНИЯ ИЗ ПРОШЛЫХ ПЕРЕПИСОК (реальные товары, цены, ответы, политика — "
                    "опирайся на них; если тут есть цена/факт — отвечай уверенно) ===\n" + settings["kb"])
@@ -2092,10 +2102,9 @@ def wa_store_event(evt):
                     _supa("POST", "wa_inbox", "", row)
                 except Exception:
                     pass
-                # ИИ-бот «Акылай» (те же настройки, что и для Instagram): отвечает в фоне, только на текст
+                # ИИ-бот «Акылай»: отвечает в фоне с паузой ~5 сек (вдруг клиент допишет ещё)
                 if text and phone_id:
-                    threading.Thread(target=wabot_handle,
-                                     args=(sender, phone_id, text), daemon=True).start()
+                    _wabot_schedule(sender, phone_id)
 
 def _wa_pair(r):
     """(наш номер, клиент) из строки wa_inbox независимо от направления."""
@@ -2193,7 +2202,30 @@ def _wabot_history(phone_id, customer, n=40):
     except Exception:
         return []
 
-def wabot_handle(sender, phone_id, text):
+# Пауза перед ответом бота: ждём WABOT_DELAY сек — вдруг клиент допишет ещё. Каждое новое
+# сообщение сбрасывает таймер; по истечении тишины бот отвечает ОДИН раз (читает всю историю).
+WABOT_DELAY = 5.0
+_wabot_timers = {}
+_wabot_lock = threading.Lock()
+def _wabot_schedule(sender, phone_id):
+    key = (str(phone_id), str(sender))
+    with _wabot_lock:
+        t = _wabot_timers.get(key)
+        if t:
+            t.cancel()
+        nt = threading.Timer(WABOT_DELAY, _wabot_fire, args=(sender, phone_id, key))
+        nt.daemon = True
+        _wabot_timers[key] = nt
+        nt.start()
+def _wabot_fire(sender, phone_id, key):
+    with _wabot_lock:
+        _wabot_timers.pop(key, None)
+    try:
+        wabot_handle(sender, phone_id, None)
+    except Exception:
+        pass
+
+def wabot_handle(sender, phone_id, text=None):
     """ИИ-бот отвечает клиенту в WhatsApp. sender=клиент, phone_id=наш номер.
     Те же настройки/правила, что у Instagram-бота. Передача человеку: если оператор
     ответил в диалоге хоть раз — бот больше не вмешивается."""
