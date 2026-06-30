@@ -4974,8 +4974,23 @@ class Handler(BaseHTTPRequestHandler):
                     if "sections" in body and body.get("sections"):
                         over["sections"] = body.get("sections")
                     if "pw" in body and (body.get("pw") or "").strip():
-                        over["pw"] = _hash_pw((body.get("pw") or "").strip())
-                    team_save(_emp_row(login, **over))
+                        _np = (body.get("pw") or "").strip()
+                        if len(_np) < 4:
+                            return self._send(400, {"error": "Пароль минимум 4 символа"})
+                        over["pw"] = _hash_pw(_np)
+                    # смена логина сотрудника владельцем (необязательно)
+                    new_login = (body.get("new_login") or "").strip()
+                    if new_login and new_login.lower() != login.lower():
+                        if not _re.match(r"^[A-Za-z0-9_]{2,}$", new_login):
+                            return self._send(400, {"error": "Логин: латиница, цифры, _ (от 2 символов)"})
+                        if new_login.lower() in USERS_BY_LOGIN:
+                            return self._send(400, {"error": "Логин «%s» уже занят" % new_login})
+                        row = _emp_row(login, company=co, **over)
+                        row["login"] = new_login
+                        team_save(row)                                      # запись под новым логином (поля скопированы)
+                        team_save(_emp_row(login, company=co, active=False))  # старый логин спрятать
+                        return self._send(200, {"ok": True, "login": new_login})
+                    team_save(_emp_row(login, company=co, **over))
                     return self._send(200, {"ok": True})
                 elif action == "remove":
                     team_save(_emp_row(login, active=False))

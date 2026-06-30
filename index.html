@@ -436,7 +436,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.80.0<br>У FREE WAYS раздел «Авто Рент» переименован в «FreeWays»</div>
+      Штурвал v3.81.0<br>Владелец может менять логин и пароль сотрудников в Кадрах</div>
   </aside>
 
   <!-- MAIN -->
@@ -5421,6 +5421,8 @@
     _toggleEmpPay();
     document.getElementById('emp-login').value='';
     document.getElementById('emp-pw').value='';
+    document.getElementById('emp-login').placeholder='латиницей, авто';
+    document.getElementById('emp-pw').placeholder='оставьте пустым = без входа';
     document.getElementById('emp-login-block').style.display='';
     document.getElementById('emp-err').textContent='';
     renderEmpSecs([]);
@@ -5441,7 +5443,11 @@
     document.getElementById('emp-video-rate').value=v.video_rate||'';
     var cp=document.getElementById('emp-comm-pct'); if(cp) cp.value=(v.commission_pct!=null?v.commission_pct:'');
     _toggleEmpPay();
-    document.getElementById('emp-login-block').style.display='none';   // логин при правке не трогаем
+    document.getElementById('emp-login').value=v.login||'';
+    document.getElementById('emp-pw').value='';
+    document.getElementById('emp-login').placeholder='латиницей';
+    document.getElementById('emp-pw').placeholder='пусто = не менять';
+    document.getElementById('emp-login-block').style.display='';   // владелец может сменить логин/пароль
     document.getElementById('emp-err').textContent='';
     renderEmpSecs((v.sections||[]).filter(s=>s!=='all'));
     _deptOptions();
@@ -5468,7 +5474,13 @@
     const btn=document.getElementById('emp-save-btn'); btn.disabled=true; btn.textContent='Сохраняю…';
     try{
       const secs=readEmpSecs();
-      if(empEditLogin){ body.action='update'; body.login=empEditLogin; body.sections=secs; }
+      if(empEditLogin){
+        body.action='update'; body.login=empEditLogin; body.sections=secs;
+        const lg=(document.getElementById('emp-login').value||'').trim();
+        const pw=(document.getElementById('emp-pw').value||'').trim();
+        if(lg && lg.toLowerCase()!==String(empEditLogin).toLowerCase()) body.new_login=lg;
+        if(pw) body.pw=pw;
+      }
       else{
         body.action='add';
         const lg=(document.getElementById('emp-login').value||'').trim();
@@ -5480,7 +5492,7 @@
       const res=await teamPost(body);
       // прокат: сохранить персональный % за сдачу авто (комиссия)
       if(isRentCabinet() && commRaw!=='' && commRaw!=null){
-        const lg=empEditLogin||(res&&res.login)||body.login;
+        const lg=(res&&res.login)||empEditLogin||body.login;
         if(lg){
           var m={}; m[lg]=commRaw;
           try{ await apiFetch('/api/rent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_commission',map:m})},ONEC_BASE); }catch(_){}
