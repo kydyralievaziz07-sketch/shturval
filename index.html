@@ -3883,51 +3883,62 @@
         box.insertAdjacentHTML('beforeend','<div style="font-size:12px;color:#ffb84d;padding:4px 8px">⚠️ '+esc(d.error||'не удалось отправить')+'</div>'); }
     }catch(e){ const b=document.getElementById(bid); if(b){ b.innerHTML=label+' ⚠️'; b.style.background='var(--red)'; } }
   }
-  // ——— Запись голосовых: пишем PCM напрямую (Web Audio) и кодируем в MP3 (lamejs).
-  // Так надёжно во всех браузерах — без MediaRecorder и decodeAudioData (они и ломались). ———
-  let waAudioCtx=null, waProc=null, waSrcNode=null, waMute=null, waRecStream=null, waPcm=[], waRecSR=44100, waRecording=false;
+  // ——— Запись голосовых: MediaRecorder (на Safari даёт mp4 — проверено, работает).
+  // На выходе приводим к MP3 (правильная длительность + WhatsApp принимает везде);
+  // если конвертация не вышла — шлём исходный формат, если он принимается (mp4/ogg). ———
+  let waMR=null, waMRChunks=[], waMRStream=null, waMRStart=0, waMRTimer=null;
   async function waToggleVoice(){
     const btn=document.getElementById('wa-mic');
-    if(waRecording){ waStopVoice(); return; }
+    if(waMR && waMR.state==='recording'){ waMR.stop(); return; }
     if(!waCur){ alert('Сначала выбери диалог слева.'); return; }
-    if(!navigator.mediaDevices){ alert('Браузер не поддерживает запись.'); return; }
-    btn.title='Загрузка…';
-    try{ await waLoadLame(); }
-    catch(e){ btn.title='Записать голосовое'; alert('Не удалось загрузить кодировщик голоса — проверь интернет и попробуй ещё раз.'); return; }
-    try{ waRecStream=await navigator.mediaDevices.getUserMedia({audio:true}); }
-    catch(e){ btn.title='Записать голосовое'; alert('Нет доступа к микрофону. Разреши доступ к микрофону в браузере.'); return; }
-    const Ctx=window.AudioContext||window.webkitAudioContext;
-    waAudioCtx=new Ctx(); waRecSR=waAudioCtx.sampleRate;
-    try{ if(waAudioCtx.state==='suspended') await waAudioCtx.resume(); }catch(e){}
-    waSrcNode=waAudioCtx.createMediaStreamSource(waRecStream);
-    waProc=waAudioCtx.createScriptProcessor(4096,1,1);
-    waMute=waAudioCtx.createGain(); waMute.gain.value=0;          // глушим возврат в динамики (без эха)
-    waPcm=[];
-    waProc.onaudioprocess=function(e){ if(!waRecording)return; waPcm.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
-    waSrcNode.connect(waProc); waProc.connect(waMute); waMute.connect(waAudioCtx.destination);
-    waRecording=true; btn.textContent='⏹'; btn.style.color='#ff4d4d'; btn.title='Остановить и отправить';
+    if(!navigator.mediaDevices || !window.MediaRecorder){ alert('Браузер не поддерживает запись голосовых.'); return; }
+    try{ waMRStream=await navigator.mediaDevices.getUserMedia({audio:true}); }
+    catch(e){ alert('Нет доступа к микрофону. Разреши доступ к микрофону в браузере.'); return; }
+    let mime='';
+    ['audio/mp4','audio/ogg;codecs=opus','audio/webm;codecs=opus','audio/webm'].forEach(function(t){
+      if(!mime && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) mime=t; });
+    waMRChunks=[];
+    try{ waMR = mime ? new MediaRecorder(waMRStream,{mimeType:mime}) : new MediaRecorder(waMRStream); }
+    catch(e){ try{ waMR=new MediaRecorder(waMRStream); }catch(e2){ alert('Запись недоступна в этом браузере.'); return; } }
+    waMR.ondataavailable=function(e){ if(e.data&&e.data.size) waMRChunks.push(e.data); };
+    waMR.onstop=function(){ waFinishVoice(btn); };
+    waMR.start(); waMRStart=Date.now();
+    btn.style.color='#ff4d4d'; btn.title='Остановить и отправить'; btn.textContent='⏹ 0:00';
+    waMRTimer=setInterval(function(){ var s=Math.floor((Date.now()-waMRStart)/1000); btn.textContent='⏹ 0:'+(s<10?'0'+s:s); },500);
   }
-  async function waStopVoice(){
-    const btn=document.getElementById('wa-mic');
-    waRecording=false;
-    try{ waProc.disconnect(); }catch(e){} try{ waMute.disconnect(); }catch(e){} try{ waSrcNode.disconnect(); }catch(e){}
-    try{ waRecStream.getTracks().forEach(t=>t.stop()); }catch(e){}
-    try{ waAudioCtx.close(); }catch(e){}
-    let len=0; waPcm.forEach(a=>len+=a.length);
-    if(len < waRecSR*0.3){ btn.textContent='🎤'; btn.style.color=''; btn.title='Записать голосовое'; alert('Слишком короткая запись — подержи кнопку чуть дольше.'); return; }
+  async function waFinishVoice(btn){
+    if(waMRTimer){ clearInterval(waMRTimer); waMRTimer=null; }
+    try{ waMRStream.getTracks().forEach(function(t){t.stop();}); }catch(e){}
+    var dur=(Date.now()-waMRStart)/1000;
+    if(!waMRChunks.length || dur<0.4){ btn.textContent='🎤'; btn.style.color=''; btn.title='Записать голосовое'; alert('Слишком короткая запись — подержи кнопку чуть дольше.'); return; }
+    var t=(waMRChunks[0].type||'audio/webm').split(';')[0];
+    var blob=new Blob(waMRChunks,{type:t});
     btn.textContent='🎤'; btn.style.color='#ffb84d'; btn.title='Обработка…';
-    const pcm=new Float32Array(len); let off=0; waPcm.forEach(a=>{ pcm.set(a,off); off+=a.length; });
-    try{
-      const blob=waPcmToMp3(pcm, waRecSR);
-      btn.style.color=''; btn.title='Записать голосовое';
-      await waSendFile(new File([blob],'voice.mp3',{type:'audio/mpeg'}));
-    }catch(e){ btn.style.color=''; btn.title='Записать голосовое'; alert('Не удалось обработать запись: '+((e&&e.message)||e)); }
+    var ok=['audio/mp4','audio/ogg','audio/mpeg','audio/aac'];
+    var outBlob=blob, fname='voice.'+(t.indexOf('mp4')>=0?'m4a':(t.indexOf('ogg')>=0?'ogg':'webm'));
+    try{ outBlob=await waBlobToMp3(blob); fname='voice.mp3'; }
+    catch(e){
+      if(!ok.some(function(x){return t.indexOf(x)===0;})){
+        btn.style.color=''; btn.title='Записать голосовое';
+        alert('Браузер записал голос в формате, который WhatsApp не принимает. Открой «Штурвал» в Safari.'); return; }
+    }
+    btn.style.color=''; btn.title='Записать голосовое';
+    await waSendFile(new File([outBlob],fname,{type:outBlob.type||t}));
   }
-  function waPcmToMp3(pcm, sr){
-    const enc=new lamejs.Mp3Encoder(1, sr, 128);
-    const s16=waFloatTo16(pcm), block=1152, out=[];
-    for(let i=0;i<s16.length;i+=block){ const mp3=enc.encodeBuffer(s16.subarray(i,i+block)); if(mp3.length) out.push(new Int8Array(mp3)); }
-    const end=enc.flush(); if(end.length) out.push(new Int8Array(end));
+  async function waBlobToMp3(blob){
+    await waLoadLame();
+    var ab=await blob.arrayBuffer();
+    var Ctx=window.AudioContext||window.webkitAudioContext;
+    var ctx=new Ctx();
+    var audio=await new Promise(function(resolve,reject){
+      var ret; try{ ret=ctx.decodeAudioData(ab,resolve,reject); }catch(e){ reject(e); return; }
+      if(ret && typeof ret.then==='function') ret.then(resolve,reject);
+    });
+    try{ ctx.close(); }catch(e){}
+    var enc=new lamejs.Mp3Encoder(1, audio.sampleRate, 128);
+    var data=waFloatTo16(audio.getChannelData(0)), block=1152, out=[];
+    for(var i=0;i<data.length;i+=block){ var mp3=enc.encodeBuffer(data.subarray(i,i+block)); if(mp3.length) out.push(new Int8Array(mp3)); }
+    var end=enc.flush(); if(end.length) out.push(new Int8Array(end));
     return new Blob(out,{type:'audio/mpeg'});
   }
   function waLoadLame(){
