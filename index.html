@@ -3807,8 +3807,9 @@
       if(box.dataset.sig===sig && !first) return;
       const atBottom=(box.scrollHeight-box.scrollTop-box.clientHeight)<70;
       box.dataset.sig=sig;
-      box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+(m.t==='out'?'out':'in')+'">'+waBubbleBody(m)+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>').join(''):'<div style="padding:10px;color:var(--muted)">Нет сообщений</div>';
-      waMarkSeen(c);                                   // открытый диалог считаем прочитанным
+      box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+(m.t==='out'?'out':'in')+'">'+waBubbleBody(m)+((m.tm||m.t==='out')?'<span style="display:block;font-size:10px;margin-top:2px"><span style="opacity:.5">'+esc(m.tm||'')+'</span> '+waMsgTick(m)+'</span>':'')+'</div>').join(''):'<div style="padding:10px;color:var(--muted)">Нет сообщений</div>';
+      waMarkSeen(c);                                   // открытый диалог считаем прочитанным (локально)
+      if(last && last.t==='in') waMarkReadServer();    // и шлём в WhatsApp «прочитано» (клиент видит синие галочки)
       waHydrateMedia(box);
       if(first||atBottom) box.scrollTop=box.scrollHeight;
     }catch(e){ if(first) box.innerHTML='<div style="padding:10px;color:var(--muted)">Не удалось загрузить.</div>'; }
@@ -3833,6 +3834,18 @@
     if(mime.indexOf('video/')===0) return 'video';
     if(mime.indexOf('audio/')===0) return 'audio';
     return 'document'; }
+  async function waMarkReadServer(){   // отметить последнее входящее прочитанным на стороне WhatsApp
+    if(!waCur) return;
+    try{ await apiFetch('/api/wa/read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:waCur.account_id,customer_id:waCur.customer_id})},ONEC_BASE); }catch(e){}
+  }
+  function waMsgTick(m){         // галочки статуса для НАШИХ исходящих: ✓ отправлено, ✓✓ доставлено, ✓✓(синие) прочитано
+    if(m.t!=='out') return '';
+    const s=m.st||'';
+    if(s==='read') return '<span title="Прочитано" style="color:#53bdeb;font-weight:600">✓✓</span>';
+    if(s==='delivered') return '<span title="Доставлено" style="opacity:.65">✓✓</span>';
+    if(s==='sent') return '<span title="Отправлено" style="opacity:.65">✓</span>';
+    return '<span title="Отправляется" style="opacity:.45">🕓</span>';
+  }
   function waBubbleBody(m){
     if(m.med){
       const t=m.mtype, id=esc(m.med), cap=m.x?'<div style="margin-top:4px">'+linkify(m.x)+'</div>':'';

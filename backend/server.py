@@ -225,7 +225,7 @@ SECTION_OF = [
     ("/api/ig/broadcast", "chats"), ("/api/ig/bot", "chats"),
     ("/api/wa/conversations", "chats"), ("/api/wa/thread", "chats"),
     ("/api/wa/reply", "chats"), ("/api/wa/accounts", "chats"),
-    ("/api/wa/media", "chats"), ("/api/wa/profile", "chats"),
+    ("/api/wa/media", "chats"), ("/api/wa/profile", "chats"), ("/api/wa/read", "chats"),
     ("/api/assistant", "ai"),
     ("/api/ads", "ads"),
 ]
@@ -1978,12 +1978,12 @@ def wa_send_media(to, mtype, media_id, from_phone_id=None, caption="", filename=
 
 def wa_reply_media(account_id, customer_id, mtype, media_id, caption="", filename="", mime="", by="human"):
     """Оператор отправил клиенту медиа: отправить и сохранить в историю."""
-    wa_send_media(customer_id, mtype, media_id, account_id, caption=caption, filename=filename)
+    resp = wa_send_media(customer_id, mtype, media_id, account_id, caption=caption, filename=filename)
     try:
         _supa("POST", "wa_inbox", "",
               {"company_id": COMPANY_ID, "sender_id": str(account_id),
-               "recipient_id": str(customer_id), "text": caption or "",
-               "ts": int(time.time() * 1000), "direction": "out",
+               "recipient_id": str(customer_id), "text": caption or "", "mid": _wamid_of(resp),
+               "ts": int(time.time() * 1000), "direction": "out", "status": "sent",
                "raw": {"by": by, "type": mtype, "media_id": media_id,
                        "mime": mime, "filename": filename, "caption": caption}})
     except Exception:
@@ -2108,6 +2108,19 @@ def wa_store_event(evt):
                 nm = ((ct.get("profile") or {}).get("name") or "").strip()
                 if waid and nm and _wa_names.get(waid) != nm:
                     wa_save_name(waid, nm)
+            # Статусы НАШИХ исходящих (доставлено/прочитано) — обновляем по wamid, без понижения
+            _ST_RANK = {"sent": 1, "delivered": 2, "read": 3}
+            for st in (val.get("statuses") or []):
+                wamid = st.get("id"); status = st.get("status")
+                if not (wamid and status in _ST_RANK):
+                    continue
+                lower = [s for s, rk in _ST_RANK.items() if rk < _ST_RANK[status]]
+                flt = "?mid=eq.%s&direction=eq.out" % _q(str(wamid))
+                flt += ("&status=in.(%s)" % ",".join(lower)) if lower else "&status=is.null"
+                try:
+                    _supa("PATCH", "wa_inbox", flt, {"status": status})
+                except Exception:
+                    pass
             for msg in (val.get("messages") or []):
                 sender = str(msg.get("from") or "")            # клиент
                 if not sender or _wa_seen_mid(msg.get("id", "")):
@@ -2200,21 +2213,48 @@ def wa_thread(account_id, customer_id):
                 x = r.get("text", "") or (_WA_TYPE_LABEL.get(typ, "") if typ and typ != "text" else "")
             msgs.append({"t": ("out" if r.get("direction") == "out" else "in"),
                          "x": x, "ts": ts, "mtype": typ, "med": med, "mime": mime, "fname": fname,
+                         "st": (r.get("status") or ""),
                          "tm": time.strftime("%d.%m %H:%M", time.localtime(ts / 1000)) if ts > 1e12
                                else (time.strftime("%d.%m %H:%M", time.localtime(ts)) if ts else "")})
     msgs.sort(key=lambda m: m["ts"])
     return {"msgs": msgs, "customer": wa_customer_name(customer_id) or ("+" + str(customer_id)),
             "source": wa_referral_info(pair_rows)}
 
+def _wamid_of(resp):
+    try:
+        return ((resp or {}).get("messages") or [{}])[0].get("id", "") or ""
+    except Exception:
+        return ""
+
+def wa_mark_read(phone_id, wamid):
+    """Отметить входящее сообщение прочитанным — клиент увидит, что мы прочитали (синие галочки)."""
+    phone_id = str(phone_id or CFG.get("WA_PHONE_ID", "") or "")
+    token = wa_token_for(phone_id) if phone_id else CFG.get("WA_TOKEN", "")
+    if not (token and phone_id and wamid):
+        return
+    url = WA_GRAPH + "/" + _q(phone_id) + "/messages"
+    body = json.dumps({"messaging_product": "whatsapp", "status": "read",
+                       "message_id": str(wamid)}).encode()
+    req = urllib.request.Request(url, data=body, method="POST",
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": "Bearer " + token,
+                                          "User-Agent": "Shturval/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.loads(r.read().decode() or "{}")
+    except Exception:
+        return None
+
 def wa_reply(account_id, customer_id, text, by="human"):
     """Ответить клиенту с нужного номера и сохранить в историю.
     by='human' (ручной ответ оператора) → ИИ-бот делает паузу в этом диалоге."""
-    wa_send(customer_id, text, account_id)
+    resp = wa_send(customer_id, text, account_id)
     try:
         _supa("POST", "wa_inbox", "",
               {"company_id": COMPANY_ID, "sender_id": str(account_id),
-               "recipient_id": str(customer_id), "text": text,
-               "ts": int(time.time() * 1000), "direction": "out", "raw": {"by": by, "type": "text"}})
+               "recipient_id": str(customer_id), "text": text, "mid": _wamid_of(resp),
+               "ts": int(time.time() * 1000), "direction": "out", "status": "sent",
+               "raw": {"by": by, "type": "text"}})
     except Exception:
         pass
 
@@ -2271,7 +2311,7 @@ def wabot_handle(sender, phone_id, text=None):
         if not reply:
             return
         try:
-            wa_send(sender, reply, phone_id)
+            resp = wa_send(sender, reply, phone_id)
         except Exception as e:
             _igbot_log_error("Отправка в WhatsApp", str(e))
             return
@@ -2279,8 +2319,8 @@ def wabot_handle(sender, phone_id, text=None):
         try:
             _supa("POST", "wa_inbox", "",
                   {"company_id": COMPANY_ID, "sender_id": str(phone_id), "recipient_id": str(sender),
-                   "text": reply, "ts": int(time.time() * 1000), "direction": "out",
-                   "raw": {"by": "bot", "type": "text"}})
+                   "text": reply, "mid": _wamid_of(resp), "ts": int(time.time() * 1000),
+                   "direction": "out", "status": "sent", "raw": {"by": "bot", "type": "text"}})
         except Exception:
             pass
     except Exception as e:
@@ -4370,6 +4410,27 @@ class Handler(BaseHTTPRequestHandler):
                 wa_reply(acc, cust, text)
             except Exception as e:
                 return self._send(200, {"ok": False, "error": "WhatsApp: " + str(e)})
+            return self._send(200, {"ok": True})
+        if self.path.startswith("/api/wa/read"):
+            # Отметить последнее входящее сообщение клиента прочитанным
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            acc = str(body.get("account_id") or ""); cust = str(body.get("customer_id") or "")
+            if not acc or not cust:
+                return self._send(400, {"error": "нужны account_id и customer_id"})
+            try:
+                rows = _supa("GET", "wa_inbox",
+                             "?company_id=eq.%s&sender_id=eq.%s&recipient_id=eq.%s&direction=eq.in"
+                             "&order=ts.desc&limit=1&select=mid"
+                             % (_q(COMPANY_ID), _q(cust), _q(acc)))
+                mid = (rows[0].get("mid") if rows else "") or ""
+                if mid:
+                    wa_mark_read(acc, mid)
+            except Exception:
+                pass
             return self._send(200, {"ok": True})
         if self.path.startswith("/api/wa/media"):
             # Оператор отправляет клиенту файл/фото/видео/голосовое (data_b64 — содержимое файла).
