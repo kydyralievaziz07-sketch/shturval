@@ -3851,8 +3851,8 @@
       const t=m.mtype, id=esc(m.med), cap=m.x?'<div style="margin-top:4px">'+linkify(m.x)+'</div>':'';
       if(t==='sticker') return '<img data-wamedia="'+id+'" style="width:130px;max-width:60%;display:block;background:transparent" title="Стикер">'+cap;
       if(t==='image') return '<img data-wamedia="'+id+'" style="max-width:230px;max-height:300px;border-radius:8px;cursor:pointer;display:block" onclick="waOpenMedia(\''+id+'\',\''+esc(m.fname||'image')+'\')" title="Открыть">'+cap;
-      if(t==='audio') return '<audio data-wamedia="'+id+'" controls preload="none" style="max-width:240px;height:40px"></audio>'+cap;
-      if(t==='video') return '<video data-wamedia="'+id+'" controls preload="none" style="max-width:240px;border-radius:8px;display:block"></video>'+cap;
+      if(t==='audio') return '<span style="display:inline-flex;align-items:center;gap:6px"><audio data-wamedia="'+id+'" controls preload="metadata" style="max-width:215px;vertical-align:middle"></audio><a href="#" onclick="waOpenMedia(\''+id+'\',\'voice.mp3\');return false" title="Скачать голосовое" style="text-decoration:none;font-size:15px">⬇️</a></span>'+cap;
+      if(t==='video') return '<video data-wamedia="'+id+'" controls preload="metadata" style="max-width:240px;border-radius:8px;display:block"></video>'+cap;
       return '<a href="#" onclick="waOpenMedia(\''+id+'\',\''+esc(m.fname||'file')+'\');return false" style="color:inherit;text-decoration:underline">📎 '+esc(m.fname||'файл')+'</a>'+cap;
     }
     return linkify(m.x);
@@ -3869,8 +3869,8 @@
     for(const el of els){
       el.setAttribute('data-loaded','1');
       const id=el.getAttribute('data-wamedia');
-      try{ el.src=await waFetchMedia(id); }
-      catch(e){ /* медиа недоступно — оставляем пустым */ }
+      try{ el.src=await waFetchMedia(id); if(el.tagName==='AUDIO'||el.tagName==='VIDEO'){ try{ el.load(); }catch(e){} } }
+      catch(e){ el.removeAttribute('data-loaded'); /* медиа недоступно — попробуем позже */ }
     }
   }
   async function waOpenMedia(id,fname){
