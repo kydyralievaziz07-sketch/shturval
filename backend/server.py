@@ -214,6 +214,7 @@ SECTION_OF = [
     ("/api/overview", "crm"),
     ("/api/inventory", "prod"), ("/api/products", "prod"),
     ("/api/categories", "prod"), ("/api/add-product", "prod"),
+    ("/api/assortment", "sales"),
     ("/api/sales-history", "sales"), ("/api/sales", "sales"),
     ("/api/suppliers", "supl"), ("/api/expenses", "fin"),
     ("/api/rent", "rent"),
@@ -1989,8 +1990,55 @@ def wa_reply_media(account_id, customer_id, mtype, media_id, caption="", filenam
     except Exception:
         pass
 
+_FFMPEG_EXE = None
+_FFMPEG_TRIED = False
+def _ffmpeg_exe():
+    """Путь к статическому ffmpeg (из pip-пакета imageio-ffmpeg). None, если недоступен."""
+    global _FFMPEG_EXE, _FFMPEG_TRIED
+    if _FFMPEG_TRIED:
+        return _FFMPEG_EXE
+    _FFMPEG_TRIED = True
+    try:
+        import imageio_ffmpeg
+        _FFMPEG_EXE = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        try:
+            import shutil
+            _FFMPEG_EXE = shutil.which("ffmpeg")
+        except Exception:
+            _FFMPEG_EXE = None
+    return _FFMPEG_EXE
+
+_audio_mp3_cache = {}   # media_id -> mp3 bytes (чтобы не перекодировать при каждом проигрывании)
+def wa_audio_to_mp3(data, media_id=None):
+    """Перекодировать аудио (ogg/opus, webm, amr…) в MP3 для Safari/всех браузеров.
+    Возвращает (mp3_bytes, 'audio/mpeg') либо (data, None) если перекодировать не удалось."""
+    if media_id and media_id in _audio_mp3_cache:
+        return _audio_mp3_cache[media_id], "audio/mpeg"
+    exe = _ffmpeg_exe()
+    if not exe:
+        return data, None
+    try:
+        import subprocess
+        p = subprocess.run([exe, "-hide_banner", "-loglevel", "error",
+                            "-i", "pipe:0", "-vn", "-c:a", "libmp3lame", "-b:a", "96k",
+                            "-f", "mp3", "pipe:1"],
+                           input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        out = p.stdout
+        if p.returncode == 0 and out and len(out) > 200:
+            if media_id and len(out) < 5_000_000:
+                _audio_mp3_cache[media_id] = out
+                if len(_audio_mp3_cache) > 200:
+                    _audio_mp3_cache.pop(next(iter(_audio_mp3_cache)), None)
+            return out, "audio/mpeg"
+    except Exception as e:
+        try: print("ffmpeg transcode failed:", e)
+        except Exception: pass
+    return data, None
+
 def wa_media_download(media_id, phone_id=None):
-    """Скачать медиа по media_id из Meta. Возвращает (байты, mime)."""
+    """Скачать медиа по media_id из Meta. Возвращает (байты, mime).
+    Голосовые WhatsApp приходят в ogg/opus — Safari их не играет, поэтому перекодируем в MP3."""
     token = wa_token_for(str(phone_id or "")) if phone_id else CFG.get("WA_TOKEN", "")
     if not token:
         token = CFG.get("WA_TOKEN", "")
@@ -2005,7 +2053,14 @@ def wa_media_download(media_id, phone_id=None):
         raise RuntimeError("медиа недоступно")
     req2 = urllib.request.Request(murl, headers={"Authorization": "Bearer " + token, "User-Agent": "Shturval/1.0"})
     with urllib.request.urlopen(req2, timeout=60) as r:
-        return r.read(), mime
+        data = r.read()
+    # Перекодируем «неудобные» аудиоформаты в MP3 (ogg/opus от клиентов, webm, amr, aac в ADTS).
+    low = (mime or "").lower()
+    if low.startswith("audio/") and not low.startswith("audio/mpeg") and "mp3" not in low:
+        mp3, m2 = wa_audio_to_mp3(data, str(media_id))
+        if m2:
+            return mp3, m2
+    return data, mime
 
 def wa_business_profile(phone_id=None):
     """Бизнес-профиль номера (как видят клиенты) + сведения о номере."""
@@ -2508,6 +2563,7 @@ def _warmer():
         if CFG.get("YAROS_URL"):
             jobs.append(_refresh_catalog)
             jobs.append(_warm_sales)
+            jobs.append(_assort_refresh)      # снимок анализа ассортимента (сам троттлит, раз в 6 ч)
         if CFG.get("AMO_TOKEN"):
             jobs.append(_refresh_overview)
         ths = [threading.Thread(target=j, daemon=True) for j in jobs]
@@ -2928,6 +2984,169 @@ def backfill_sales(days=30, overwrite=False):
             failed.append({"date": d, "error": str(e)[:120]})
     return {"saved_count": len(saved), "saved": saved,
             "skipped": skipped, "failed": failed}
+
+
+# ====== АНАЛИЗ АССОРТИМЕНТА ПО ЧИСТОЙ ПРИБЫЛИ (ABC по группам) ======
+# По запросу владельца: какие позиции оставить в каждой группе. Считаем ТОЛЬКО по
+# чистой прибыли и марже продаж — склад/остатки НЕ учитываем. Группа = верхняя
+# категория 1С (Носочные, Детская одежда, Обувь...). Тяжёлый расчёт (≈30 запросов
+# чеков по дням) — держим снимок в памяти и Supabase (kv_cache), обновляем не чаще
+# раза в 6 часов; запрос отвечает мгновенно из снимка.
+ASSORT_TTL = 6 * 3600
+ASSORT_DAYS = 30
+ASSORT_TOPN = 10
+_assort = {"data": None, "t": 0.0, "next": 0.0, "refreshing": False}
+
+def _cat_top_resolver():
+    """Карта category_id → ВЕРХНЯЯ группа (прямой ребёнок корня «Товары»).
+    /categories отдаёт PARENT_ID — поднимаемся по дереву до верхней группы.
+    Возвращает функцию top(category_id)->название группы (или None)."""
+    data = yaros_get("/categories")
+    nodes = {}
+    for c in data.get("categories", []):
+        nodes[c.get("ID")] = {"title": (c.get("TITLE") or "").strip(),
+                              "parent": c.get("PARENT_ID") or ""}
+    def top(cid):
+        seen = set()
+        while cid and cid in nodes and cid not in seen:
+            seen.add(cid)
+            n = nodes[cid]; p = n["parent"]
+            # дошли до верхушки: родителя нет, родитель неизвестен, или родитель = корень «Товары»
+            if not p or p not in nodes or nodes.get(p, {}).get("title") == "Товары":
+                return n["title"] or None
+            cid = p
+        return None
+    return top
+
+def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
+    """Аггрегирует прибыль по каждому товару из чеков за последние `days` дней,
+    раскладывает по верхним группам 1С и берёт топ-`top_n` по чистой прибыли в каждой.
+    Возвраты учтены с минусом. Склад не используется."""
+    goods = get_goods()
+    top = _cat_top_resolver()
+    # карта название товара → category_id (предпочитаем запись с заполненной категорией)
+    name2cat = {}
+    for g in goods:
+        t = (g.get("TITLE") or "").strip()
+        if not t:
+            continue
+        cid = g.get("CATEGORY_ID") or ""
+        if t not in name2cat or (cid and not name2cat[t]):
+            name2cat[t] = cid
+    # аггрегируем чеки по дням (сегодня + предыдущие days-1 дней)
+    today = _today_str()
+    dates = [today] + [time.strftime("%Y-%m-%d", time.localtime(time.time() - i * 86400))
+                       for i in range(1, days)]
+    agg = {}
+    days_ok = 0; days_fail = 0
+    for d in dates:
+        f, t0 = _day_bounds(d)
+        try:
+            data = yaros_get("/receipts/v2?from=%d&to=%d" % (f, t0))
+        except Exception:
+            days_fail += 1
+            continue
+        days_ok += 1
+        for x in data.get("receipts", []):
+            sign = -1 if x.get("operationType") == "Возврат" else 1
+            for it in x.get("items", []):
+                nm = (it.get("name") or "").strip()
+                if not nm:
+                    continue
+                a = agg.setdefault(nm, {"qty": 0.0, "rev": 0.0, "profit": 0.0})
+                a["qty"] += sign * _num(it.get("qty"))
+                a["rev"] += sign * _num(it.get("saleAmount"))
+                a["profit"] += sign * _num(it.get("profit"))
+    # раскладка по группам
+    groups = {}
+    for nm, a in agg.items():
+        cid = name2cat.get(nm, "")
+        grp = (top(cid) if cid else None) or "— без категории —"
+        groups.setdefault(grp, []).append({"name": nm, **a})
+    tot_profit = sum(a["profit"] for a in agg.values())
+    tot_rev = sum(a["rev"] for a in agg.values())
+    out_groups = []
+    for grp, items in groups.items():
+        gp_profit = sum(i["profit"] for i in items)
+        gp_rev = sum(i["rev"] for i in items)
+        if gp_profit <= 0:
+            continue
+        items.sort(key=lambda i: -i["profit"])
+        top_items = items[:top_n]
+        keep_profit = sum(i["profit"] for i in top_items)
+        rows = []
+        for rank, i in enumerate(top_items, 1):
+            ppu = (i["profit"] / i["qty"]) if i["qty"] else 0
+            rows.append({
+                "rank": rank, "name": i["name"], "qty": round(i["qty"]),
+                "revenue": round(i["rev"]), "profit": round(i["profit"]),
+                "group_share": round(i["profit"] / gp_profit * 100, 1) if gp_profit else 0,
+                "margin": round(i["rev"] and i["profit"] / i["rev"] * 100),
+                "profit_per_unit": round(ppu),
+            })
+        out_groups.append({
+            "group": grp, "profit": round(gp_profit), "revenue": round(gp_rev),
+            "share": round(gp_profit / tot_profit * 100, 1) if tot_profit else 0,
+            "count": len(items), "keep_n": len(top_items),
+            "keep_profit_share": round(keep_profit / gp_profit * 100) if gp_profit else 0,
+            "top": rows,
+        })
+    out_groups.sort(key=lambda g: -g["profit"])
+    res = {
+        "period_days": days, "top_n": top_n,
+        "from": dates[-1], "to": today,
+        "total_revenue": round(tot_rev), "total_profit": round(tot_profit),
+        "avg_margin": round(tot_profit / tot_rev * 100, 1) if tot_rev else 0,
+        "total_products": len(agg), "days_ok": days_ok, "days_fail": days_fail,
+        "groups": out_groups,
+        "generated_ts": int(time.time()),
+        "updated": time.strftime("%d.%m.%Y %H:%M"),
+    }
+    return res
+
+def _assort_refresh(days=ASSORT_DAYS, force=False):
+    """Пересчитывает снимок ассортимента (тяжело — ≈30 запросов к 1С). Сам себя
+    троттлит: не чаще раза в ASSORT_TTL. При сбое — повтор через 30 мин."""
+    if _assort["refreshing"]:
+        return
+    if not force and time.time() < _assort.get("next", 0):
+        return
+    _assort["refreshing"] = True
+    try:
+        r = build_assortment(days)
+        _assort["data"] = r
+        _assort["t"] = time.time()
+        _assort["next"] = time.time() + ASSORT_TTL
+        kv_save("assortment_v1", r)
+    except Exception:
+        _assort["next"] = time.time() + 1800
+    finally:
+        _assort["refreshing"] = False
+
+def get_assortment():
+    """Мгновенно отдаёт снимок анализа ассортимента из памяти/базы. Если устарел —
+    пересчитывает ФОНОМ, не задерживая ответ. Самый первый раз (снимка нигде нет) —
+    запускает расчёт в фоне и просит обновить через минуту."""
+    d = _assort["data"]
+    if d is None:
+        d = kv_load("assortment_v1")
+        if d:
+            _assort["data"] = d
+            _assort["t"] = d.get("generated_ts", 0)
+            # снимок из базы — фоновый рефреш сам решит по next (сейчас 0 → обновит)
+    if d is None:
+        # снимка нет нигде — считаем в фоне, чтобы не держать запрос ~40 сек
+        if not _assort["refreshing"]:
+            threading.Thread(target=_assort_refresh, kwargs={"force": True}, daemon=True).start()
+        return {"computing": True, "groups": [],
+                "error": "Идёт первичный расчёт анализа — обновите страницу через минуту."}
+    if time.time() >= _assort.get("next", 0) and not _assort["refreshing"]:
+        threading.Thread(target=_assort_refresh, daemon=True).start()
+    out = dict(d)
+    age = time.time() - (d.get("generated_ts") or 0)
+    if age > ASSORT_TTL * 2:      # снимок заметно устарел (1С долго не отвечала)
+        out["stale"] = True
+    return out
 
 
 # ====== ИИ-ПОМОЩНИК МАГАЗИНА (Anthropic Claude) ======
@@ -5034,6 +5253,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, get_inventory())
             except Exception as e:
                 return self._send(200, {"error": "Нет связи с 1С: " + str(e)})
+        if self.path.startswith("/api/assortment"):
+            try:
+                return self._send(200, get_assortment())
+            except Exception as e:
+                return self._send(200, {"error": "Нет связи с 1С: " + str(e), "groups": []})
         if self.path.startswith("/api/sales-history"):
             from urllib.parse import urlparse, parse_qs
             try:
