@@ -785,6 +785,19 @@
       </div>
     </section>
 
+    <!-- ASSORTMENT — анализ ассортимента по чистой прибыли (ABC по группам) -->
+    <section id="tab-assort" class="hide">
+      <div id="assort-status" class="note" style="margin-bottom:14px">⏳ Считаю анализ по чистой прибыли…</div>
+      <div id="assort-kpis" class="kpis"></div>
+      <div style="display:flex;gap:8px;align-items:center;margin:6px 0 14px;flex-wrap:wrap">
+        <span style="font-size:13px;color:var(--muted)">🗂 Группа:</span>
+        <select id="assort-group" onchange="renderAssort()" style="background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:7px 10px;font-size:13px"><option value="">Все группы</option></select>
+        <button class="btn ghost" style="font-size:12px;padding:6px 12px" onclick="exportAssort()">⬇️ В Excel</button>
+      </div>
+      <div id="assort-body"><span style="color:var(--muted);font-size:13px">—</span></div>
+      <div class="note" style="margin-top:14px">📌 Считаем <b>только по чистой прибыли</b> из чеков 1С за период. Склад и остатки не учитываются. «Оставить топ-N» — позиции, которые дают почти всю прибыль группы; остальные — кандидаты на сокращение.</div>
+    </section>
+
     <!-- CLIENTS -->
     <section id="tab-clients" class="hide">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
@@ -833,7 +846,7 @@
       </div>
       <div class="grid2b">
         <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-            <h3 style="margin:0">🅰️ ABC-анализ <span style="font-size:12px;color:var(--muted);font-weight:400">— по складским деньгам</span></h3>
+            <h3 style="margin:0">🅰️ ABC-анализ <span style="font-size:12px;color:var(--muted);font-weight:400">— по чистой прибыли (30 дн.)</span></h3>
             <button class="btn ghost" style="font-size:12px;padding:5px 10px;white-space:nowrap" onclick="openAbcFull()" title="Развернуть на весь экран">⛶ Развернуть</button>
           </div>
           <div id="an-abc"><span style="color:var(--muted);font-size:13px">Загрузка…</span></div></div>
@@ -1353,6 +1366,7 @@
     chats    :["Чаты","Переписки с клиентами"],
     prod     :["Товары","Каталог, остатки и маржа"],
     sales    :["Продажи","Продажи за день и за период"],
+    assort   :["Анализ ассортимента","Топ позиций по чистой прибыли — что оставить в каждой группе"],
     clients  :["Клиенты","Кто покупает и кто возвращается"],
     market   :["Рынок","Предложения и цены конкурентов"],
     analytics:["Аналитика","ABC-анализ, остатки, прогнозы"],
@@ -1385,7 +1399,7 @@
     dash:{icon:'📊',label:'Рабочий стол'}, deals:{icon:'🧲',label:'Сделки'},
     tasks:{icon:'✅',label:'Задачи'}, clients:{icon:'👥',label:'Клиенты'},
     analytics:{icon:'📈',label:'Аналитика'}, crm:{icon:'📡',label:'Живые данные'},
-    prod:{icon:'📦',label:'Товары'}, sales:{icon:'🛒',label:'Продажи'},
+    prod:{icon:'📦',label:'Товары'}, sales:{icon:'🛒',label:'Продажи'}, assort:{icon:'🎯',label:'Ассортимент'},
     supl:{icon:'🤝',label:'Поставщики'}, fin:{icon:'💰',label:'Финансы'}, exp:{icon:'💸',label:'Расходы'},
     myday:{icon:'🎯',label:'Мой день'}, hr:{icon:'🗓',label:'Кадры'},
     ads:{icon:'📣',label:'Реклама'}, adsreport:{icon:'📑',label:'Отчёты по рекламе'}, adsanalysis:{icon:'🔬',label:'Анализ'},
@@ -1403,7 +1417,7 @@
     {key:'mkt',  icon:'📣', label:'Реклама', tabs:['ads','adsreport','adsanalysis']},
     {key:'ig',   icon:'📷', label:'Instagram', tabs:['iginbox']},
     {key:'wa',   icon:'🟢', label:'WhatsApp', tabs:['wainbox']},
-    {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','analytics','supl','fin','exp']},
+    {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','assort','analytics','supl','fin','exp']},
     {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','renttasks','rentnotes','rentcars','rentlist','rentalert','rentexp','renthanded','rentanalysis','rentplan','rentclients','rentcalendar']},
     {key:'team', icon:'👥', label:'Команда', tabs:['myday','hr']},
     {key:'ai',   icon:'🤖', label:'ИИ',      tabs:['ai','sim']}
@@ -1429,6 +1443,7 @@
     if(tab==='wainbox') return isOwner()||canSee('chats');
     if(tab==='dash') return isOwner()||canSee('dash')||canSee('crm');
     if(tab==='sim') return isOwner()||canSee('ai')||canSee('analytics')||canSee('dash');
+    if(tab==='assort') return isOwner()||canSee('sales')||canSee('analytics');
     return canSee(tab);
   }
   // временно скрытые модули — прячем ИКОНКУ у тех, кто видит их только через «all» (владелец-Бизмарт).
@@ -1460,6 +1475,7 @@
     else if(tab==='tasks') renderTasks();
     else if(tab==='prod'){ loadInventory(); loadProducts(); startProdAuto(); }
     else if(tab==='sales'){ loadSales(); startSalesAuto(); }
+    else if(tab==='assort') loadAssort();
     else if(tab==='dash') loadDashSales();
     else if(tab==='analytics') renderAnalytics();
     else if(tab==='fin') renderFinance();
@@ -2148,6 +2164,7 @@
     if(!_salesHist) jobs.push(loadSalesHistory());
     if(!_expData) jobs.push(loadExpenses());
     if(!_suplData) jobs.push(loadSuppliers());
+    if(!window._assortData) jobs.push(loadAssort());   // ABC теперь по чистой прибыли
     if(jobs.length) await Promise.allSettled(jobs);
     anKpis(); anTopValue(); anAbc(); anSuppliers(); anDays(); anFin();
     renderMoney();
@@ -2184,35 +2201,37 @@
   }
   function anAbc(){
     const box=document.getElementById('an-abc'); if(!box) return;
-    const cats=(window._invData&&(window._invData.all_cats||window._invData.super_cats)||[]).slice().filter(c=>c.value>0).sort((a,b)=>b.value-a.value);
-    if(!cats.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет данных</span>'; return; }
-    const total=cats.reduce((s,c)=>s+c.value,0); let acc=0;
+    const d=window._assortData;
+    if(!d||!(d.groups||[]).length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Считаю по чистой прибыли из чеков 1С…</span>'; return; }
+    const cats=(d.groups||[]).slice().filter(c=>c.profit>0).sort((a,b)=>b.profit-a.profit);
+    const total=cats.reduce((s,c)=>s+c.profit,0); let acc=0;
     const g={A:{cats:0,count:0,val:0},B:{cats:0,count:0,val:0},C:{cats:0,count:0,val:0}};
-    cats.forEach(c=>{ const grp=acc/total<0.7?'A':acc/total<0.9?'B':'C'; acc+=c.value; g[grp].cats++; g[grp].count+=(c.count||0); g[grp].val+=c.value; });
+    cats.forEach(c=>{ const grp=acc/total<0.7?'A':acc/total<0.9?'B':'C'; acc+=c.profit; g[grp].cats++; g[grp].count+=(c.count||0); g[grp].val+=c.profit; });
     const row=(b,name,desc,o)=>'<tr><td><span class="badge '+b+'">'+name+'</span></td><td style="font-size:12px;color:var(--muted)">'+desc+'</td><td>'+o.cats+'</td><td>'+o.count.toLocaleString('ru-RU')+'</td><td>'+(total?Math.round(o.val/total*100):0)+'%</td></tr>';
-    box.innerHTML='<table><thead><tr><th>Группа</th><th>Что это</th><th>Катег.</th><th>Товаров</th><th>Доля денег</th></tr></thead><tbody>'+
-      row('b-a','A — хиты','дают ~70% денег склада',g.A)+
+    box.innerHTML='<table><thead><tr><th>Группа</th><th>Что это</th><th>Групп</th><th>Позиций</th><th>Доля прибыли</th></tr></thead><tbody>'+
+      row('b-a','A — хиты','дают ~70% прибыли',g.A)+
       row('b-b','B — середняки','следующие ~20%',g.B)+
-      row('b-c','C — балласт','лежат, мало денег',g.C)+
-      '</tbody></table><div class="note" style="margin-top:12px">💡 Категории группы <b>C</b> занимают склад, но дают мало денег — кандидаты на распродажу/сокращение закупа.</div>';
+      row('b-c','C — балласт','мало прибыли',g.C)+
+      '</tbody></table><div class="note" style="margin-top:12px">💡 Группы класса <b>C</b> почти не приносят прибыли — кандидаты на сокращение. Подробно «что оставить в каждой группе» — во вкладке <b>🎯 Ассортимент</b>.</div>';
   }
   function abcRows(){
-    const cats=(window._invData&&(window._invData.all_cats||window._invData.super_cats)||[]).slice().filter(c=>c.value>0).sort((a,b)=>b.value-a.value);
-    const total=cats.reduce((s,c)=>s+c.value,0)||1; let acc=0;
-    return cats.map(c=>{ const cum=acc/total; const grp=cum<0.7?'A':cum<0.9?'B':'C'; acc+=c.value;
-      return {name:c.title,value:c.value,count:c.count||0,share:c.value/total*100,cum:acc/total*100,grp}; });
+    const d=window._assortData; const cats=((d&&d.groups)||[]).slice().filter(c=>c.profit>0).sort((a,b)=>b.profit-a.profit);
+    const total=cats.reduce((s,c)=>s+c.profit,0)||1; let acc=0;
+    return cats.map(c=>{ const cum=acc/total; const grp=cum<0.7?'A':cum<0.9?'B':'C'; acc+=c.profit;
+      return {name:c.group,value:c.profit,count:c.count||0,keep:c.keep_n||0,keepShare:c.keep_profit_share||0,share:c.profit/total*100,cum:acc/total*100,grp}; });
   }
   function openAbcFull(){
     const rows=abcRows(); const box=document.getElementById('abcfull-body');
-    if(!rows.length){ box.innerHTML='<div style="color:var(--muted);font-size:13px">Нет данных — склад ещё не загружен из 1С.</div>'; }
+    if(!rows.length){ box.innerHTML='<div style="color:var(--muted);font-size:13px">Считаю по чистой прибыли — данные ещё подгружаются из 1С. Открой через минуту.</div>'; }
     else{
       const badge=g=>g==='A'?'b-a':g==='B'?'b-b':'b-c';
       const total=rows.reduce((s,r)=>s+r.value,0)||1; const g={A:{n:0,v:0},B:{n:0,v:0},C:{n:0,v:0}};
       rows.forEach(r=>{ g[r.grp].n++; g[r.grp].v+=r.value; });
-      const summary='<div class="kpis" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">'+
-        ['A','B','C'].map(k=>'<div class="card kpi"><div class="label"><span class="badge '+badge(k)+'">'+k+'</span> · '+g[k].n+' категорий</div><div class="value" style="font-size:18px">'+Math.round(g[k].v/total*100)+'% денег</div></div>').join('')+'</div>';
-      box.innerHTML=summary+'<table><thead><tr><th>#</th><th>Гр.</th><th>Категория</th><th style="text-align:right">Склад (сом)</th><th style="text-align:right">Товаров</th><th style="text-align:right">Доля</th><th style="text-align:right">Накопл.</th></tr></thead><tbody>'+
-        rows.map((r,i)=>'<tr><td style="color:var(--muted)">'+(i+1)+'</td><td><span class="badge '+badge(r.grp)+'">'+r.grp+'</span></td><td>'+esc(r.name)+'</td><td style="text-align:right"><span class="money" data-som="'+Math.round(r.value)+'">'+fmt(Math.round(r.value))+'</span></td><td style="text-align:right">'+r.count.toLocaleString('ru-RU')+'</td><td style="text-align:right">'+r.share.toFixed(1)+'%</td><td style="text-align:right;color:var(--muted)">'+r.cum.toFixed(0)+'%</td></tr>').join('')+'</tbody></table>';
+      const summary='<div class="note" style="margin-bottom:14px">🅰️ ABC по <b>чистой прибыли</b> за 30 дней. Склад не учитывается. «Оставить» — сколько позиций держат почти всю прибыль группы.</div>'+
+        '<div class="kpis" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">'+
+        ['A','B','C'].map(k=>'<div class="card kpi"><div class="label"><span class="badge '+badge(k)+'">'+k+'</span> · '+g[k].n+' групп</div><div class="value" style="font-size:18px">'+Math.round(g[k].v/total*100)+'% прибыли</div></div>').join('')+'</div>';
+      box.innerHTML=summary+'<table><thead><tr><th>#</th><th>Гр.</th><th>Группа</th><th style="text-align:right">Чистая прибыль</th><th style="text-align:right">Позиций</th><th style="text-align:right">Оставить</th><th style="text-align:right">Доля</th><th style="text-align:right">Накопл.</th></tr></thead><tbody>'+
+        rows.map((r,i)=>'<tr><td style="color:var(--muted)">'+(i+1)+'</td><td><span class="badge '+badge(r.grp)+'">'+r.grp+'</span></td><td>'+esc(r.name)+'</td><td style="text-align:right"><span class="money" data-som="'+Math.round(r.value)+'">'+fmt(Math.round(r.value))+'</span></td><td style="text-align:right">'+r.count.toLocaleString('ru-RU')+'</td><td style="text-align:right">топ-'+r.keep+' = '+r.keepShare+'%</td><td style="text-align:right">'+r.share.toFixed(1)+'%</td><td style="text-align:right;color:var(--muted)">'+r.cum.toFixed(0)+'%</td></tr>').join('')+'</tbody></table>';
       renderMoney();
     }
     document.getElementById('abcfullbg').classList.add('open');
@@ -2771,6 +2790,96 @@
   // ===== ПРОДАЖИ (живые чеки из 1С, /receipts/v2) =====
   let salesAutoTimer=null, salesTimer=null, salesDate='';   // '' = сегодня (живьём)
   function salesTodayStr(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+  // ===== АНАЛИЗ АССОРТИМЕНТА по чистой прибыли (вкладка «Ассортимент») =====
+  let _assortTimer=null;
+  async function loadAssort(attempt){
+    attempt=attempt||1;
+    const st=document.getElementById('assort-status');
+    try{
+      const r=await apiFetch('/api/assortment',{},ONEC_BASE); if(!r.ok) throw 0;
+      const d=await r.json();
+      if(d.computing){
+        if(st){ st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d';
+          st.innerHTML='⏳ <b>Считаю анализ по чистой прибыли…</b> первый расчёт занимает до минуты (≈30 дней чеков из 1С). Жду, не закрывай (попытка '+attempt+'/6)…'; }
+        if(attempt<6){ clearTimeout(_assortTimer); _assortTimer=setTimeout(()=>loadAssort(attempt+1),12000); }
+        return;
+      }
+      if(d.error && !(d.groups&&d.groups.length)){ if(st){ st.style.borderColor='#ff6b6b'; st.innerHTML='⚠️ '+esc(d.error); } return; }
+      window._assortData=d;
+      const sel=document.getElementById('assort-group'); const cur=sel?sel.value:'';
+      if(sel){
+        sel.innerHTML='<option value="">Все группы</option>'+
+          (d.groups||[]).map(g=>'<option value="'+esc(g.group)+'">'+esc(g.group)+' ('+g.count+' поз.)</option>').join('');
+        if(cur) sel.value=cur;
+      }
+      if(st){ st.style.borderStyle='solid'; st.style.borderColor=d.stale?'#ffb84d':'#39d98a';
+        st.innerHTML=(d.stale?'🟠 <b>Показываю последний расчёт</b> (1С долго не отвечала) · ':'🟢 <b>Анализ по чистой прибыли</b> · ')+
+          'период '+esc(d.from||'')+' … '+esc(d.to||'')+' ('+(d.period_days||0)+' дн.) · обновлено '+esc(d.updated||'')+
+          ' · <span style="color:var(--muted)">пересчитывается само, раз в 6 ч</span>'; }
+      const km=(label,som)=>'<div class="card kpi"><div class="label">'+label+'</div><div class="value"><span class="money" data-som="'+(som||0)+'">'+fmt(som||0)+'</span></div></div>';
+      const kp=document.getElementById('assort-kpis');
+      if(kp) kp.innerHTML=
+        kpiCard('Период','за '+(d.period_days||0)+' дн.')+
+        km('Выручка',d.total_revenue)+
+        km('Чистая прибыль',d.total_profit)+
+        kpiCard('Средняя маржа',(d.avg_margin||0)+'%');
+      renderAssort();
+      if(document.getElementById('an-abc')) anAbc();   // обновить ABC во вкладке «Аналитика»
+    }catch(e){
+      if(st){ st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d';
+        if(attempt<6){ st.innerHTML='⏳ <b>Сервер 1С просыпается…</b> жду (попытка '+attempt+'/6)…'; clearTimeout(_assortTimer); _assortTimer=setTimeout(()=>loadAssort(attempt+1),12000); }
+        else st.innerHTML='⚠️ Не удалось загрузить анализ. Попробуй обновить позже.'; }
+    }
+  }
+  function renderAssort(){
+    const d=window._assortData; if(!d){ return; }
+    const sel=document.getElementById('assort-group'); const pick=sel?sel.value:'';
+    const groups=(d.groups||[]).filter(g=> !pick || g.group===pick);
+    const box=document.getElementById('assort-body'); if(!box) return;
+    if(!groups.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет данных за период.</span>'; return; }
+    let html='';
+    groups.forEach(g=>{
+      const cut=Math.max(0,(g.count||0)-(g.keep_n||0));
+      html+='<div class="card" style="margin-bottom:16px">'+
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">'+
+          '<h3 style="margin:0">'+esc(g.group)+'</h3>'+
+          '<div style="font-size:13px;color:var(--muted)">Прибыль группы: <b style="color:var(--text)">'+fmt(g.profit)+' сом</b> · доля в магазине '+g.share+'%</div>'+
+        '</div>'+
+        '<div class="note" style="margin:8px 0 12px">Всего <b>'+g.count+'</b> позиций. Топ-<b>'+g.keep_n+'</b> дают <b>'+g.keep_profit_share+'%</b> прибыли группы → их оставляем. Остальные <b>'+cut+'</b> позиций = '+(100-g.keep_profit_share)+'% — кандидаты на сокращение.</div>'+
+        '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'+
+          '<tr style="text-align:left;color:var(--muted);font-weight:500">'+
+            '<th style="padding:6px 8px">#</th><th style="padding:6px 8px">Товар</th>'+
+            '<th style="padding:6px 8px;text-align:right">Продано</th>'+
+            '<th style="padding:6px 8px;text-align:right">Выручка</th>'+
+            '<th style="padding:6px 8px;text-align:right">Чистая прибыль</th>'+
+            '<th style="padding:6px 8px;text-align:right">Доля</th>'+
+            '<th style="padding:6px 8px;text-align:right">Маржа</th>'+
+            '<th style="padding:6px 8px;text-align:right">Прибыль/шт</th></tr>'+
+          (g.top||[]).map(r=>'<tr style="border-top:1px solid var(--line)">'+
+            '<td style="padding:6px 8px;color:var(--muted)">'+r.rank+'</td>'+
+            '<td style="padding:6px 8px">'+esc(r.name)+'</td>'+
+            '<td style="padding:6px 8px;text-align:right">'+(r.qty||0).toLocaleString('ru-RU')+'</td>'+
+            '<td style="padding:6px 8px;text-align:right">'+fmt(r.revenue)+'</td>'+
+            '<td style="padding:6px 8px;text-align:right;font-weight:600">'+fmt(r.profit)+'</td>'+
+            '<td style="padding:6px 8px;text-align:right">'+r.group_share+'%</td>'+
+            '<td style="padding:6px 8px;text-align:right">'+r.margin+'%</td>'+
+            '<td style="padding:6px 8px;text-align:right">'+fmt(r.profit_per_unit)+'</td></tr>').join('')+
+        '</table></div></div>';
+    });
+    box.innerHTML=html;
+  }
+  function exportAssort(){
+    const d=window._assortData; if(!d||!(d.groups||[]).length){ alert('Анализ ещё не загрузился.'); return; }
+    const rows=[['BIZMART — анализ ассортимента по чистой прибыли'],
+      ['Период',(d.from||'')+' … '+(d.to||''),(d.period_days||0)+' дн.'],
+      ['Выручка',d.total_revenue,'Чистая прибыль',d.total_profit,'Маржа',(d.avg_margin||0)+'%'],
+      [],
+      ['Группа','Ранг','Товар','Продано шт','Выручка','Чистая прибыль','Доля в группе %','Маржа %','Прибыль за ед']];
+    (d.groups||[]).forEach(g=>{ (g.top||[]).forEach(r=>{
+      rows.push([g.group,r.rank,r.name,r.qty,r.revenue,r.profit,r.group_share,r.margin,r.profit_per_unit]);
+    }); });
+    downloadCSV('bizmart-ассортимент-прибыль.csv',rows);
+  }
   function onSalesDate(){ const sel=document.getElementById('sales-date'); salesDate=(sel&&sel.value!=='today')?sel.value:''; loadSales(); }
   async function loadSales(attempt){
     attempt=attempt||1;
