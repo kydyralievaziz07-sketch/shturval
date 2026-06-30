@@ -5481,6 +5481,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", mime or "application/octet-stream")
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "private, max-age=86400")
+            # CORS — фронт на другом домене (Vercel) тянет медиа через fetch; без этого браузер блокирует ответ.
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Headers", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
             self.end_headers()
             try:
                 self.wfile.write(data)
