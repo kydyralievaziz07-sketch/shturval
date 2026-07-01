@@ -436,7 +436,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.86.0<br>WhatsApp-медиа в чате сделки · отмена отправки (6 сек) и «скрыть у себя» во всех чатах (Instagram + WhatsApp)</div>
+      Штурвал v3.87.0<br>Уведомления о новых сообщениях: звук + всплывающее окно + повтор напоминания, если не ответили</div>
   </aside>
 
   <!-- MAIN -->
@@ -1356,6 +1356,7 @@
   <div class="overlay" id="overlay" onclick="toggleDrawer()"></div>
   <div class="drawer" id="drawer">
     <h3>🔔 Требует внимания <button class="x" onclick="toggleDrawer()" aria-label="Закрыть">✕</button></h3>
+    <button class="btn ghost" id="notif-sound-btn" onclick="toggleNotifSound()" style="margin-bottom:10px;width:100%">🔔 Звук уведомлений: вкл</button>
     <div id="notif-list"><div style="color:var(--muted);font-size:13px">Загрузка…</div></div>
   </div>
 
@@ -1959,11 +1960,12 @@
       if(res&&res.ok){ applyUser(res); applyAccess(); }   // тихо освежили имя/права, профиль запомнили
       else if(!cached){ /* профиля ещё нет, но сервер не ответил — покажем хотя бы Настройки */ applyUser({name:'',sections:['all']}); applyAccess(); }
       _syncUrlKey();   // если хранилище заблокировано — закрепим вход в адресе, чтобы не выкидывало
+      try{ startNotify(); }catch(e){}   // уведомления о новых сообщениях (звук + всплывающее)
       return;
     }
     // Сохранённого входа нет — обычная проверка
     const res=await checkAuth();
-    if(res&&res.ok){ applyUser(res); showLogin(false); if(canSee('crm')||canSee('dash')) loadCRM(); if(canSee('dash')) loadDashSales(); }
+    if(res&&res.ok){ applyUser(res); showLogin(false); if(canSee('crm')||canSee('dash')) loadCRM(); if(canSee('dash')) loadDashSales(); try{ startNotify(); }catch(e){} }
     else showLogin(true);
   })();
   function logout(){
@@ -3513,6 +3515,91 @@
     autoClassify();
     renderLeft(); renderFunnel(); renderCrmStats(); renderCrmDash(); renderCrmHome();
     if(typeof renderNotifs==='function') renderNotifs();
+  }
+  // ===== Уведомления о новых сообщениях: звук + всплывающее окно + повтор напоминания =====
+  // Опрашивает оба канала (Instagram+WhatsApp) раз в 25с НЕЗАВИСИМО от открытой вкладки —
+  // чтобы сообщения «не проходили». Если на сообщение не ответили — напоминает снова раз в 5 мин.
+  let NOTIF_ON=true; try{ NOTIF_ON=localStorage.getItem('shturval_notif')!=='0'; }catch(e){}
+  let NOTIF_SEEN={};      // key -> последний обработанный ts входящего (мс)
+  let NOTIF_LAST={};      // key -> когда в последний раз уведомили (мс) — для «позже»
+  let NOTIF_READY=false;  // первый проход только строит базу (без звона)
+  let _ntfActx=null;
+  const NOTIF_REMIND_MS=5*60*1000;
+  function notifUnlock(){                 // звук/разрешения — только после жеста пользователя
+    try{ if(!_ntfActx){ const C=window.AudioContext||window.webkitAudioContext; if(C) _ntfActx=new C(); } if(_ntfActx&&_ntfActx.state==='suspended') _ntfActx.resume(); }catch(e){}
+    try{ if('Notification' in window && Notification.permission==='default') Notification.requestPermission(); }catch(e){}
+  }
+  function playDing(){
+    if(!NOTIF_ON) return;
+    try{
+      if(!_ntfActx){ const C=window.AudioContext||window.webkitAudioContext; if(!C) return; _ntfActx=new C(); }
+      if(_ntfActx.state==='suspended') _ntfActx.resume();
+      const t0=_ntfActx.currentTime;
+      [[880,0],[1245,0.14]].forEach(function(p){
+        const o=_ntfActx.createOscillator(), g=_ntfActx.createGain();
+        o.type='sine'; o.frequency.value=p[0]; o.connect(g); g.connect(_ntfActx.destination);
+        const s=t0+p[1];
+        g.gain.setValueAtTime(0.0001,s); g.gain.exponentialRampToValueAtTime(0.35,s+0.02); g.gain.exponentialRampToValueAtTime(0.0001,s+0.3);
+        o.start(s); o.stop(s+0.33);
+      });
+    }catch(e){}
+  }
+  function showBrowserNotif(title, body){
+    try{ if('Notification' in window && Notification.permission==='granted'){ const n=new Notification(title,{body:(body||'').slice(0,120),icon:'shturval-logo.png',tag:'shturval-msg'}); n.onclick=function(){ try{ window.focus(); }catch(e){} try{ n.close(); }catch(e){} }; setTimeout(function(){ try{ n.close(); }catch(e){} },9000); } }catch(e){}
+  }
+  let _titleBase=null, _titleTimer=null;
+  function flashTitle(n){
+    if(_titleBase===null) _titleBase=document.title;
+    clearInterval(_titleTimer); let on=true;
+    _titleTimer=setInterval(function(){ document.title=on?('🔔 ('+n+') новое сообщение…'):_titleBase; on=!on; },1000);
+    window.addEventListener('focus', function stop(){ clearInterval(_titleTimer); if(_titleBase!==null) document.title=_titleBase; window.removeEventListener('focus',stop); });
+  }
+  function notifNorm(c, ch){
+    const ts=Number(c.last_ts||c.ts||0), tsMs=ts>1e12?ts:ts*1000;
+    return {key:(ch||c.channel||'ig')+'|'+c.account_id+'|'+c.customer_id, tsMs:tsMs,
+            waiting:(c.last_dir?c.last_dir==='in':!!c.unread), name:(c.customer||c.name||c.customer_id||''), text:(c.last_text||c.last||'')};
+  }
+  function notifyScan(items){
+    if(!items){ NOTIF_READY=true; return; }
+    const now=Date.now(); let hits=0, first=null;
+    items.forEach(function(it){
+      const key=it.key, tsMs=it.tsMs||0;
+      if(!it.waiting){ NOTIF_SEEN[key]=Math.max(NOTIF_SEEN[key]||0, tsMs); delete NOTIF_LAST[key]; return; }  // мы ответили — не ждёт
+      const prev=NOTIF_SEEN[key]||0;
+      if(!NOTIF_READY){ NOTIF_SEEN[key]=Math.max(prev,tsMs); return; }                 // первый проход — только база
+      if(tsMs>prev){ hits++; if(!first) first=it; NOTIF_LAST[key]=now; NOTIF_SEEN[key]=tsMs; }        // новое входящее
+      else if(now-(NOTIF_LAST[key]||0) > NOTIF_REMIND_MS){ hits++; if(!first) first=it; NOTIF_LAST[key]=now; }  // «позже» — напомнить снова
+    });
+    if(hits>0){
+      playDing();
+      showBrowserNotif(hits>1?('Новых сообщений: '+hits):('💬 '+(first.name||'Клиент')), hits>1?((first.name||'')+': '+first.text):first.text);
+      if(document.hidden||!document.hasFocus()) flashTitle(hits);
+    }
+    NOTIF_READY=true;
+  }
+  async function notifyPoll(){
+    try{
+      const res=await Promise.all([
+        apiFetch('/api/ig/conversations?_='+Date.now(),{},ONEC_BASE).then(function(r){return r.json();}).catch(function(){return {};}),
+        apiFetch('/api/wa/conversations?_='+Date.now(),{},ONEC_BASE).then(function(r){return r.json();}).catch(function(){return {};})
+      ]);
+      const items=[].concat((res[0].conversations||[]).map(function(c){return notifNorm(c,'ig');}),
+                            (res[1].conversations||[]).map(function(c){return notifNorm(c,'wa');}));
+      notifyScan(items);
+    }catch(e){}
+  }
+  let _notifTimer=null;
+  function startNotify(){
+    if(_notifTimer) return;
+    document.addEventListener('click', notifUnlock, {once:true});   // разблокировать звук/разрешение при первом клике
+    const b=document.getElementById('notif-sound-btn'); if(b) b.textContent=NOTIF_ON?'🔔 Звук уведомлений: вкл':'🔕 Звук уведомлений: выкл';
+    notifyPoll();                              // первый проход строит базу (без звона)
+    _notifTimer=setInterval(notifyPoll, 25000);
+  }
+  function toggleNotifSound(){
+    NOTIF_ON=!NOTIF_ON; try{ localStorage.setItem('shturval_notif',NOTIF_ON?'1':'0'); }catch(e){}
+    const b=document.getElementById('notif-sound-btn'); if(b) b.textContent=NOTIF_ON?'🔔 Звук уведомлений: вкл':'🔕 Звук уведомлений: выкл';
+    if(NOTIF_ON){ notifUnlock(); playDing(); }   // включили — сразу разблокируем и проиграем пример
   }
   // Авто-воронка: раскладываем чаты по стадиям из подсказки сервера (c.stage).
   // Сделки, которые двигали ВРУЧНУЮ (d.manual===true), не трогаем.
