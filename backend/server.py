@@ -223,7 +223,7 @@ SECTION_OF = [
     ("/api/bot-feedback", "chats"),
     ("/api/ig/conversations", "chats"), ("/api/ig/thread", "chats"),
     ("/api/ig/reply", "chats"), ("/api/ig/accounts", "chats"),
-    ("/api/ig/broadcast", "chats"), ("/api/ig/bot", "chats"),
+    ("/api/ig/broadcast", "chats"), ("/api/ig/bot", "chats"), ("/api/ig/media", "chats"),
     ("/api/wa/conversations", "chats"), ("/api/wa/thread", "chats"),
     ("/api/wa/reply", "chats"), ("/api/wa/accounts", "chats"),
     ("/api/wa/media", "chats"), ("/api/wa/profile", "chats"), ("/api/wa/read", "chats"),
@@ -446,6 +446,28 @@ def rent_build(period=None, company=None):
         return ent[1]
     d = rent_doc(company)
     cars = d["cars"]
+    # ── Связь «Машины ↔ Аренды» ──────────────────────────────────────────────
+    # «Живой» статус машины считается по арендам, а не хранится вручную:
+    #   • есть открытая аренда на эту модель (статус НЕ «Завершена») → «В аренде»
+    #   • нет открытых аренд → «Свободна»
+    # Как только аренду отмечают «Завершена» — машина сразу снова «Свободна».
+    # Ручные статусы «На ремонте» и «Продана» приоритетнее (аренды их не трогают).
+    _active_models = set()
+    for _r in d["rentals"]:
+        _st = str(_r.get("status") or "").lower()
+        if _st and "заверш" not in _st:
+            _md = (_r.get("model") or "").strip().lower()
+            if _md:
+                _active_models.add(_md)
+    for _c in cars:
+        _man = (_c.get("status") or "").strip()
+        _manl = _man.lower()
+        if "продан" in _manl or "ремонт" in _manl:
+            _c["status_live"] = _man               # ручной статус сохраняем
+        elif (_c.get("model") or "").strip().lower() in _active_models:
+            _c["status_live"] = "В аренде"
+        else:
+            _c["status_live"] = "Свободна"
     import datetime
     _lt = time.localtime()
     today = datetime.date(_lt.tm_year, _lt.tm_mon, _lt.tm_mday)
@@ -543,7 +565,7 @@ def rent_build(period=None, company=None):
     cnt = len(frent)
     dl = [r["_days"] for r in frent if r["_days"] > 0]
     avg_days = round(sum(dl) / len(dl), 1) if dl else 0
-    scnt = lambda w: sum(1 for c in cars if w in (c.get("status") or "").lower())
+    scnt = lambda w: sum(1 for c in cars if w in (c.get("status_live") or c.get("status") or "").lower())
     active = sum(1 for r in frent if "заверш" not in (r.get("status") or "").lower() and (r.get("status") or ""))
     if rng:
         _fl = lambda dt: dt.strftime("%d.%m.%Y") if dt else "…"
@@ -1459,6 +1481,92 @@ def ig_reply(account_id, customer_id, text, by="human"):
                "ts": int(time.time() * 1000), "direction": "out", "raw": {"by": by}})
     except Exception:
         pass
+
+# ====== Instagram: медиа (входящие фото/аудио через прокси; исходящие голосовые/файлы) ======
+# У WhatsApp медиа идёт через /api/wa/media (прокси + перекодировка). У Instagram раньше
+# вложения показывались по «сырой» CDN-ссылке (payload.url) — браузер их не тянет (CORS/срок).
+# Тут: скачиваем на сервере и отдаём фронту (как у WA), а для отправки — публичная ссылка,
+# которую Meta сама скачивает.
+IG_MEDIA_HOSTS = ("cdninstagram.com", "fbcdn.net", "fbsbx.com", "lookaside", "scontent", "instagram.com")
+
+def _ig_host_ok(url):
+    try:
+        host = urllib.parse.urlparse(url).netloc.lower()
+    except Exception:
+        return False
+    return bool(host) and any(h in host for h in IG_MEDIA_HOSTS)
+
+def ig_media_type(mime):
+    """Свести MIME-тип к типу вложения Instagram."""
+    m = (mime or "").lower()
+    if m.startswith("image/"):
+        return "image"
+    if m.startswith("video/"):
+        return "video"
+    if m.startswith("audio/"):
+        return "audio"
+    return "file"
+
+def ig_media_download(url, account_id=None):
+    """Скачать вложение Instagram по CDN-ссылке (сервер её видит, браузер — нет).
+    Возвращает (байты, mime). Голосовые перекодируем в MP3 для всех браузеров."""
+    if not url or not _ig_host_ok(url):
+        raise RuntimeError("недопустимая ссылка медиа")
+    hdr = {"User-Agent": "Shturval/1.0"}
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=60) as r:
+            data = r.read(); mime = r.headers.get("Content-Type", "application/octet-stream")
+    except Exception:
+        # некоторым ссылкам нужен токен аккаунта
+        token = ig_token_for(account_id) if account_id else CFG.get("IG_TOKEN", "")
+        u2 = url + (("&" if "?" in url else "?") + "access_token=" + _q(token)) if token else url
+        with urllib.request.urlopen(urllib.request.Request(u2, headers=hdr), timeout=60) as r:
+            data = r.read(); mime = r.headers.get("Content-Type", "application/octet-stream")
+    low = (mime or "").lower()
+    if low.startswith("audio/") and not low.startswith("audio/mpeg") and "mp3" not in low:
+        mp3, m2 = wa_audio_to_mp3(data)
+        if m2:
+            return mp3, m2
+    return data, mime
+
+def ig_send_media(recipient_id, media_url, mtype="image", from_account_id=None):
+    """Отправить медиа-вложение в Instagram по публичной ссылке (Meta сама её скачивает)."""
+    token = ig_token_for(from_account_id) if from_account_id else CFG.get("IG_TOKEN", "")
+    if not token:
+        raise RuntimeError("Instagram пока не подключён (нет токена).")
+    url = IG_GRAPH + "/me/messages?access_token=" + _q(token)
+    body = json.dumps({"recipient": {"id": recipient_id},
+                       "message": {"attachment": {"type": mtype,
+                                   "payload": {"url": media_url, "is_reusable": False}}}}).encode()
+    req = urllib.request.Request(url, data=body, method="POST",
+                                 headers={"Content-Type": "application/json", "User-Agent": "Shturval/1.0"})
+    with urllib.request.urlopen(req, timeout=40) as r:
+        return json.loads(r.read().decode() or "{}")
+
+# исходящие медиа держим в памяти под случайным токеном — Meta скачивает их по публичной ссылке,
+# и фронт проигрывает отправленное голосовое из этого же хранилища.
+_ig_outmedia = {}   # token -> (bytes, mime, ts)
+def _ig_outmedia_put(data, mime):
+    tok = hashlib.sha256(os.urandom(24)).hexdigest()[:32]
+    _ig_outmedia[tok] = (data, mime, time.time())
+    if len(_ig_outmedia) > 200:                       # чистим самые старые
+        for k in sorted(_ig_outmedia, key=lambda k: _ig_outmedia[k][2])[:60]:
+            _ig_outmedia.pop(k, None)
+    return tok
+
+def ig_reply_media(account_id, customer_id, media_url, mtype, mime="", by="human"):
+    """Оператор отправил клиенту медиа в Instagram: отправить и сохранить в историю (чтобы отрисовалось)."""
+    resp = ig_send_media(customer_id, media_url, mtype, account_id)
+    try:
+        _supa("POST", "ig_inbox", "",
+              {"company_id": COMPANY_ID, "sender_id": str(account_id),
+               "recipient_id": str(customer_id), "text": "", "mid": "",
+               "ts": int(time.time() * 1000), "direction": "out",
+               "raw": {"by": by, "message": {"attachments": [
+                   {"type": mtype, "payload": {"url": media_url}}]}}})
+    except Exception:
+        pass
+    return resp
 
 # ====== ИИ-БОТ Instagram (Claude отвечает клиентам автоматически) ======
 IGBOT_DEFAULT_PROMPT = (
@@ -4694,6 +4802,40 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send(200, {"ok": False, "error": "Instagram: " + str(e)})
             return self._send(200, {"ok": True})
+        if self.path.startswith("/api/ig/media"):
+            # Оператор отправляет клиенту в Instagram голосовое/фото/файл (data_b64 — содержимое).
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            acc = str(body.get("account_id") or ""); cust = str(body.get("customer_id") or "")
+            mime = (body.get("mime") or "").strip()
+            mtype = (body.get("type") or ig_media_type(mime)).strip()
+            b64 = body.get("data_b64") or ""
+            if not acc or not cust or not b64:
+                return self._send(400, {"error": "нужны account_id, customer_id и data_b64"})
+            try:
+                data = base64.b64decode(b64)
+            except Exception:
+                return self._send(400, {"error": "плохие данные файла"})
+            if len(data) > 25 * 1024 * 1024:
+                return self._send(200, {"ok": False, "error": "Файл больше 25 МБ."})
+            try:
+                tok = _ig_outmedia_put(data, mime or "application/octet-stream")
+                proto = (self.headers.get("X-Forwarded-Proto") or "https").split(",")[0].strip()
+                host = self.headers.get("Host") or ""
+                media_url = proto + "://" + host + "/api/ig/outmedia?k=" + tok
+                ig_reply_media(acc, cust, media_url, mtype, mime=mime)
+            except urllib.error.HTTPError as e:
+                try:
+                    det = json.loads(e.read().decode() or "{}").get("error", {}).get("message", "")
+                except Exception:
+                    det = str(e)
+                return self._send(200, {"ok": False, "error": "Instagram: " + (det or str(e))})
+            except Exception as e:
+                return self._send(200, {"ok": False, "error": "Instagram: " + str(e)})
+            return self._send(200, {"ok": True})
         if self.path.startswith("/api/wa/reply"):
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -5271,6 +5413,26 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "text/plain"); self.end_headers()
                 self.wfile.write(challenge.encode("utf-8")); return
             self.send_response(403); self.end_headers(); return
+        # Исходящее медиа Instagram — ПУБЛИЧНОЕ (Meta скачивает голосовое/файл по этой ссылке
+        # без нашего логина). Доступ ограничен случайным одноразовым токеном.
+        if self.path.startswith("/api/ig/outmedia"):
+            p = _parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            tok = (p.get("k") or [""])[0]
+            item = _ig_outmedia.get(tok)
+            if not item:
+                self.send_response(404); self.end_headers(); return
+            data, mime, _ts = item
+            self.send_response(200)
+            self.send_header("Content-Type", mime or "application/octet-stream")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "private, max-age=3600")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            try:
+                self.wfile.write(data)
+            except Exception:
+                pass
+            return
         if self.path.startswith("/api/auth"):
             u = self._user()
             return self._send(200 if u else 401, {"ok": bool(u),
@@ -5482,6 +5644,30 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "private, max-age=86400")
             # CORS — фронт на другом домене (Vercel) тянет медиа через fetch; без этого браузер блокирует ответ.
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Headers", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+            self.end_headers()
+            try:
+                self.wfile.write(data)
+            except Exception:
+                pass
+            return
+        if self.path.startswith("/api/ig/media"):
+            # Прокси входящих вложений Instagram: сервер скачивает CDN-ссылку и отдаёт браузеру
+            # (у клиента прямая ссылка не открывается — CORS/срок). u = сама CDN-ссылка.
+            p = _parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            u = (p.get("u") or [""])[0]; acc = (p.get("account") or [""])[0]
+            if not u:
+                return self._send(400, {"error": "нужна ссылка медиа"})
+            try:
+                data, mime = ig_media_download(u, acc)
+            except Exception as e:
+                return self._send(200, {"error": "медиа недоступно: " + str(e)})
+            self.send_response(200)
+            self.send_header("Content-Type", mime or "application/octet-stream")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "private, max-age=86400")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Headers", "*")
             self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")

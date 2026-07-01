@@ -436,7 +436,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.82.0<br>Зарплата проката: оклад в сомах → авто-перевод и показ в $</div>
+      Штурвал v3.83.0<br>Instagram: фото клиентов открываются в сделке + отправка голосовых (как в WhatsApp)</div>
   </aside>
 
   <!-- MAIN -->
@@ -561,6 +561,7 @@
           <div class="msgs" id="ig-msgs"></div>
           <div class="replybox">
             <input id="ig-reply" placeholder="Ответить клиенту в Instagram…" onkeydown="if(event.key==='Enter')igSend()">
+            <button class="btn" id="ig-mic" title="Записать голосовое" onclick="igToggleVoice('ig')">🎤</button>
             <button class="btn" onclick="igSend()">Отправить</button>
           </div>
         </div>
@@ -650,7 +651,7 @@
           <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 4px 4px"><span id="ck-upd" style="font-size:11px;color:var(--muted)"></span><button class="btn ghost" style="padding:2px 10px;font-size:12px" onclick="if(ckCurId)loadConvoMsgs(ckCurId,false)" title="Обновить переписку вручную">↻ обновить</button></div>
           <div class="msgs" id="ck-msgs"></div>
           <div id="ck-warn" style="display:none;font-size:12px;padding:6px 10px;margin:0 4px;border-radius:8px"></div>
-          <div class="replybox"><input id="ck-reply" placeholder="Ответить клиенту…" onkeydown="if(event.key==='Enter')ckSend()"><button class="btn ghost" onclick="openTpl('ck-reply')" title="Шаблоны ответов">📋</button><button class="btn ghost" onclick="openBotFix()" title="Отметить, что бот ответил неправильно">⚠️ Бот ошибся</button><button class="btn" onclick="ckSend()">Отправить</button></div>
+          <div class="replybox"><input id="ck-reply" placeholder="Ответить клиенту…" onkeydown="if(event.key==='Enter')ckSend()"><button class="btn ghost" onclick="openTpl('ck-reply')" title="Шаблоны ответов">📋</button><button class="btn ghost" onclick="openBotFix()" title="Отметить, что бот ответил неправильно">⚠️ Бот ошибся</button><button class="btn ghost" id="ck-mic" title="Записать голосовое" onclick="igToggleVoice('ck')">🎤</button><button class="btn" onclick="ckSend()">Отправить</button></div>
         </div>
       </div>
     </section>
@@ -3754,7 +3755,8 @@
       if(box.dataset.sig===sig && !first) return;          // нового ничего — не трогаем
       const atBottom=(box.scrollHeight-box.scrollTop-box.clientHeight)<70;
       box.dataset.sig=sig;
-      box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+(m.t==='out'?'out':'in')+'">'+linkify(m.x)+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>').join(''):'<div style="padding:10px;color:var(--muted)">Нет сообщений</div>';
+      box.innerHTML=msgs.length?msgs.map(bubbleHTML).join(''):'<div style="padding:10px;color:var(--muted)">Нет сообщений</div>';
+      igHydrateMedia(box);
       if(first||atBottom) box.scrollTop=box.scrollHeight;
     }catch(e){ if(first) box.innerHTML='<div style="padding:10px;color:var(--muted)">Не удалось загрузить.</div>'; }
   }
@@ -4111,6 +4113,57 @@
     });
   }
   function waFloatTo16(f){ const o=new Int16Array(f.length); for(let i=0;i<f.length;i++){ let s=Math.max(-1,Math.min(1,f[i])); o[i]=s<0?s*0x8000:s*0x7FFF; } return o; }
+  // ——— Голосовые в Instagram (как в WhatsApp). scope='ig' — раздел Instagram, scope='ck' — чат в сделке.
+  let igMR=null, igMRChunks=[], igMRStream=null, igMRStart=0, igMRTimer=null, igMRBtn=null, igMRScope='ig';
+  function igVoiceTarget(scope){
+    if(scope==='ck'){ if(!ckCurId) return null; const p=String(ckCurId).split('|'); return {account_id:p[0]||'',customer_id:p[1]||''}; }
+    return igCur?{account_id:igCur.account_id,customer_id:igCur.customer_id}:null;
+  }
+  async function igToggleVoice(scope){
+    const btn=document.getElementById(scope==='ck'?'ck-mic':'ig-mic');
+    if(igMR && igMR.state==='recording'){ igMR.stop(); return; }
+    if(!igVoiceTarget(scope)){ alert('Сначала выбери диалог.'); return; }
+    if(!navigator.mediaDevices || !window.MediaRecorder){ alert('Браузер не поддерживает запись голосовых.'); return; }
+    try{ igMRStream=await navigator.mediaDevices.getUserMedia({audio:true}); }
+    catch(e){ alert('Нет доступа к микрофону. Разреши доступ к микрофону в браузере.'); return; }
+    igMRScope=scope; igMRBtn=btn;
+    let mime=''; ['audio/mp4','audio/ogg;codecs=opus','audio/webm;codecs=opus','audio/webm'].forEach(function(t){ if(!mime && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) mime=t; });
+    igMRChunks=[];
+    try{ igMR = mime ? new MediaRecorder(igMRStream,{mimeType:mime}) : new MediaRecorder(igMRStream); }
+    catch(e){ try{ igMR=new MediaRecorder(igMRStream); }catch(e2){ alert('Запись недоступна в этом браузере.'); return; } }
+    igMR.ondataavailable=function(e){ if(e.data&&e.data.size) igMRChunks.push(e.data); };
+    igMR.onstop=function(){ igFinishVoice(); };
+    igMR.start(); igMRStart=Date.now();
+    if(btn){ btn.style.color='#ff4d4d'; btn.title='Остановить и отправить'; btn.textContent='⏹ 0:00'; }
+    igMRTimer=setInterval(function(){ var s=Math.floor((Date.now()-igMRStart)/1000); if(btn) btn.textContent='⏹ 0:'+(s<10?'0'+s:s); },500);
+  }
+  async function igFinishVoice(){
+    const btn=igMRBtn; if(igMRTimer){ clearInterval(igMRTimer); igMRTimer=null; }
+    try{ igMRStream.getTracks().forEach(function(t){t.stop();}); }catch(e){}
+    var dur=(Date.now()-igMRStart)/1000;
+    if(!igMRChunks.length || dur<0.4){ if(btn){ btn.textContent='🎤'; btn.style.color=''; btn.title='Записать голосовое'; } alert('Слишком короткая запись — подержи кнопку чуть дольше.'); return; }
+    var t=(igMRChunks[0].type||'audio/webm').split(';')[0];
+    var blob=new Blob(igMRChunks,{type:t});
+    if(btn){ btn.textContent='🎤'; btn.style.color='#ffb84d'; btn.title='Обработка…'; }
+    var outBlob;
+    try{ outBlob=await waBlobToMp3(blob); }
+    catch(e){ if(btn){ btn.style.color=''; btn.title='Записать голосовое'; } alert('Не удалось обработать запись. Открой «Штурвал» в Safari или Chrome.'); return; }
+    if(btn){ btn.style.color=''; btn.title='Записать голосовое'; }
+    await igSendFile(new File([outBlob],'voice.mp3',{type:'audio/mpeg'}), igMRScope);
+  }
+  async function igSendFile(file, scope){
+    const chat=igVoiceTarget(scope); if(!chat) return;
+    const box=document.getElementById(scope==='ck'?'ck-msgs':'ig-msgs'); const bid='igf'+Date.now();
+    if(box){ box.insertAdjacentHTML('beforeend','<div class="bubble out" id="'+bid+'">🎤 голосовое <span style="opacity:.6;font-size:11px">⏳ отправка…</span></div>'); box.scrollTop=box.scrollHeight; }
+    try{
+      const b64=await fileToB64(file);
+      const r=await apiFetch('/api/ig/media',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:chat.account_id,customer_id:chat.customer_id,type:'audio',mime:'audio/mpeg',filename:'voice.mp3',data_b64:b64})},ONEC_BASE);
+      const d=await r.json(); const b=document.getElementById(bid);
+      if(d.ok){ if(b) b.innerHTML='🎤 голосовое <span style="opacity:.7;font-size:11px">✓ отправлено</span>'; if(box) box.dataset.sig=''; if(scope==='ck'){ loadConvoMsgs(ckCurId,true); } else { igLoadThread(false); } }
+      else { if(b){ b.innerHTML='🎤 голосовое <span style="opacity:.7;font-size:11px">⚠️ не доставлено</span>'; b.style.background='var(--red)'; }
+        if(box) box.insertAdjacentHTML('beforeend','<div style="font-size:12px;color:#ffb84d;padding:4px 8px">⚠️ '+esc(sendErrText(d.error||''))+'</div>'); }
+    }catch(e){ const b=document.getElementById(bid); if(b){ b.innerHTML='🎤 ⚠️'; b.style.background='var(--red)'; } }
+  }
   function startWaAuto(){
     if(waTimer) return;
     // закрывать меню «Ещё» при клике вне его
@@ -4138,13 +4191,39 @@
   function setAmount(v){ if(!ckCurName) return; const d=ensureDeal(ckCurName); d.amount=parseFloat(v)||0; crmPersist(); renderFunnel(); renderCrmStats(); renderCrmDash(); renderLeft(); }
   let convoAutoTimer=null;
   function nowHM(){ const d=new Date(); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)+':'+('0'+d.getSeconds()).slice(-2); }
+  // ——— Медиа Instagram: прямые CDN-ссылки браузер не тянет (CORS/срок), поэтому качаем
+  // через наш прокси /api/ig/media (как у WhatsApp) и показываем как blob. Отправленные
+  // голосовые лежат на /api/ig/outmedia — их тянем напрямую (публичны, с CORS). ———
+  const igMediaCache={};
+  async function igFetchMedia(u){
+    if(igMediaCache[u]) return igMediaCache[u];
+    let blob;
+    if(u.indexOf('/api/ig/outmedia')>=0){ const r=await fetch(u); blob=await r.blob(); }
+    else { const r=await apiFetch('/api/ig/media?u='+encodeURIComponent(u),{},ONEC_BASE); blob=await r.blob(); }
+    const o=URL.createObjectURL(blob); igMediaCache[u]=o; return o;
+  }
+  async function igHydrateMedia(box){
+    if(!box) return;
+    const els=box.querySelectorAll('[data-igmedia]:not([data-loaded])');
+    for(const el of els){
+      el.setAttribute('data-loaded','1');
+      const u=el.getAttribute('data-igmedia');
+      try{ el.src=await igFetchMedia(u); if(el.tagName==='AUDIO'||el.tagName==='VIDEO'){ try{ el.load(); }catch(e){} } }
+      catch(e){ el.removeAttribute('data-loaded'); /* попробуем при следующем обновлении */ }
+    }
+  }
+  async function igOpenMedia(el){
+    try{ const u=el.getAttribute('data-igmedia'); const o=await igFetchMedia(u); window.open(o,'_blank'); }
+    catch(e){ alert('Не удалось открыть файл.'); }
+  }
   function attHTML(att){
     let h='';
     (att||[]).forEach(a=>{
-      if(a.type==='image') h+='<a href="'+esc(a.url)+'" target="_blank" rel="noopener"><img src="'+esc(a.url)+'" loading="lazy" style="max-width:220px;max-height:260px;border-radius:10px;display:block;margin-top:5px"></a>';
-      else if(a.type==='video'||a.type==='ig_reel') h+='<a href="'+esc(a.url)+'" target="_blank" rel="noopener" style="color:#bcd2ff;display:block;margin-top:4px">🎬 видео — открыть</a>';
-      else if(a.type==='audio') h+='<a href="'+esc(a.url)+'" target="_blank" rel="noopener" style="color:#bcd2ff;display:block;margin-top:4px">🎤 голосовое — открыть</a>';
-      else h+='<a href="'+esc(a.url)+'" target="_blank" rel="noopener" style="color:#bcd2ff;display:block;margin-top:4px">🔗 вложение/пост — открыть</a>';
+      const u=esc(a.url||''); if(!u) return;
+      if(a.type==='image'||a.type==='sticker') h+='<img data-igmedia="'+u+'" onclick="igOpenMedia(this)" loading="lazy" style="max-width:220px;max-height:260px;border-radius:10px;display:block;margin-top:5px;cursor:pointer" title="Открыть">';
+      else if(a.type==='audio') h+='<audio data-igmedia="'+u+'" controls preload="metadata" style="max-width:230px;margin-top:5px;display:block"></audio>';
+      else if(a.type==='video'||a.type==='ig_reel') h+='<video data-igmedia="'+u+'" controls preload="metadata" style="max-width:240px;border-radius:10px;margin-top:5px;display:block"></video>';
+      else h+='<a href="'+u+'" target="_blank" rel="noopener" style="color:#bcd2ff;display:block;margin-top:4px">🔗 вложение/пост — открыть</a>';
     });
     return h;
   }
@@ -4165,6 +4244,7 @@
       if(box.dataset.sig===sig && silent){ if(upd) upd.textContent='🟢 обновлено '+nowHM(); return; }
       box.dataset.sig=sig;
       box.innerHTML=msgs.length?msgs.map(bubbleHTML).join(''):'<div style="color:var(--muted);padding:10px">Нет сообщений</div>';
+      igHydrateMedia(box);
       box.scrollTop=box.scrollHeight;
       ckWindowCheck(d.msgs||[]);
       if(upd) upd.textContent='🟢 обновлено '+nowHM();
@@ -5748,7 +5828,7 @@
       const msgs=(md.msgs||[]).map(m=>'<div class="bubble '+m.t+'" style="max-width:90%">'+linkify(m.x)+attHTML(m.att)+'</div>').join('');
       box.innerHTML='<div class="msgs" style="max-height:220px;background:var(--bg);border-radius:10px;padding:10px;margin-bottom:8px">'+(msgs||'<span style="color:var(--muted)">Нет сообщений</span>')+'</div>'+
         '<div style="display:flex;gap:8px"><input id="dl-reply" placeholder="Ответить клиенту…" style="flex:1"><button class="btn ghost" onclick="openTpl(\'dl-reply\')" title="Шаблоны ответов">📋</button><button class="btn" onclick="dealReply(\''+cid+'\')">→</button></div>';
-      const mb=box.querySelector('.msgs'); if(mb) mb.scrollTop=mb.scrollHeight;
+      const mb=box.querySelector('.msgs'); if(mb){ igHydrateMedia(mb); mb.scrollTop=mb.scrollHeight; }
     }catch(e){ box.innerHTML='<span style="color:var(--red)">Не удалось загрузить (нужен доступ к чатам)</span>'; }
   }
   async function dealReply(chatId){
@@ -6031,7 +6111,7 @@
       '<td '+RT_TD+'>'+(c.plate?esc(c.plate):'<span style="color:var(--muted)">—</span>')+'</td>'+
       '<td '+RT_TD+' style="text-align:right">'+esc(c.price||'')+'</td><td '+RT_TD+' style="text-align:right">'+esc(c.deposit||'')+'</td>'+
       '<td '+RT_TD+' style="text-align:right">'+(c.cost?esc(c.cost):'<span style="color:var(--muted)">—</span>')+'</td>'+
-      '<td '+RT_TD+'>'+rstatusChip(c.status)+'</td>'+acts+'</tr>';
+      '<td '+RT_TD+'>'+rstatusChip(c.status_live||c.status)+'</td>'+acts+'</tr>';
   }
   // строка архива проданной машины — с ценой покупки/продажи и прибылью
   function _soldRow(c){
@@ -6054,7 +6134,7 @@
     var all=rentD().cars||[];
     var active=all.filter(function(c){ return !carIsSold(c); });
     var own=rentIsOwner();
-    var cnt=function(w){ return active.filter(function(c){ return (c.status||'').toLowerCase().indexOf(w)>=0; }).length; };
+    var cnt=function(w){ return active.filter(function(c){ return (c.status_live||c.status||'').toLowerCase().indexOf(w)>=0; }).length; };
     var park='<div class="card" style="margin-bottom:14px"><h3>🚗 Парк</h3><div class="kpis" style="grid-template-columns:repeat(4,1fr);margin:0">'+
       kpiCard('Всего машин',active.length)+kpiCard('Свободно',cnt('свобод'))+kpiCard('В аренде',cnt('аренд'))+kpiCard('На ремонте',cnt('ремонт'))+'</div></div>';
     // сотрудник видит ТОЛЬКО общий статус парка, без списка машин
@@ -6295,7 +6375,7 @@
       function sheet(rows, headers){
         return rows.length ? XLSX.utils.json_to_sheet(rows) : XLSX.utils.aoa_to_sheet([headers]);
       }
-      A(wb, sheet((D.cars||[]).map(function(c){ return {ID:c.id,'Модель':c.model,'Госномер':c.plate,'Цена/сутки':rnum(c.price),'Залог':rnum(c.deposit),'Стоимость':rnum(c.cost),'Статус':c.status}; }),
+      A(wb, sheet((D.cars||[]).map(function(c){ return {ID:c.id,'Модель':c.model,'Госномер':c.plate,'Цена/сутки':rnum(c.price),'Залог':rnum(c.deposit),'Стоимость':rnum(c.cost),'Статус':(c.status_live||c.status)}; }),
         ['ID','Модель','Госномер','Цена/сутки','Залог','Стоимость','Статус']), 'Машины');
       A(wb, sheet((D.rentals||[]).map(function(r){ return {ID:r.id,'Модель':r.model,'Арендатор':r.renter,'Телефон':r.phone,'Начало':r.start,'Конец':r.end,'Цена/сутки':rnum(r.price),'Получено':rnum(r.got),'Статус':r.status,'Кто сдал':r.by}; }),
         ['ID','Модель','Арендатор','Телефон','Начало','Конец','Цена/сутки','Получено','Статус','Кто сдал']), 'Аренды');
@@ -6498,7 +6578,8 @@
         '<div><label>Залог, '+MUNIT()+'</label><input type="number" inputmode="numeric" id="rf-deposit" value="'+((rec&&rnum(rec.deposit))||'')+'" placeholder="0"></div></div>'+
         '<label>Стоимость покупки, '+MUNIT()+'</label><input type="number" inputmode="numeric" id="rf-cost" value="'+((rec&&rnum(rec.cost))||'')+'" placeholder="за сколько купили">'+
         '<label>Цена продажи, '+MUNIT()+' <span style="color:var(--muted);font-weight:400;font-size:11px">— если машину продали</span></label><input type="number" inputmode="numeric" id="rf-soldprice" value="'+((rec&&rnum(rec.sold_price))||'')+'" placeholder="за сколько продали">'+
-        '<label>Статус</label><select id="rf-status">'+_selOpts(['Свободна','В аренде','На ремонте','Продана'],(rec&&rec.status)||'Свободна')+'</select>';
+        '<label>Статус</label><select id="rf-status">'+_selOpts(['Свободна','В аренде','На ремонте','Продана'],(rec&&rec.status)||'Свободна')+'</select>'+
+        '<div style="font-size:12px;color:var(--muted);margin-top:6px">💡 «Свободна» и «В аренде» ставятся <b>автоматически</b> по активным арендам: пока аренда открыта — машина «В аренде», как отметишь аренду «Завершена» — снова «Свободна». Здесь вручную выбирай только <b>«На ремонте»</b> или <b>«Продана»</b>.</div>';
     } else if(type==='note'){
       html=
         '<label>Текст заметки *</label>'+
