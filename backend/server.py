@@ -225,7 +225,7 @@ SECTION_OF = [
     ("/api/ig/reply", "chats"), ("/api/ig/accounts", "chats"),
     ("/api/ig/broadcast", "chats"), ("/api/ig/bot", "chats"), ("/api/ig/media", "chats"),
     ("/api/wa/conversations", "chats"), ("/api/wa/thread", "chats"),
-    ("/api/wa/reply", "chats"), ("/api/wa/accounts", "chats"),
+    ("/api/wa/reply", "chats"), ("/api/wa/botreply", "chats"), ("/api/wa/accounts", "chats"),
     ("/api/wa/media", "chats"), ("/api/wa/profile", "chats"), ("/api/wa/read", "chats"),
     ("/api/assistant", "ai"),
     ("/api/ads", "ads"),
@@ -2496,9 +2496,13 @@ def wabot_handle(sender, phone_id, text=None, fallback=False):
             if not hist or hist[-1].get("direction") == "out":
                 return
         else:
-            # Мгновенный режим: если оператор уже отвечал в диалоге — бот молчит.
+            # Мгновенный режим: бот молчит, только если ЖИВОЙ менеджер отвечал НЕДАВНО
+            # (в пределах handoff_hours). Если человек давно не отвечал — бот снова ведёт диалог.
+            hh = int(_num(s.get("handoff_hours")) or 6)
+            cutoff = (time.time() - hh * 3600) * 1000
             for r in hist:
-                if r.get("direction") == "out" and (r.get("raw") or {}).get("by") == "human":
+                if (r.get("direction") == "out" and (r.get("raw") or {}).get("by") == "human"
+                        and int(_num(r.get("ts")) or 0) >= cutoff):
                     _igbot_bump("handoffs")
                     return
         reply = _igbot_generate(hist, s)
@@ -4836,6 +4840,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": False, "error": "Instagram: " + (det or str(e))})
             except Exception as e:
                 return self._send(200, {"ok": False, "error": "Instagram: " + str(e)})
+            return self._send(200, {"ok": True})
+        if self.path.startswith("/api/wa/botreply"):
+            # Форсировать ответ ИИ-бота этому клиенту WhatsApp сейчас (даже если раньше отвечал человек).
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            acc = str(body.get("account_id") or ""); cust = str(body.get("customer_id") or "")
+            if not acc or not cust:
+                return self._send(400, {"error": "нужны account_id и customer_id"})
+            try:
+                wabot_handle(cust, acc, fallback=True)   # fallback=True: отвечает, если последнее — от клиента, минуя хендофф
+            except Exception as e:
+                return self._send(200, {"ok": False, "error": "Бот: " + str(e)})
             return self._send(200, {"ok": True})
         if self.path.startswith("/api/wa/reply"):
             try:
