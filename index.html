@@ -436,7 +436,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.84.0<br>Новая воронка (В обработке → … → Клиент получил товар) + единый чат Instagram и WhatsApp</div>
+      Штурвал v3.84.1<br>Новая воронка (В обработке → … → Клиент получил товар) + единый чат Instagram и WhatsApp</div>
   </aside>
 
   <!-- MAIN -->
@@ -3563,7 +3563,7 @@
       if(ckSearch){
         box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">По запросу «'+esc(ckSearch)+'» клиентов не найдено</div>';
       } else if(ckView==='Новая заявка' && LAST_CHAT_ERR){
-        box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">⏳ Чаты Instagram временно недоступны — ChatPlace ненадолго ограничил запросы. Это пройдёт само, заявки скоро появятся. Можно ничего не делать.</div>';
+        box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">⏳ Чаты Instagram/WhatsApp временно недоступны — сервер ненадолго ограничил запросы. Это пройдёт само, заявки скоро появятся. Можно ничего не делать.</div>';
       } else {
         box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">В стадии «'+esc(ckView)+'» пока пусто</div>';
       }
@@ -3578,7 +3578,7 @@
   }
   function openItem(it){
     if(it.chatId){ openConvo({id:it.chatId,name:it.name}); }
-    else { ckCurId=null; ckCurName=it.name; ckHead(); const b=document.getElementById('ck-msgs'); if(b) b.innerHTML='<div style="color:var(--muted);padding:10px">Переписка в Instagram не найдена для «'+esc(it.name)+'». Нажми на имя сверху — откроется карточка заказа.</div>'; }
+    else { ckCurId=null; ckCurName=it.name; ckHead(); const b=document.getElementById('ck-msgs'); if(b) b.innerHTML='<div style="color:var(--muted);padding:10px">У этой сделки нет привязанной переписки в Instagram или WhatsApp — обычно это заказ, заведённый вручную или импортированный из amoCRM. Нажми на имя сверху, чтобы открыть карточку заказа.</div>'; }
   }
   function findClient(name){ return name?(_cByName.get(name.toLowerCase())||null):null; }
   function findDealByName(name){ const c=findClient(name); return c?(_dByClient.get(c.id)||null):null; }
@@ -4246,7 +4246,19 @@
     });
     return h;
   }
-  function bubbleHTML(m){ return '<div class="bubble '+m.t+'">'+linkify(m.x)+attHTML(m.att)+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>'; }
+  // «Удалить у себя» — прячем сообщение только в нашем виде Штурвала (данные не теряем;
+  // у клиента удалить нельзя — API WhatsApp/Instagram этого не дают). Хранение в этом браузере.
+  let CK_HIDDEN=new Set(); try{ CK_HIDDEN=new Set(JSON.parse(localStorage.getItem('shturval_hidden_msgs')||'[]')); }catch(e){}
+  function ckMsgKey(id,m){ return id+'~'+(m.ts||0)+'~'+m.t; }
+  function ckIsHidden(id,m){ return CK_HIDDEN.has(ckMsgKey(id,m)); }
+  function ckHideMsg(key){
+    CK_HIDDEN.add(key); try{ localStorage.setItem('shturval_hidden_msgs',JSON.stringify([...CK_HIDDEN])); }catch(e){}
+    if(ckCurId){ const box=document.getElementById('ck-msgs'); if(box) box.dataset.sig=''; loadConvoMsgs(ckCurId,true); }
+  }
+  function bubbleHTML(m, hideKey){
+    const del=hideKey?'<a href="#" title="Скрыть у себя (у клиента останется)" onclick="ckHideMsg(\''+hideKey+'\');return false" style="float:right;margin-left:10px;color:var(--muted);text-decoration:none;font-size:12px;opacity:.6">✕</a>':'';
+    return '<div class="bubble '+m.t+'">'+del+linkify(m.x)+attHTML(m.att)+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>';
+  }
   // база API диалога по каналу чата: WhatsApp → /api/wa, иначе Instagram → /api/ig
   function ckBase(id){ const c=COCKPIT_CHATS.find(x=>x.id===(id||ckCurId)); return (c&&c.channel==='wa')?'/api/wa':'/api/ig'; }
   async function loadConvoMsgs(id, silent){
@@ -4258,13 +4270,13 @@
       const parts=String(id).split('|'); const acc=parts[0]||'', cust=parts[1]||'';
       const r=await apiFetch(ckBase(id)+'/thread?account='+encodeURIComponent(acc)+'&customer='+encodeURIComponent(cust)+'&_='+Date.now(),{},ONEC_BASE); const d=await r.json();
       if(id!==ckCurId) return;                         // успели переключить чат
-      const msgs=d.msgs||[];
+      const msgs=(d.msgs||[]).filter(m=>!ckIsHidden(id,m));   // «удалённые у себя» не показываем
       const last=msgs.length?msgs[msgs.length-1]:null;
       // сигнатура по id+времени последнего сообщения — меняется при ЛЮБОМ новом сообщении
       const sig=msgs.length+'|'+(last?((last.id||last.ts||'')+':'+last.t+':'+last.x):'');
       if(box.dataset.sig===sig && silent){ if(upd) upd.textContent='🟢 обновлено '+nowHM(); return; }
       box.dataset.sig=sig;
-      box.innerHTML=msgs.length?msgs.map(bubbleHTML).join(''):'<div style="color:var(--muted);padding:10px">Нет сообщений</div>';
+      box.innerHTML=msgs.length?msgs.map(m=>bubbleHTML(m, ckMsgKey(id,m))).join(''):'<div style="color:var(--muted);padding:10px">Нет сообщений</div>';
       igHydrateMedia(box);
       box.scrollTop=box.scrollHeight;
       ckWindowCheck(d.msgs||[]);
@@ -4328,28 +4340,46 @@
       return m.replace(/chatplace:?/i,'ChatPlace: ');
     return m||'не удалось отправить';
   }
+  // Отправка с окном отмены: 6 секунд можно нажать «отменить» — сообщение уйдёт только после.
+  let ckPendingSend=null;
   async function ckSend(){
     const inp=document.getElementById('ck-reply'); const t=inp.value.trim(); if(!t) return;
     if(!ckCurId){ alert('Сначала выбери чат в списке слева.'); return; }
     inp.value='';
+    const box=document.getElementById('ck-msgs'); const bid='b'+Date.now(); const hm=nowHM().slice(0,5);
+    const idAtSend=ckCurId, nameAtSend=ckCurName;
+    const undoLink=function(n){ return hm+' · <a href="#" onclick="ckCancelSend(\''+bid+'\');return false" style="color:#ffd27a;text-decoration:none">отменить ('+n+')</a>'; };
+    box.insertAdjacentHTML('beforeend','<div class="bubble out" id="'+bid+'">'+esc(t)+'<span style="display:block;font-size:10px;opacity:.7;margin-top:2px" id="'+bid+'-st">'+undoLink(6)+'</span></div>'); box.scrollTop=box.scrollHeight;
+    let left=6;
+    const iv=setInterval(function(){ left--; const st=document.getElementById(bid+'-st'); if(st&&left>0) st.innerHTML=undoLink(left); },1000);
+    const timer=setTimeout(function(){ ckDoSend(bid,t,hm,idAtSend,nameAtSend); },6000);
+    ckPendingSend={bid:bid,timer:timer,iv:iv,text:t};
+  }
+  function ckCancelSend(bid){
+    if(!ckPendingSend||ckPendingSend.bid!==bid) return;
+    clearTimeout(ckPendingSend.timer); clearInterval(ckPendingSend.iv);
+    const b=document.getElementById(bid); if(b) b.remove();
+    const inp=document.getElementById('ck-reply'); if(inp&&!inp.value.trim()) inp.value=ckPendingSend.text;
+    ckPendingSend=null;
+  }
+  async function ckDoSend(bid,t,hm,idAtSend,nameAtSend){
+    if(ckPendingSend&&ckPendingSend.bid===bid){ clearInterval(ckPendingSend.iv); ckPendingSend=null; }
     const box=document.getElementById('ck-msgs');
-    const bid='b'+Date.now();
-    const hm=nowHM().slice(0,5);          // ЧЧ:ММ — показываем время сразу
-    box.insertAdjacentHTML('beforeend','<div class="bubble out" id="'+bid+'">'+esc(t)+'<span style="display:block;font-size:10px;opacity:.55;margin-top:2px">'+hm+' ⏳</span></div>'); box.scrollTop=box.scrollHeight;
-    const dl=findDealByName(ckCurName); if(dl){ logActivity(dl.client_id,dl.id,'сообщение','Ответ: '+t); crmPersist(); }
+    const st=document.getElementById(bid+'-st'); if(st) st.innerHTML=hm+' ⏳';
+    const dl=findDealByName(nameAtSend); if(dl){ logActivity(dl.client_id,dl.id,'сообщение','Ответ: '+t); crmPersist(); }
     let ok=false, errMsg='';
-    const pp=String(ckCurId).split('|'); const accId=pp[0]||'', custId=pp[1]||'';
+    const pp=String(idAtSend).split('|'); const accId=pp[0]||'', custId=pp[1]||'';
     for(let i=1;i<=3 && !ok;i++){
       try{
-        const r=await apiFetch(ckBase()+'/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:accId,customer_id:custId,text:t})},ONEC_BASE);
+        const r=await apiFetch(ckBase(idAtSend)+'/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:accId,customer_id:custId,text:t})},ONEC_BASE);
         const res=await r.json(); ok=!!(res&&res.ok); if(!ok&&res&&res.error){ errMsg=res.error; break; }
       }catch(e){ await new Promise(res=>setTimeout(res,2000)); }   // сервер просыпается — повтор
     }
     const b=document.getElementById(bid);
-    if(b){ b.innerHTML=esc(t)+'<span style="display:block;font-size:10px;opacity:.6;margin-top:2px">'+hm+' '+(ok?'✓ отправлено':'⚠️ не доставлено')+'</span>'; if(!ok) b.style.background='var(--red)'; }
-    if(ok){ const c=COCKPIT_CHATS.find(x=>x.id===ckCurId); if(c) c.unread=false; renderLeft(); setTimeout(()=>loadConvoMsgs(ckCurId, true), 1500); }
-    else { inp.value=t;   // вернём текст, чтобы не печатать заново
-      box.insertAdjacentHTML('beforeend','<div style="font-size:12px;color:#ffb84d;padding:4px 8px 10px">⚠️ '+esc(sendErrText(errMsg))+'</div>'); box.scrollTop=box.scrollHeight; }
+    if(b){ const st2=document.getElementById(bid+'-st'); const html=hm+' '+(ok?'✓ отправлено':'⚠️ не доставлено'); if(st2){ st2.innerHTML=html; } else { b.innerHTML=esc(t)+'<span style="display:block;font-size:10px;opacity:.6;margin-top:2px">'+html+'</span>'; } if(!ok) b.style.background='var(--red)'; }
+    if(ok){ const c=COCKPIT_CHATS.find(x=>x.id===idAtSend); if(c) c.unread=false; renderLeft(); if(idAtSend===ckCurId) setTimeout(function(){ loadConvoMsgs(ckCurId, true); },1500); }
+    else { const inp=document.getElementById('ck-reply'); if(inp&&!inp.value.trim()) inp.value=t;
+      if(box) box.insertAdjacentHTML('beforeend','<div style="font-size:12px;color:#ffb84d;padding:4px 8px 10px">⚠️ '+esc(sendErrText(errMsg))+'</div>'); box.scrollTop=box.scrollHeight; }
   }
   function openDealForClient(){ if(!ckCurName) return; const d=ensureDeal(ckCurName); crmPersist(); openDeal(d.id); }
   // --- Обучение бота: сбор исправлений ---
