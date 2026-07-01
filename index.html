@@ -436,7 +436,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.84.1<br>Новая воронка (В обработке → … → Клиент получил товар) + единый чат Instagram и WhatsApp</div>
+      Штурвал v3.85.0<br>Своя CRM: amoCRM и ChatPlace отключены, импортированные сделки очищены. Единый чат Instagram + WhatsApp</div>
   </aside>
 
   <!-- MAIN -->
@@ -528,7 +528,7 @@
 
     <!-- CHATS (предпросмотр) -->
     <section id="tab-chats" class="hide">
-      <div class="note" style="margin-bottom:14px">💬 Это <b>предпросмотр</b> раздела чатов (диалоги для примера). Подключение твоих реальных переписок из Instagram (через ChatPlace) — следующий шаг. Пояснение — в моём сообщении.</div>
+      <div class="note" style="margin-bottom:14px">💬 Это <b>предпросмотр</b> раздела чатов (диалоги для примера). Реальные переписки — в разделах Instagram и WhatsApp.</div>
       <div class="inbox">
         <div class="chatlist" id="chatlist"></div>
         <div class="chatview">
@@ -544,7 +544,7 @@
 
     <!-- INSTAGRAM (прямой, без ChatPlace) -->
     <section id="tab-iginbox" class="hide">
-      <div class="note" id="ig-status" style="margin-bottom:14px">📷 Переписки из Instagram <b>напрямую</b> (без ChatPlace). Аккаунты: <span id="ig-accs">…</span></div>
+      <div class="note" id="ig-status" style="margin-bottom:14px">📷 Переписки из Instagram <b>напрямую</b>. Аккаунты: <span id="ig-accs">…</span></div>
       <div class="card" id="igbot-card" style="margin-bottom:14px">
         <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="igbotToggleCard()">
           <h3 style="margin:0">🤖 ИИ-бот (Claude отвечает клиентам)</h3>
@@ -1419,7 +1419,7 @@
     rentclients:{icon:'🧑',label:'Клиенты'}, rentcalendar:{icon:'📆',label:'Календарь'}
   };
   const MODULES=[
-    {key:'crm',  icon:'🧲', label:'CRM',     tabs:['crmdash','deals','tasks','clients','crm']},
+    {key:'crm',  icon:'🧲', label:'CRM',     tabs:['crmdash','deals','tasks','clients']},
     {key:'mkt',  icon:'📣', label:'Реклама', tabs:['ads','adsreport','adsanalysis']},
     {key:'ig',   icon:'📷', label:'Instagram', tabs:['iginbox']},
     {key:'wa',   icon:'🟢', label:'WhatsApp', tabs:['wainbox']},
@@ -1996,6 +1996,7 @@
   function kpiCard(label,val){return '<div class="card kpi"><div class="label">'+label+'</div><div class="value">'+val+'</div></div>';}
   let crmTimer=null;
   async function loadCRM(attempt){
+    return;   // amoCRM отключён — живые данные из amoCRM больше не запрашиваем
     attempt=attempt||1;
     const st=document.getElementById('crm-status');
     // мгновенно показываем последние сохранённые цифры, пока сервер отвечает/просыпается
@@ -3164,7 +3165,7 @@
       if(!chatsTimer) chatsTimer=setInterval(refreshChats,8000);
     }else{
       CHATS=CHAT_SAMPLE;
-      if(note) note.innerHTML='💬 <b>Предпросмотр</b> (примеры). Живые чаты — когда запущен локальный сервер с ключом ChatPlace.';
+      if(note) note.innerHTML='💬 <b>Предпросмотр</b> (примеры). Живые чаты — в разделах Instagram и WhatsApp.';
     }
     renderChatList();
     if(curChatId && CHATS.some(c=>c.id===curChatId)) openChat(curChatId,curChatName);
@@ -3266,9 +3267,19 @@
   // разовый перенос старых названий стадий на новую воронку (у уже сохранённых сделок)
   const STATUS_MIGRATION={'Связались':'В обработке','Выставили счёт':'Ожидает оплаты','Оплачено':'Готов к отправке','Отгружено':'В пути','Закрыто':'Клиент получил товар'};
   function migrateStatuses(){ let ch=false; (CRM.deals||[]).forEach(d=>{ const nw=STATUS_MIGRATION[d.status]; if(nw){ d.status=nw; ch=true; } }); return ch; }
+  // amoCRM отключён — вычищаем импортированные сделки/клиентов (метка amo_id), оставляем только чаты и ручные заказы
+  function purgeImported(){
+    const before=(CRM.deals||[]).length + (CRM.clients||[]).length;
+    CRM.deals=(CRM.deals||[]).filter(d=>!(d.amo_id||d.owner==='amoCRM'));
+    CRM.clients=(CRM.clients||[]).filter(c=>!c.amo_id);
+    const okD=new Set(CRM.deals.map(d=>d.id)), okC=new Set(CRM.clients.map(c=>c.id));
+    CRM.activity=(CRM.activity||[]).filter(a=>okD.has(a.deal_id)||okC.has(a.client_id));
+    CRM.tasks=(CRM.tasks||[]).filter(t=>!t.deal_id||okD.has(t.deal_id));
+    return before!==(CRM.deals.length + CRM.clients.length);
+  }
   let CRM={clients:[],deals:[],tasks:[],activity:[]};
   try{ const s=JSON.parse(localStorage.getItem('shturval_crm')); if(s) CRM=Object.assign(CRM,s); }catch(e){}
-  migrateStatuses();
+  migrateStatuses(); purgeImported();
   // индексы для быстрого поиска (иначе перебор по тысячам сделок тормозит после импорта)
   let _cById=new Map(), _cByName=new Map(), _dById=new Map(), _dByClient=new Map();
   function rebuildCrmIndex(){
@@ -3301,7 +3312,7 @@
       const localHas=(CRM.deals&&CRM.deals.length)||(CRM.clients&&CRM.clients.length);
       if(cloudHas){
         CRM={clients:cloud.clients||[],deals:cloud.deals||[],tasks:cloud.tasks||[],activity:cloud.activity||[]};
-        if(migrateStatuses()) crmPersist();          // перенос старых стадий на новую воронку
+        let _chg=migrateStatuses(); if(purgeImported()) _chg=true; if(_chg) crmPersist();   // стадии + чистка импорта amoCRM
         rebuildCrmIndex();
         try{ localStorage.setItem('shturval_crm',JSON.stringify(CRM)); }catch(_){}
         _crmCloudReady=true;
@@ -3348,7 +3359,6 @@
     if(isOwner()||canSee('crm')||canSee('deals')||canSee('chats')){
       html+='<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px;flex-wrap:wrap">'+
         ((isOwner()||canSee('chats'))?'<button class="btn ghost" style="font-size:12px;padding:6px 12px" onclick="openBroadcast()">📣 Рассылка</button>':'')+
-        ((isOwner()||canSee('crm')||canSee('deals'))?'<button class="btn ghost" id="amo-imp-btn" style="font-size:12px;padding:6px 12px" onclick="importFromAmo()">⬇️ Импорт из amoCRM</button>':'')+
       '</div>';
     }
     html+='<div class="kpis" style="margin-bottom:18px">'+
@@ -3578,7 +3588,7 @@
   }
   function openItem(it){
     if(it.chatId){ openConvo({id:it.chatId,name:it.name}); }
-    else { ckCurId=null; ckCurName=it.name; ckHead(); const b=document.getElementById('ck-msgs'); if(b) b.innerHTML='<div style="color:var(--muted);padding:10px">У этой сделки нет привязанной переписки в Instagram или WhatsApp — обычно это заказ, заведённый вручную или импортированный из amoCRM. Нажми на имя сверху, чтобы открыть карточку заказа.</div>'; }
+    else { ckCurId=null; ckCurName=it.name; ckHead(); const b=document.getElementById('ck-msgs'); if(b) b.innerHTML='<div style="color:var(--muted);padding:10px">У этой сделки нет привязанной переписки в Instagram или WhatsApp — обычно это заказ, заведённый вручную. Нажми на имя сверху, чтобы открыть карточку заказа.</div>'; }
   }
   function findClient(name){ return name?(_cByName.get(name.toLowerCase())||null):null; }
   function findDealByName(name){ const c=findClient(name); return c?(_dByClient.get(c.id)||null):null; }
@@ -4335,9 +4345,7 @@
     if(m.includes('not found')||m.includes('не найден'))
       return 'Чат не найден — возможно, переписку удалили в Instagram.';
     if(m.includes('429')||m.includes('limit')||m.includes('rate')||m.includes('ограничил'))
-      return 'Instagram/ChatPlace временно ограничил отправку. Подожди минуту и попробуй снова.';
-    if(m.includes('chatplace'))
-      return m.replace(/chatplace:?/i,'ChatPlace: ');
+      return 'Instagram/WhatsApp временно ограничил отправку. Подожди минуту и попробуй снова.';
     return m||'не удалось отправить';
   }
   // Отправка с окном отмены: 6 секунд можно нажать «отменить» — сообщение уйдёт только после.
