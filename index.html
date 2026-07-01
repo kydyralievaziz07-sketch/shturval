@@ -436,7 +436,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.85.0<br>Своя CRM: amoCRM и ChatPlace отключены, импортированные сделки очищены. Единый чат Instagram + WhatsApp</div>
+      Штурвал v3.86.0<br>WhatsApp-медиа в чате сделки · отмена отправки (6 сек) и «скрыть у себя» во всех чатах (Instagram + WhatsApp)</div>
   </aside>
 
   <!-- MAIN -->
@@ -3777,30 +3777,47 @@
     const c=igCur; const box=document.getElementById('ig-msgs'); if(!c||!box) return;
     try{
       const r=await apiFetch('/api/ig/thread?account='+encodeURIComponent(c.account_id)+'&customer='+encodeURIComponent(c.customer_id)+'&_='+Date.now(),{},ONEC_BASE);
-      const d=await r.json(); if(igCur!==c) return; const msgs=d.msgs||[];
+      const d=await r.json(); if(igCur!==c) return; const igId=c.account_id+'|'+c.customer_id;
+      const msgs=(d.msgs||[]).filter(m=>!ckIsHidden(igId,m));   // «скрытые у себя» не показываем
       const last=msgs[msgs.length-1];
       const sig=msgs.length+'|'+(last?(last.ts+':'+last.x):'');
       if(box.dataset.sig===sig && !first) return;          // нового ничего — не трогаем
       const atBottom=(box.scrollHeight-box.scrollTop-box.clientHeight)<70;
       box.dataset.sig=sig;
-      box.innerHTML=msgs.length?msgs.map(bubbleHTML).join(''):'<div style="padding:10px;color:var(--muted)">Нет сообщений</div>';
+      box.innerHTML=msgs.length?msgs.map(m=>bubbleHTML(m, ckMsgKey(igId,m))).join(''):'<div style="padding:10px;color:var(--muted)">Нет сообщений</div>';
       igHydrateMedia(box);
       if(first||atBottom) box.scrollTop=box.scrollHeight;
     }catch(e){ if(first) box.innerHTML='<div style="padding:10px;color:var(--muted)">Не удалось загрузить.</div>'; }
   }
+  let igPendingSend=null;
   async function igSend(){
     const inp=document.getElementById('ig-reply'); const t=(inp.value||'').trim(); if(!t) return;
     if(!igCur){ alert('Сначала выбери диалог слева.'); return; }
     inp.value='';
-    const box=document.getElementById('ig-msgs'); const bid='ig'+Date.now();
-    box.insertAdjacentHTML('beforeend','<div class="bubble out" id="'+bid+'">'+esc(t)+' <span style="opacity:.6;font-size:11px">⏳</span></div>'); box.scrollTop=box.scrollHeight;
+    const box=document.getElementById('ig-msgs'); const bid='ig'+Date.now(); const cAtSend=igCur;
+    const undoLink=n=>' <a href="#" onclick="igCancelSend(\''+bid+'\');return false" style="color:#ffd27a;text-decoration:none;font-size:11px">отменить ('+n+')</a>';
+    box.insertAdjacentHTML('beforeend','<div class="bubble out" id="'+bid+'">'+esc(t)+'<span id="'+bid+'-st">'+undoLink(6)+'</span></div>'); box.scrollTop=box.scrollHeight;
+    let left=6; const iv=setInterval(()=>{ left--; const st=document.getElementById(bid+'-st'); if(st&&left>0) st.innerHTML=undoLink(left); },1000);
+    const timer=setTimeout(()=>igDoSend(bid,t,cAtSend),6000);
+    igPendingSend={bid:bid,timer:timer,iv:iv,text:t};
+  }
+  function igCancelSend(bid){
+    if(!igPendingSend||igPendingSend.bid!==bid) return;
+    clearTimeout(igPendingSend.timer); clearInterval(igPendingSend.iv);
+    const b=document.getElementById(bid); if(b) b.remove();
+    const inp=document.getElementById('ig-reply'); if(inp&&!inp.value.trim()) inp.value=igPendingSend.text;
+    igPendingSend=null;
+  }
+  async function igDoSend(bid,t,cAtSend){
+    if(igPendingSend&&igPendingSend.bid===bid){ clearInterval(igPendingSend.iv); igPendingSend=null; }
+    const box=document.getElementById('ig-msgs'); const st=document.getElementById(bid+'-st'); if(st) st.innerHTML=' <span style="opacity:.6;font-size:11px">⏳</span>';
     try{
-      const r=await apiFetch('/api/ig/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:igCur.account_id,customer_id:igCur.customer_id,text:t})},ONEC_BASE);
+      const r=await apiFetch('/api/ig/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:cAtSend.account_id,customer_id:cAtSend.customer_id,text:t})},ONEC_BASE);
       const d=await r.json(); const b=document.getElementById(bid);
       if(d.ok){ if(b) b.innerHTML=esc(t)+' <span style="opacity:.7;font-size:11px">✓ отправлено</span>'; }
       else { if(b){ b.innerHTML=esc(t)+' <span style="opacity:.7;font-size:11px">⚠️ не доставлено</span>'; b.style.background='var(--red)'; }
-        box.insertAdjacentHTML('beforeend','<div style="font-size:12px;color:#ffb84d;padding:4px 8px">⚠️ '+esc(sendErrText(d.error||''))+'</div>'); inp.value=t; }
-    }catch(e){ const b=document.getElementById(bid); if(b){ b.innerHTML=esc(t)+' ⚠️'; b.style.background='var(--red)'; } inp.value=t; }
+        if(box) box.insertAdjacentHTML('beforeend','<div style="font-size:12px;color:#ffb84d;padding:4px 8px">⚠️ '+esc(sendErrText(d.error||''))+'</div>'); }
+    }catch(e){ const b=document.getElementById(bid); if(b){ b.innerHTML=esc(t)+' ⚠️'; b.style.background='var(--red)'; } }
   }
   let igTick=0;
   function startIgAuto(){
@@ -3968,7 +3985,8 @@
     const c=waCur; const box=document.getElementById('wa-msgs'); if(!c||!box) return;
     try{
       const r=await apiFetch('/api/wa/thread?account='+encodeURIComponent(c.account_id)+'&customer='+encodeURIComponent(c.customer_id)+'&_='+Date.now(),{},ONEC_BASE);
-      const d=await r.json(); if(waCur!==c) return; const msgs=d.msgs||[];
+      const d=await r.json(); if(waCur!==c) return; const waId=c.account_id+'|'+c.customer_id;
+      const msgs=(d.msgs||[]).filter(m=>!ckIsHidden(waId,m));   // «скрытые у себя» не показываем
       waThreadMsgs=msgs;                               // для галереи/профиля
       const srcEl=document.getElementById('wa-source');  // с какой рекламы пришёл клиент
       if(srcEl){
@@ -3983,26 +4001,42 @@
       if(box.dataset.sig===sig && !first) return;
       const atBottom=(box.scrollHeight-box.scrollTop-box.clientHeight)<70;
       box.dataset.sig=sig;
-      box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+(m.t==='out'?'out':'in')+'">'+waBubbleBody(m)+((m.tm||m.t==='out')?'<span style="display:block;font-size:10px;margin-top:2px"><span style="opacity:.5">'+esc(m.tm||'')+'</span> '+waMsgTick(m)+'</span>':'')+'</div>').join(''):'<div style="padding:10px;color:var(--muted)">Нет сообщений</div>';
+      box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+(m.t==='out'?'out':'in')+'"><a href="#" title="Скрыть у себя (у клиента останется)" onclick="ckHideMsg(\''+ckMsgKey(waId,m)+'\');return false" style="float:right;margin-left:10px;color:var(--muted);text-decoration:none;font-size:12px;opacity:.6">✕</a>'+waBubbleBody(m)+((m.tm||m.t==='out')?'<span style="display:block;font-size:10px;margin-top:2px"><span style="opacity:.5">'+esc(m.tm||'')+'</span> '+waMsgTick(m)+'</span>':'')+'</div>').join(''):'<div style="padding:10px;color:var(--muted)">Нет сообщений</div>';
       waMarkSeen(c);                                   // открытый диалог считаем прочитанным (локально)
       if(last && last.t==='in') waMarkReadServer();    // и шлём в WhatsApp «прочитано» (клиент видит синие галочки)
       waHydrateMedia(box);
       if(first||atBottom) box.scrollTop=box.scrollHeight;
     }catch(e){ if(first) box.innerHTML='<div style="padding:10px;color:var(--muted)">Не удалось загрузить.</div>'; }
   }
+  let waPendingSend=null;
   async function waSend(){
     const inp=document.getElementById('wa-reply'); const t=(inp.value||'').trim(); if(!t) return;
     if(!waCur){ alert('Сначала выбери диалог слева.'); return; }
     inp.value='';
-    const box=document.getElementById('wa-msgs'); const bid='wa'+Date.now();
-    box.insertAdjacentHTML('beforeend','<div class="bubble out" id="'+bid+'">'+esc(t)+' <span style="opacity:.6;font-size:11px">⏳</span></div>'); box.scrollTop=box.scrollHeight;
+    const box=document.getElementById('wa-msgs'); const bid='wa'+Date.now(); const cAtSend=waCur;
+    const undoLink=n=>' <a href="#" onclick="waCancelSend(\''+bid+'\');return false" style="color:#ffd27a;text-decoration:none;font-size:11px">отменить ('+n+')</a>';
+    box.insertAdjacentHTML('beforeend','<div class="bubble out" id="'+bid+'">'+esc(t)+'<span id="'+bid+'-st">'+undoLink(6)+'</span></div>'); box.scrollTop=box.scrollHeight;
+    let left=6; const iv=setInterval(()=>{ left--; const st=document.getElementById(bid+'-st'); if(st&&left>0) st.innerHTML=undoLink(left); },1000);
+    const timer=setTimeout(()=>waDoSend(bid,t,cAtSend),6000);
+    waPendingSend={bid:bid,timer:timer,iv:iv,text:t};
+  }
+  function waCancelSend(bid){
+    if(!waPendingSend||waPendingSend.bid!==bid) return;
+    clearTimeout(waPendingSend.timer); clearInterval(waPendingSend.iv);
+    const b=document.getElementById(bid); if(b) b.remove();
+    const inp=document.getElementById('wa-reply'); if(inp&&!inp.value.trim()) inp.value=waPendingSend.text;
+    waPendingSend=null;
+  }
+  async function waDoSend(bid,t,cAtSend){
+    if(waPendingSend&&waPendingSend.bid===bid){ clearInterval(waPendingSend.iv); waPendingSend=null; }
+    const box=document.getElementById('wa-msgs'); const st=document.getElementById(bid+'-st'); if(st) st.innerHTML=' <span style="opacity:.6;font-size:11px">⏳</span>';
     try{
-      const r=await apiFetch('/api/wa/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:waCur.account_id,customer_id:waCur.customer_id,text:t})},ONEC_BASE);
+      const r=await apiFetch('/api/wa/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:cAtSend.account_id,customer_id:cAtSend.customer_id,text:t})},ONEC_BASE);
       const d=await r.json(); const b=document.getElementById(bid);
       if(d.ok){ if(b) b.innerHTML=esc(t)+' <span style="opacity:.7;font-size:11px">✓ отправлено</span>'; }
       else { if(b){ b.innerHTML=esc(t)+' <span style="opacity:.7;font-size:11px">⚠️ не доставлено</span>'; b.style.background='var(--red)'; }
-        box.insertAdjacentHTML('beforeend','<div style="font-size:12px;color:#ffb84d;padding:4px 8px">⚠️ '+esc(sendErrText(d.error||''))+'</div>'); inp.value=t; }
-    }catch(e){ const b=document.getElementById(bid); if(b){ b.innerHTML=esc(t)+' ⚠️'; b.style.background='var(--red)'; } inp.value=t; }
+        if(box) box.insertAdjacentHTML('beforeend','<div style="font-size:12px;color:#ffb84d;padding:4px 8px">⚠️ '+esc(sendErrText(d.error||''))+'</div>'); }
+    }catch(e){ const b=document.getElementById(bid); if(b){ b.innerHTML=esc(t)+' ⚠️'; b.style.background='var(--red)'; } }
   }
   // ——— Медиа в WhatsApp: показ входящих/исходящих фото, видео, файлов и голосовых ———
   function waMediaType(mime){ mime=(mime||'').toLowerCase();
@@ -4263,12 +4297,42 @@
   function ckIsHidden(id,m){ return CK_HIDDEN.has(ckMsgKey(id,m)); }
   function ckHideMsg(key){
     CK_HIDDEN.add(key); try{ localStorage.setItem('shturval_hidden_msgs',JSON.stringify([...CK_HIDDEN])); }catch(e){}
-    if(ckCurId){ const box=document.getElementById('ck-msgs'); if(box) box.dataset.sig=''; loadConvoMsgs(ckCurId,true); }
+    // обновляем ту переписку, что открыта (чат сделки / Instagram / WhatsApp)
+    const ckb=document.getElementById('ck-msgs'); if(ckb){ ckb.dataset.sig=''; if(ckCurId) loadConvoMsgs(ckCurId,true); }
+    const igb=document.getElementById('ig-msgs'); if(igb){ igb.dataset.sig=''; if(typeof igCur!=='undefined'&&igCur) igLoadThread(false); }
+    const wab=document.getElementById('wa-msgs'); if(wab){ wab.dataset.sig=''; if(typeof waCur!=='undefined'&&waCur) waLoadThread(false); }
   }
-  function bubbleHTML(m, hideKey){
+  // WhatsApp-медиа в чате сделки (формат wa_thread: m.med/m.mtype), с явным номером-аккаунтом
+  function waMediaHTML(m, phone){
+    const t=m.mtype, id=esc(m.med), ph=esc(phone||'');
+    if(t==='sticker') return '<img data-wamedia="'+id+'" data-waphone="'+ph+'" style="width:120px;max-width:60%;display:block;margin-top:5px;background:transparent" title="Стикер">';
+    if(t==='image') return '<img data-wamedia="'+id+'" data-waphone="'+ph+'" onclick="ckOpenWaMedia(\''+id+'\',\''+ph+'\')" style="max-width:220px;max-height:260px;border-radius:10px;cursor:pointer;display:block;margin-top:5px" title="Открыть">';
+    if(t==='audio') return '<audio data-wamedia="'+id+'" data-waphone="'+ph+'" controls preload="metadata" style="max-width:230px;margin-top:5px;display:block"></audio>';
+    if(t==='video') return '<video data-wamedia="'+id+'" data-waphone="'+ph+'" controls preload="metadata" style="max-width:240px;border-radius:10px;margin-top:5px;display:block"></video>';
+    return '<a href="#" onclick="ckOpenWaMedia(\''+id+'\',\''+ph+'\');return false" style="color:#bcd2ff;display:block;margin-top:4px">📎 '+esc(m.fname||'файл')+'</a>';
+  }
+  function bubbleHTML(m, hideKey, waPhone){
     const del=hideKey?'<a href="#" title="Скрыть у себя (у клиента останется)" onclick="ckHideMsg(\''+hideKey+'\');return false" style="float:right;margin-left:10px;color:var(--muted);text-decoration:none;font-size:12px;opacity:.6">✕</a>':'';
-    return '<div class="bubble '+m.t+'">'+del+linkify(m.x)+attHTML(m.att)+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>';
+    const media=m.med?waMediaHTML(m, waPhone):attHTML(m.att);   // WhatsApp (m.med) или Instagram (m.att)
+    return '<div class="bubble '+m.t+'">'+del+linkify(m.x)+media+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>';
   }
+  // Тянем WhatsApp-медиа в чате сделки через прокси с ЯВНЫМ номером (waCur тут не задан)
+  const ckWaCache={};
+  async function ckFetchWaMedia(id, phone){
+    const key=id+'|'+phone; if(ckWaCache[key]) return ckWaCache[key];
+    const r=await apiFetch('/api/wa/media?id='+encodeURIComponent(id)+'&phone='+encodeURIComponent(phone),{},ONEC_BASE);
+    const b=await r.blob(); const u=URL.createObjectURL(b); ckWaCache[key]=u; return u;
+  }
+  async function ckHydrateWaMedia(box){
+    if(!box) return;
+    const els=box.querySelectorAll('[data-wamedia]:not([data-loaded])');
+    for(const el of els){ el.setAttribute('data-loaded','1');
+      const id=el.getAttribute('data-wamedia'), ph=el.getAttribute('data-waphone')||'';
+      try{ el.src=await ckFetchWaMedia(id, ph); if(el.tagName==='AUDIO'||el.tagName==='VIDEO'){ try{ el.load(); }catch(e){} } }
+      catch(e){ el.removeAttribute('data-loaded'); }
+    }
+  }
+  async function ckOpenWaMedia(id, phone){ try{ const u=await ckFetchWaMedia(id, phone); window.open(u,'_blank'); }catch(e){ alert('Не удалось открыть файл.'); } }
   // база API диалога по каналу чата: WhatsApp → /api/wa, иначе Instagram → /api/ig
   function ckBase(id){ const c=COCKPIT_CHATS.find(x=>x.id===(id||ckCurId)); return (c&&c.channel==='wa')?'/api/wa':'/api/ig'; }
   async function loadConvoMsgs(id, silent){
@@ -4286,8 +4350,8 @@
       const sig=msgs.length+'|'+(last?((last.id||last.ts||'')+':'+last.t+':'+last.x):'');
       if(box.dataset.sig===sig && silent){ if(upd) upd.textContent='🟢 обновлено '+nowHM(); return; }
       box.dataset.sig=sig;
-      box.innerHTML=msgs.length?msgs.map(m=>bubbleHTML(m, ckMsgKey(id,m))).join(''):'<div style="color:var(--muted);padding:10px">Нет сообщений</div>';
-      igHydrateMedia(box);
+      box.innerHTML=msgs.length?msgs.map(m=>bubbleHTML(m, ckMsgKey(id,m), acc)).join(''):'<div style="color:var(--muted);padding:10px">Нет сообщений</div>';
+      igHydrateMedia(box); ckHydrateWaMedia(box);
       box.scrollTop=box.scrollHeight;
       ckWindowCheck(d.msgs||[]);
       if(upd) upd.textContent='🟢 обновлено '+nowHM();
