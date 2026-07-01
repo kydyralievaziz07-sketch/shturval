@@ -436,7 +436,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.83.0<br>Instagram: фото клиентов открываются в сделке + отправка голосовых (как в WhatsApp)</div>
+      Штурвал v3.84.0<br>Новая воронка (В обработке → … → Клиент получил товар) + единый чат Instagram и WhatsApp</div>
   </aside>
 
   <!-- MAIN -->
@@ -2300,7 +2300,7 @@
     setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(a.href); },120);
   }
   function exportClients(){
-    const PAID=['Оплачено','Отгружено','Закрыто'];
+    const PAID=['Готов к отправке','В пути','Клиент получил товар'];
     const byClient=new Map();                       // один проход вместо перебора по каждому клиенту
     (CRM.deals||[]).forEach(d=>{ const a=byClient.get(d.client_id)||[]; a.push(d); byClient.set(d.client_id,a); });
     const rows=[['Имя','Телефон','Источник','Создан','Сделок','Оплачено','Сумма оплат (сом)','Последняя стадия']];
@@ -2381,7 +2381,7 @@
     finally{ _amoImporting=false; if(btn){ btn.disabled=false; btn.textContent='⬇️ Импорт из amoCRM'; } }
   }
   function mergeAmo(d){
-    const PAID=['Оплачено','Отгружено','Закрыто'];
+    const PAID=['Готов к отправке','В пути','Клиент получил товар'];
     const haveC={}, haveD={}; const keyToId={}; let nc=0,nd=0;
     CRM.clients.forEach(c=>{ if(c.amo_id) haveC[c.amo_id]=c; });
     CRM.deals.forEach(x=>{ if(x.amo_id) haveD[x.amo_id]=true; });
@@ -3261,10 +3261,14 @@
   }
 
   // ===================== CRM (наша воронка) — прототип на localStorage =====================
-  const CRM_STATUSES=['Новая заявка','Связались','Выставили счёт','Оплачено','Отгружено','Закрыто','Отказ'];
+  const CRM_STATUSES=['Новая заявка','В обработке','Ожидает оплаты','Готов к отправке','В пути','Клиент получил товар'];
   const REJECT_REASONS=['Дорого','Передумал','Нет в наличии','Не отвечает','Купил у конкурента','Другое'];
+  // разовый перенос старых названий стадий на новую воронку (у уже сохранённых сделок)
+  const STATUS_MIGRATION={'Связались':'В обработке','Выставили счёт':'Ожидает оплаты','Оплачено':'Готов к отправке','Отгружено':'В пути','Закрыто':'Клиент получил товар'};
+  function migrateStatuses(){ let ch=false; (CRM.deals||[]).forEach(d=>{ const nw=STATUS_MIGRATION[d.status]; if(nw){ d.status=nw; ch=true; } }); return ch; }
   let CRM={clients:[],deals:[],tasks:[],activity:[]};
   try{ const s=JSON.parse(localStorage.getItem('shturval_crm')); if(s) CRM=Object.assign(CRM,s); }catch(e){}
+  migrateStatuses();
   // индексы для быстрого поиска (иначе перебор по тысячам сделок тормозит после импорта)
   let _cById=new Map(), _cByName=new Map(), _dById=new Map(), _dByClient=new Map();
   function rebuildCrmIndex(){
@@ -3297,6 +3301,7 @@
       const localHas=(CRM.deals&&CRM.deals.length)||(CRM.clients&&CRM.clients.length);
       if(cloudHas){
         CRM={clients:cloud.clients||[],deals:cloud.deals||[],tasks:cloud.tasks||[],activity:cloud.activity||[]};
+        if(migrateStatuses()) crmPersist();          // перенос старых стадий на новую воронку
         rebuildCrmIndex();
         try{ localStorage.setItem('shturval_crm',JSON.stringify(CRM)); }catch(_){}
         _crmCloudReady=true;
@@ -3330,9 +3335,9 @@
   // CRM-дашборд (онлайн-магазин): показатели + воронка по стадиям Штурвала
   function renderCrmHome(){
     const box=document.getElementById('crmhome'); if(!box) return;
-    const PAID=['Оплачено','Отгружено','Закрыто']; const deals=CRM.deals||[];
+    const PAID=['Готов к отправке','В пути','Клиент получил товар']; const deals=CRM.deals||[];
     const newLeads=(typeof newLeadsCount==='function')?newLeadsCount():deals.filter(d=>d.status==='Новая заявка').length;
-    const inWork=deals.filter(d=>['Закрыто','Отказ'].indexOf(d.status)<0).length;
+    const inWork=deals.filter(d=>d.status!=='Клиент получил товар').length;
     const paid=deals.filter(d=>PAID.indexOf(d.status)>=0);
     const sumOk=paid.reduce((s,d)=>s+dealAmount(d),0);
     const start=new Date(); start.setHours(0,0,0,0);
@@ -3354,20 +3359,19 @@
     const maxN=Math.max(1,...CRM_STATUSES.map(st=>deals.filter(d=>d.status===st).length));
     html+='<div class="card" style="margin-bottom:16px"><h3>🔻 Воронка продаж</h3>'+CRM_STATUSES.map(st=>{
       const n=deals.filter(d=>d.status===st).length; const w=Math.round(n/maxN*100);
-      const col=st==='Отказ'?'#ff6b6b':(PAID.indexOf(st)>=0?'var(--green)':'var(--accent)');
+      const col=PAID.indexOf(st)>=0?'var(--green)':'var(--accent)';
       return '<div style="margin:9px 0"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px"><span>'+esc(st)+'</span><b>'+n+'</b></div><div style="height:10px;background:var(--panel2);border-radius:6px;overflow:hidden"><div style="height:100%;width:'+w+'%;background:'+col+'"></div></div></div>';
     }).join('')+'</div>';
     html+='<div class="kpis" style="grid-template-columns:repeat(2,1fr);margin-bottom:16px">'+kpi('📷 Instagram-диалогов',chats)+kpi('🔵 Ждут ответа',waiting)+'</div>';
     // ===== ОТЧЁТЫ =====
     const totalDeals=deals.length;
     const conv=totalDeals?Math.round(paid.length/totalDeals*100):0;
-    const lost=deals.filter(d=>d.status==='Отказ').length;
     const avgCheck=paid.length?Math.round(sumOk/paid.length):0;
     html+='<div class="card" style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">📊 Конверсия воронки</h3>'+
       '<div style="display:flex;gap:8px"><button class="btn ghost" style="font-size:12px;padding:5px 10px" onclick="exportDeals()">⬇️ Сделки в Excel</button><button class="btn ghost" style="font-size:12px;padding:5px 10px" onclick="exportClients()">⬇️ Клиенты в Excel</button></div></div>'+
-      '<div class="kpis" style="grid-template-columns:repeat(4,1fr);gap:12px;margin-top:14px">'+
+      '<div class="kpis" style="grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px">'+
         kpi('Всего сделок',totalDeals)+kpi('Дошли до оплаты',paid.length)+
-        kpi('Конверсия',conv+'%')+kpi('Отказов',lost)+'</div>'+
+        kpi('Конверсия',conv+'%')+'</div>'+
       '<div class="note" style="margin-top:12px">Из <b>'+totalDeals+'</b> сделок оплатили <b>'+paid.length+'</b> ('+conv+'%). Средний чек: <b><span class="money" data-som="'+avgCheck+'">'+fmt(avgCheck)+'</span></b>.</div></div>';
     // отчёт по менеджерам
     const byMgr={}; deals.forEach(d=>{ const m=d.owner||'—'; const o=byMgr[m]=byMgr[m]||{count:0,paid:0,sum:0}; o.count++; if(PAID.indexOf(d.status)>=0){ o.paid++; o.sum+=dealAmount(d); } });
@@ -3381,8 +3385,8 @@
   function renderCrmStats(){
     const el=document.getElementById('crm-stats'); if(!el) return;
     const wrote=COCKPIT_CHATS.length;
-    const activeDeals=CRM.deals.filter(d=>['Закрыто','Отказ'].indexOf(d.status)<0).length;
-    const paid=CRM.deals.filter(d=>['Оплачено','Отгружено','Закрыто'].indexOf(d.status)>=0);
+    const activeDeals=CRM.deals.filter(d=>d.status!=='Клиент получил товар').length;
+    const paid=CRM.deals.filter(d=>['Готов к отправке','В пути','Клиент получил товар'].indexOf(d.status)>=0);
     const sumOk=paid.reduce((s,d)=>s+dealAmount(d),0);
     const start=new Date(); start.setHours(0,0,0,0);
     const sumToday=paid.filter(d=>d.paid_at&&new Date(d.paid_at).getTime()>=start.getTime()).reduce((s,d)=>s+dealAmount(d),0);
@@ -3402,13 +3406,13 @@
   // --- Дашборд Штурвал CRM: показатели + диаграмма воронки ---
   function renderCrmDash(){
     const box=document.getElementById('crm-dash'); if(!box) return;
-    const PAID=['Оплачено','Отгружено','Закрыто'];
+    const PAID=['Готов к отправке','В пути','Клиент получил товар'];
     const chatsP=COCKPIT_CHATS.filter(c=>inPerTs(c.ts));
     const newLeads=newLeadsCount();
-    const inWork=CRM.deals.filter(d=>['Связались','Выставили счёт'].indexOf(d.status)>=0).length;
-    const invoiced=CRM.deals.filter(d=>d.status==='Выставили счёт');
+    const inWork=CRM.deals.filter(d=>['В обработке','Ожидает оплаты'].indexOf(d.status)>=0).length;
+    const invoiced=CRM.deals.filter(d=>d.status==='Ожидает оплаты');
     const invSum=invoiced.reduce((s,d)=>s+dealAmount(d),0);
-    const dealsP=CRM.deals.filter(d=>d.status!=='Отказ' && inPerDate(d.created_at));
+    const dealsP=CRM.deals.filter(d=>inPerDate(d.created_at));
     const paidP=CRM.deals.filter(d=>PAID.indexOf(d.status)>=0 && inPerDate(d.paid_at||d.created_at));
     const paidSum=paidP.reduce((s,d)=>s+dealAmount(d),0);
     const conv=chatsP.length?Math.round(paidP.length/chatsP.length*100):0;
@@ -3419,15 +3423,15 @@
     const cards='<div class="kpis" style="grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px">'+
       card('📨','Написали ('+periodLabel()+')',chatsP.length,'всего обращений')+
       card('🆕','Новых заявок',newLeads,'ждут обработки')+
-      card('⚙️','В обработке',inWork,'связались / счёт')+
+      card('⚙️','В обработке',inWork,'в работе / ждут оплаты')+
       card('🤝','Сделок ('+periodLabel()+')',dealsP.length,'активных + успешных')+
-      card('🧾','Выставлено счетов',invoiced.length,'ожидается '+fmt(invSum),null)+
+      card('🧾','Ожидают оплаты',invoiced.length,'ожидается '+fmt(invSum),null)+
       card('💰','Ожидается (счета)',fmt(invSum),'если все оплатят',invSum)+
       card('✅','Оплачено — факт',fmt(paidSum),paidP.length+' сделок · '+periodLabel(),paidSum)+
       card('📈','Конверсия',conv+'%','заявка → оплата')+
       '</div>';
     // диаграмма воронки — горизонтальные полосы по стадиям
-    const colors={'Новая заявка':'#4f8cff','Связались':'#22d3ee','Выставили счёт':'#ffb84d','Оплачено':'#39d98a','Отгружено':'#a78bfa','Закрыто':'#94a3b8','Отказ':'#ff6b6b'};
+    const colors={'Новая заявка':'#4f8cff','В обработке':'#22d3ee','Ожидает оплаты':'#ffb84d','Готов к отправке':'#39d98a','В пути':'#a78bfa','Клиент получил товар':'#22c55e'};
     const counts=CRM_STATUSES.map(st=>({st:st,n:CRM.deals.filter(d=>d.status===st).length}));
     const mx=Math.max(1,...counts.map(c=>c.n));
     const bars=counts.map(c=>'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'+
@@ -3473,20 +3477,27 @@
     if(t.toDateString()===td.toDateString()) return ('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2);
     return t.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'}); }
   async function fetchChats(){
-    // Источник переписки — Instagram напрямую (раньше был ChatPlace)
+    // Источник переписок — Instagram + WhatsApp вместе, в одном списке
+    const mk=(c,ch)=>({
+      id:c.account_id+'|'+c.customer_id,
+      account_id:c.account_id, customer_id:c.customer_id, account:c.account,
+      channel:c.channel||ch,                             // канал: 'ig' (Instagram) или 'wa' (WhatsApp)
+      name:c.customer||c.customer_id,
+      ts:(c.last_ts>1e12?Math.floor(c.last_ts/1000):(c.last_ts||0)),
+      time:c.last_ts?igShortTime(c.last_ts):'',
+      last:c.last_text||'',
+      unread:(c.last_dir==='in'),
+      stage:(c.last_dir==='out'?'В обработке':'')        // мы ответили → «В обработке»; иначе новая
+    });
     try{
-      const r=await apiFetch('/api/ig/conversations?_='+Date.now(),{},ONEC_BASE); const d=await r.json();
-      COCKPIT_CHATS=(d.conversations||[]).map(c=>({
-        id:c.account_id+'|'+c.customer_id,
-        account_id:c.account_id, customer_id:c.customer_id, account:c.account,
-        name:c.customer||c.customer_id,
-        ts:(c.last_ts>1e12?Math.floor(c.last_ts/1000):(c.last_ts||0)),
-        time:c.last_ts?igShortTime(c.last_ts):'',
-        last:c.last_text||'',
-        unread:(c.last_dir==='in'),
-        stage:(c.last_dir==='out'?'Связались':'')        // мы ответили → «Связались»; иначе новая
-      }));
-      LAST_CHAT_ERR=(!COCKPIT_CHATS.length&&d.error)?d.error:'';
+      const [dig,dwa]=await Promise.all([
+        apiFetch('/api/ig/conversations?_='+Date.now(),{},ONEC_BASE).then(r=>r.json()).catch(()=>({})),
+        apiFetch('/api/wa/conversations?_='+Date.now(),{},ONEC_BASE).then(r=>r.json()).catch(()=>({}))
+      ]);
+      const ig=(dig.conversations||[]).map(c=>mk(c,'ig'));
+      const wa=(dwa.conversations||[]).map(c=>mk(c,'wa'));
+      COCKPIT_CHATS=ig.concat(wa).sort((a,b)=>(b.ts||0)-(a.ts||0));   // свежие — наверх, каналы вперемешку
+      LAST_CHAT_ERR=(!COCKPIT_CHATS.length&&(dig.error||dwa.error))?(dig.error||dwa.error):'';
     }
     catch(e){ COCKPIT_CHATS=[]; LAST_CHAT_ERR='нет связи с сервером'; }
     autoClassify();
@@ -3503,11 +3514,11 @@
       const sug=c.stage; if(!sug) return;                          // ещё не проанализирован
       let d=findDealByName(c.name);
       if(d&&d.manual) return;                                      // вручную перемещённые не трогаем
-      if(sug==='Связались'){                                       // ответил живой менеджер
-        if(!d) d=ensureDeal(c.name,'Связались');
-        if(d.status!=='Связались'){
-          d.status='Связались'; d.auto=true; delete d.paid_at; delete d.reject_reason;
-          logActivity(d.client_id,d.id,'системное','🤖 Менеджер ответил → Связались');
+      if(sug==='В обработке'){                                       // ответил живой менеджер
+        if(!d) d=ensureDeal(c.name,'В обработке');
+        if(d.status!=='В обработке'){
+          d.status='В обработке'; d.auto=true; delete d.paid_at; delete d.reject_reason;
+          logActivity(d.client_id,d.id,'системное','🤖 Менеджер ответил → В обработке');
           changed=true;
         }
       } else {                                                     // только бот / никто → Новая заявка
@@ -3519,6 +3530,12 @@
     });
     if(changed) crmPersist();
   }
+  // значок канала в списке чатов вместо служебной метки аккаунта
+  function chanBadge(ch){
+    if(ch==='wa') return ' <span style="font-size:11px;color:#25d366;font-weight:400">🟢 WhatsApp</span>';
+    if(ch==='ig') return ' <span style="font-size:11px;color:var(--accent);font-weight:400">📷 Instagram</span>';
+    return '';
+  }
   function renderLeft(){
     const box=document.getElementById('cockpit-chats'); if(!box) return;
     let items=[];
@@ -3526,19 +3543,20 @@
       // поиск по всем стадиям: клиенты из чатов + из CRM, у кого ник/имя содержит запрос
       items=COCKPIT_CHATS.filter(c=>c.name&&c.name.toLowerCase().includes(ckSearch)).map(c=>{
         const d=findDealByName(c.name);
-        return {name:c.name,sub:(d?d.status:(c.status||'новый'))+(c.time?(' · '+c.time):''),chatId:c.id,ts:c.ts||0,unread:!!c.unread,account:c.account||''};
+        return {name:c.name,sub:(d?d.status:(c.status||'новый'))+(c.time?(' · '+c.time):''),chatId:c.id,ts:c.ts||0,unread:!!c.unread,channel:c.channel||'ig'};
       });
       CRM.deals.forEach(d=>{ const cl=getClient(d.client_id);
         if(cl.name&&cl.name.toLowerCase().includes(ckSearch)&&!items.some(it=>it.name&&it.name.toLowerCase()===cl.name.toLowerCase()))
           items.push({name:cl.name,sub:d.status,chatId:null,ts:0,unread:false});
       });
     } else if(ckView==='Новая заявка'){
-      items=COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка'); }).map(c=>({name:c.name,sub:(c.time||'')+' · '+(c.status||'новый'),chatId:c.id,ts:c.ts||0,unread:!!c.unread,account:c.account||''}));
+      items=COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка'); }).map(c=>({name:c.name,sub:(c.time||'')+' · '+(c.status||'новый'),chatId:c.id,ts:c.ts||0,unread:!!c.unread,channel:c.channel||'ig'}));
     } else {
-      items=CRM.deals.filter(d=>d.status===ckView).map(d=>{ const cl=getClient(d.client_id); const chat=COCKPIT_CHATS.find(x=>x.name&&cl.name&&x.name.toLowerCase()===cl.name.toLowerCase()); return {name:cl.name||'Без имени',sub:fmt(dealAmount(d)),chatId:chat?chat.id:null,ts:chat?(chat.ts||0):0,unread:chat?!!chat.unread:false,account:chat?chat.account:''}; });
+      items=CRM.deals.filter(d=>d.status===ckView).map(d=>{ const cl=getClient(d.client_id); const chat=COCKPIT_CHATS.find(x=>x.name&&cl.name&&x.name.toLowerCase()===cl.name.toLowerCase()); return {name:cl.name||'Без имени',sub:fmt(dealAmount(d)),chatId:chat?chat.id:null,ts:chat?(chat.ts||0):0,unread:chat?!!chat.unread:false,channel:chat?(chat.channel||'ig'):''}; });
     }
-    // свежие — наверх; ждущие ответа (синяя точка) — ещё выше
-    items.sort((a,b)=>(b.unread-a.unread)||(b.ts-a.ts));
+    // кто последним написал — всегда сверху (по времени последнего сообщения);
+    // кто не писал (ts=0) — уходит вниз; синяя точка «ждёт ответа» — лишь тай-брейк при равном времени
+    items.sort((a,b)=>(b.ts-a.ts)||(b.unread-a.unread));
     const CAP=300; let moreCount=0;          // не рисуем тысячи строк сразу (после импорта из amoCRM)
     if(items.length>CAP){ moreCount=items.length-CAP; items=items.slice(0,CAP); }
     if(!items.length){
@@ -3551,7 +3569,7 @@
       }
       return;
     }
-    box.innerHTML=items.map((it,i)=>'<div class="chatitem'+(it.chatId&&it.chatId===ckCurId?' active':'')+'" draggable="true" data-i="'+i+'"><div class="ci-name">'+(it.unread?'<span title="Клиент написал — без ответа" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2f80ed;margin-right:6px;vertical-align:middle"></span>':'')+esc(it.name)+(it.account?' <span style="font-size:11px;color:var(--accent);font-weight:400">📷 '+esc(it.account)+'</span>':'')+'</div><div class="ci-last">'+esc(it.sub)+'</div></div>').join('');
+    box.innerHTML=items.map((it,i)=>'<div class="chatitem'+(it.chatId&&it.chatId===ckCurId?' active':'')+'" draggable="true" data-i="'+i+'"><div class="ci-name">'+(it.unread?'<span title="Клиент написал — без ответа" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2f80ed;margin-right:6px;vertical-align:middle"></span>':'')+esc(it.name)+chanBadge(it.channel)+'</div><div class="ci-last">'+esc(it.sub)+'</div></div>').join('');
     if(moreCount){ box.innerHTML+='<div style="padding:12px;color:var(--muted);font-size:12px;text-align:center">…и ещё '+moreCount+'. Воспользуйся поиском, чтобы найти нужного клиента.</div>'; }
     box.querySelectorAll('.chatitem').forEach(el=>{ const it=items[+el.dataset.i];
       el.addEventListener('click',()=>openItem(it));
@@ -4157,7 +4175,8 @@
     if(box){ box.insertAdjacentHTML('beforeend','<div class="bubble out" id="'+bid+'">🎤 голосовое <span style="opacity:.6;font-size:11px">⏳ отправка…</span></div>'); box.scrollTop=box.scrollHeight; }
     try{
       const b64=await fileToB64(file);
-      const r=await apiFetch('/api/ig/media',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:chat.account_id,customer_id:chat.customer_id,type:'audio',mime:'audio/mpeg',filename:'voice.mp3',data_b64:b64})},ONEC_BASE);
+      const mbase=(scope==='ck')?ckBase():'/api/ig';
+      const r=await apiFetch(mbase+'/media',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:chat.account_id,customer_id:chat.customer_id,type:'audio',mime:'audio/mpeg',filename:'voice.mp3',data_b64:b64})},ONEC_BASE);
       const d=await r.json(); const b=document.getElementById(bid);
       if(d.ok){ if(b) b.innerHTML='🎤 голосовое <span style="opacity:.7;font-size:11px">✓ отправлено</span>'; if(box) box.dataset.sig=''; if(scope==='ck'){ loadConvoMsgs(ckCurId,true); } else { igLoadThread(false); } }
       else { if(b){ b.innerHTML='🎤 голосовое <span style="opacity:.7;font-size:11px">⚠️ не доставлено</span>'; b.style.background='var(--red)'; }
@@ -4180,11 +4199,11 @@
   }
   function ckHead(){
     const head=document.getElementById('ck-head'); if(!head) return; const deal=findDealByName(ckCurName);
-    const curChat=COCKPIT_CHATS.find(x=>x.id===ckCurId); const acc=curChat?curChat.account:'';
+    const curChat=COCKPIT_CHATS.find(x=>x.id===ckCurId); const acc=curChat?curChat.account:''; const isWa=curChat&&curChat.channel==='wa';
     head.innerHTML='<span style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
         '<span style="cursor:pointer" onclick="openDealForClient()" title="Открыть карточку заказа">📋 <b>'+esc(ckCurName||'—')+'</b>'+(deal?' · <span style="color:var(--muted)">'+esc(deal.status)+'</span>':'')+'</span>'+
-        (acc?'<span style="font-size:12px;color:var(--accent)">📷 пишет на @'+esc(acc)+'</span>':'')+
-        igBtnHTML(ckCurName)+
+        (acc?'<span style="font-size:12px;color:'+(isWa?'#25d366':'var(--accent)')+'">'+(isWa?'🟢 WhatsApp':'📷')+' пишет на '+(isWa?esc(acc):'@'+esc(acc))+'</span>':'')+
+        (isWa?'':igBtnHTML(ckCurName))+
       '</span>'+
       (ckCurName?'<span style="display:flex;align-items:center;gap:5px;font-size:13px">💰 <input type="number" value="'+(deal?Math.round(dealAmount(deal)):0)+'" placeholder="сумма счёта" style="width:120px;padding:5px 8px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text)" onchange="setAmount(this.value)"> сом</span>':'');
   }
@@ -4228,14 +4247,16 @@
     return h;
   }
   function bubbleHTML(m){ return '<div class="bubble '+m.t+'">'+linkify(m.x)+attHTML(m.att)+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>'; }
+  // база API диалога по каналу чата: WhatsApp → /api/wa, иначе Instagram → /api/ig
+  function ckBase(id){ const c=COCKPIT_CHATS.find(x=>x.id===(id||ckCurId)); return (c&&c.channel==='wa')?'/api/wa':'/api/ig'; }
   async function loadConvoMsgs(id, silent){
     const box=document.getElementById('ck-msgs'); if(!box||!id) return;
     const upd=document.getElementById('ck-upd');
     if(!silent) box.innerHTML='<div style="color:var(--muted);padding:10px">Загрузка…</div>';
     try{
-      // id = "аккаунт|клиент" → берём переписку из Instagram напрямую
+      // id = "аккаунт|клиент" → берём переписку из нужного канала (Instagram или WhatsApp)
       const parts=String(id).split('|'); const acc=parts[0]||'', cust=parts[1]||'';
-      const r=await apiFetch('/api/ig/thread?account='+encodeURIComponent(acc)+'&customer='+encodeURIComponent(cust)+'&_='+Date.now(),{},ONEC_BASE); const d=await r.json();
+      const r=await apiFetch(ckBase(id)+'/thread?account='+encodeURIComponent(acc)+'&customer='+encodeURIComponent(cust)+'&_='+Date.now(),{},ONEC_BASE); const d=await r.json();
       if(id!==ckCurId) return;                         // успели переключить чат
       const msgs=d.msgs||[];
       const last=msgs.length?msgs[msgs.length-1]:null;
@@ -4320,7 +4341,7 @@
     const pp=String(ckCurId).split('|'); const accId=pp[0]||'', custId=pp[1]||'';
     for(let i=1;i<=3 && !ok;i++){
       try{
-        const r=await apiFetch('/api/ig/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:accId,customer_id:custId,text:t})},ONEC_BASE);
+        const r=await apiFetch(ckBase()+'/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:accId,customer_id:custId,text:t})},ONEC_BASE);
         const res=await r.json(); ok=!!(res&&res.ok); if(!ok&&res&&res.error){ errMsg=res.error; break; }
       }catch(e){ await new Promise(res=>setTimeout(res,2000)); }   // сервер просыпается — повтор
     }
@@ -4497,7 +4518,7 @@
         '<div id="myday-salary"></div>';
       renderMoney(); loadMyPayroll(); return;
     }
-    const PAID=['Оплачено','Отгружено','Закрыто'];
+    const PAID=['Готов к отправке','В пути','Клиент получил товар'];
     const dep=USER.department||''; const plan=+USER.plan_day||0; const owner=isOwner();
     const ds=new Date(); ds.setHours(0,0,0,0); const dsT=ds.getTime();
     const paidDeals=CRM.deals.filter(d=>PAID.indexOf(d.status)>=0);
@@ -4509,7 +4530,7 @@
     const pct=plan>0?Math.min(100,Math.round(doneSum/plan*100)):0;
     const left=Math.max(0,plan-doneSum);
     // активные заявки в работе
-    const active=CRM.deals.filter(d=>['Закрыто','Отказ'].indexOf(d.status)<0 && pick(d));
+    const active=CRM.deals.filter(d=>d.status!=='Клиент получил товар' && pick(d));
     const myTasks=CRM.tasks.filter(t=>!t.done);
     const who=dep?('Отдел: <b>'+esc(dep)+'</b>'):(owner?'<b>Владелец</b> — общая картина':'Личные продажи');
     const planBlock=plan>0?
@@ -4755,7 +4776,7 @@
   }
 
   function crmSummaryForAi(){
-    const PAID=['Оплачено','Отгружено','Закрыто'];
+    const PAID=['Готов к отправке','В пути','Клиент получил товар'];
     const byStage={}; (CRM_STATUSES||[]).forEach(s=>byStage[s]=0);
     CRM.deals.forEach(d=>{ byStage[d.status]=(byStage[d.status]||0)+1; });
     const paid=CRM.deals.filter(d=>PAID.indexOf(d.status)>=0);
@@ -4820,7 +4841,7 @@
   }
   function taskDone(id){ const t=(CRM.tasks||[]).find(x=>x.id===id); if(t){ t.done=true; crmPersist(); renderTasks(); } }
   function renderClients(){
-    const PAID=['Оплачено','Отгружено','Закрыто'];
+    const PAID=['Готов к отправке','В пути','Клиент получил товар'];
     const clients=CRM.clients||[]; const deals=CRM.deals||[];
     const paid=deals.filter(d=>PAID.indexOf(d.status)>=0);
     // постоянные — клиенты с 2+ оплаченными сделками
@@ -4847,14 +4868,14 @@
     renderMoney();
   }
   function renderClientsBest(){
-    const PAID=['Оплачено','Отгружено','Закрыто'];
+    const PAID=['Готов к отправке','В пути','Клиент получил товар'];
     const start=new Date(); start.setHours(0,0,0,0); const s=start.getTime();
     const today=(CRM.deals||[]).filter(d=>PAID.indexOf(d.status)>=0 && d.paid_at && new Date(d.paid_at).getTime()>=s);
     const by={};
     today.forEach(d=>{ const cl=getClient(d.client_id); const nm=(cl&&cl.name)||'Без имени'; if(!by[nm]) by[nm]={sum:0,cnt:0}; by[nm].sum+=dealAmount(d); by[nm].cnt++; });
     const rows=Object.keys(by).map(nm=>({name:nm,sum:by[nm].sum,cnt:by[nm].cnt})).sort((a,b)=>b.sum-a.sum);
     const box=document.getElementById('clients-best'); if(!box) return;
-    if(!rows.length){ box.innerHTML='<div style="color:var(--muted);font-size:13px">Сегодня оплат ещё не было. Как только клиент оплатит (стадия «Оплачено» в CRM) — он появится здесь, с самым большим чеком вверху.</div>'; return; }
+    if(!rows.length){ box.innerHTML='<div style="color:var(--muted);font-size:13px">Сегодня оплат ещё не было. Как только клиент оплатит (стадия «Готов к отправке» в CRM) — он появится здесь, с самым большим чеком вверху.</div>'; return; }
     box.innerHTML='<table><thead><tr><th>Клиент</th><th>Чек за сегодня</th><th>Покупок сегодня</th></tr></thead><tbody>'+
       rows.map((r,i)=>'<tr><td>'+(i===0?'🥇 ':i===1?'🥈 ':i===2?'🥉 ':'')+esc(r.name)+'</td><td><b><span class="money" data-som="'+r.sum+'">'+fmt(r.sum)+'</span></b></td><td>'+r.cnt+'</td></tr>').join('')+
       '</tbody></table>';
@@ -5745,7 +5766,7 @@
     if(!dragChat) return; const nm=dragChat.name; dragChat=null;
     const d=ensureDeal(nm,status);
     if(status==='Отказ'){ pendingReject=d.id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; }
-    d.status=status; d.manual=true; if(status==='Оплачено'&&!d.paid_at) d.paid_at=new Date().toISOString();
+    d.status=status; d.manual=true; if(status==='Готов к отправке'&&!d.paid_at) d.paid_at=new Date().toISOString();
     logActivity(d.client_id,d.id,'смена статуса','Статус → '+status+' (перетащено)');
     crmPersist(); renderFunnel(); renderCrmStats(); renderCrmDash(); renderLeft(); if(ckCurName&&ckCurName.toLowerCase()===nm.toLowerCase()) ckHead();
   }
@@ -5796,7 +5817,7 @@
   }
   function updClient(f,v){ const d=getDeal(curDealId); const c=getClient(d.client_id); c[f]=v; c.last_contact_at=new Date().toISOString(); crmPersist(); }
   function updDeal(f,v){ const d=getDeal(curDealId); d[f]=v; crmPersist(); }
-  function updStatus(v){ const d=getDeal(curDealId); if(v==='Отказ'){ pendingReject=d.id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; } d.status=v; d.manual=true; if(v==='Оплачено'&&!d.paid_at) d.paid_at=new Date().toISOString(); logActivity(d.client_id,d.id,'смена статуса','Статус → '+v); crmPersist(); renderBoard&&renderBoard(); }
+  function updStatus(v){ const d=getDeal(curDealId); if(v==='Отказ'){ pendingReject=d.id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; } d.status=v; d.manual=true; if(v==='Готов к отправке'&&!d.paid_at) d.paid_at=new Date().toISOString(); logActivity(d.client_id,d.id,'смена статуса','Статус → '+v); crmPersist(); renderBoard&&renderBoard(); }
   let itemTimer=null;
   function searchItems(q){
     clearTimeout(itemTimer); const res=document.getElementById('di-res');
@@ -5820,11 +5841,11 @@
     if(!c.name){ box.innerHTML='<span style="color:var(--muted)">Сначала впишите имя клиента (как в Instagram)</span>'; return; }
     box.innerHTML='<span style="color:var(--muted)">Ищу переписку…</span>';
     try{
-      const r=await apiFetch('/api/ig/conversations',{},ONEC_BASE); const dd=await r.json();
-      const chat=(dd.conversations||[]).find(x=>x.customer&&x.customer.toLowerCase().indexOf(c.name.toLowerCase())>=0);
-      if(!chat){ box.innerHTML='<span style="color:var(--muted)">Переписка не найдена (имя в Instagram может отличаться)</span>'; return; }
-      const cid=chat.account_id+'|'+chat.customer_id;
-      const r2=await apiFetch('/api/ig/thread?account='+encodeURIComponent(chat.account_id)+'&customer='+encodeURIComponent(chat.customer_id),{},ONEC_BASE); const md=await r2.json();
+      // ищем в общем списке (Instagram + WhatsApp) и грузим тред из нужного канала
+      const chat=COCKPIT_CHATS.find(x=>x.name&&x.name.toLowerCase().indexOf(c.name.toLowerCase())>=0);
+      if(!chat){ box.innerHTML='<span style="color:var(--muted)">Переписка не найдена (имя в Instagram/WhatsApp может отличаться)</span>'; return; }
+      const cid=chat.id;
+      const r2=await apiFetch(ckBase(cid)+'/thread?account='+encodeURIComponent(chat.account_id)+'&customer='+encodeURIComponent(chat.customer_id),{},ONEC_BASE); const md=await r2.json();
       const msgs=(md.msgs||[]).map(m=>'<div class="bubble '+m.t+'" style="max-width:90%">'+linkify(m.x)+attHTML(m.att)+'</div>').join('');
       box.innerHTML='<div class="msgs" style="max-height:220px;background:var(--bg);border-radius:10px;padding:10px;margin-bottom:8px">'+(msgs||'<span style="color:var(--muted)">Нет сообщений</span>')+'</div>'+
         '<div style="display:flex;gap:8px"><input id="dl-reply" placeholder="Ответить клиенту…" style="flex:1"><button class="btn ghost" onclick="openTpl(\'dl-reply\')" title="Шаблоны ответов">📋</button><button class="btn" onclick="dealReply(\''+cid+'\')">→</button></div>';
@@ -5836,7 +5857,7 @@
     const d=getDeal(curDealId);
     let ok=false, errMsg='';
     const pp=String(chatId).split('|'); const accId=pp[0]||'', custId=pp[1]||'';
-    try{ const r=await apiFetch('/api/ig/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:accId,customer_id:custId,text:txt})},ONEC_BASE);
+    try{ const r=await apiFetch(ckBase(chatId)+'/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:accId,customer_id:custId,text:txt})},ONEC_BASE);
       const res=await r.json(); ok=!!(res&&res.ok); if(!ok&&res) errMsg=res.error||'';
     }catch(e){ errMsg='нет связи с сервером'; }
     if(ok){ logActivity(d.client_id,d.id,'сообщение','Ответ: '+txt); crmPersist(); setTimeout(loadDealChat,1300); }
