@@ -436,7 +436,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.87.0<br>Уведомления о новых сообщениях: звук + всплывающее окно + повтор напоминания, если не ответили</div>
+      Штурвал v3.88.0<br>Чат сделки синхронизируется живьём (ответы бота и новые сообщения подтягиваются сами, не застревает)</div>
   </aside>
 
   <!-- MAIN -->
@@ -4447,13 +4447,17 @@
       if(!silent) box.innerHTML='<div style="color:var(--muted);padding:10px">⏳ Сервер просыпается (до минуты). Новые сообщения появятся сами — подожди немного.</div>';
     }
   }
-  function startConvoAuto(){           // живое обновление открытого диалога
+  let _convoTick=0;
+  function startConvoAuto(){           // живое обновление открытого диалога и списка в кокпите
     if(convoAutoTimer) return;
     convoAutoTimer=setInterval(()=>{
-      const dt=document.getElementById('tab-deals');
-      if(!dt||dt.classList.contains('hide')||!ckCurId){ clearInterval(convoAutoTimer); convoAutoTimer=null; return; }
-      loadConvoMsgs(ckCurId, true);
-    }, 5000);
+      const box=document.getElementById('ck-msgs');
+      // кокпит сейчас не виден (другой раздел) — просто пропускаем тик, таймер НЕ убиваем
+      if(!box || (box.offsetWidth===0 && box.offsetHeight===0)) return;
+      _convoTick++;
+      if(ckCurId) loadConvoMsgs(ckCurId, true);                            // открытый чат — каждые 4с
+      if(_convoTick%4===0 && typeof fetchChats==='function') fetchChats(); // список диалогов — ~раз в 16с (новые всплывают)
+    }, 4000);
   }
   async function openConvo(c){
     ckCurId=c.id; ckCurName=c.name; renderLeft(); ckHead();
@@ -6081,6 +6085,7 @@
       prodAutoTimer=salesAutoTimer=dealsAutoTimer=convoAutoTimer=null;
     } else {
       if(typeof curTab!=='undefined' && curTab && typeof dispatchTab==='function') dispatchTab(curTab); // вернулись — обновить
+      if(typeof ckCurId!=='undefined' && ckCurId){ startConvoAuto(); loadConvoMsgs(ckCurId, true); } // оживить чат сделки
     }
   });
 </script>
