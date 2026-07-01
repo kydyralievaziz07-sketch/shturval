@@ -436,7 +436,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.88.0<br>Чат сделки синхронизируется живьём (ответы бота и новые сообщения подтягиваются сами, не застревает)</div>
+      Штурвал v3.89.0<br>Обучение бота: владелец задаёт указания, правки «Бот ошибся» реально доходят до бота (приоритет над базой знаний)</div>
   </aside>
 
   <!-- MAIN -->
@@ -3718,6 +3718,9 @@
         +'<div style="font-size:13px;font-weight:600;margin-bottom:6px">📋 Правила: как бот общается (роль, тон, воронка продаж)</div>'
         +'<textarea id="igbot-prompt" rows="8" style="'+SS+';resize:vertical;margin-bottom:6px">'+esc(_igbot.prompt||'')+'</textarea>'
         +'<div style="font-size:11px;color:var(--muted);margin-bottom:10px">✅ Грамотный кыргызский/русский и живой тон добавляются автоматически — их не нужно прописывать.</div>'
+        +'<div style="font-size:13px;font-weight:600;margin-bottom:6px">🧑‍🏫 Указания владельца — бот слушается их в ПЕРВУЮ очередь</div>'
+        +'<div style="font-size:11px;color:var(--muted);margin-bottom:6px">Пиши прямые приказы боту: «Отвечай так-то», «Всегда предлагай доставку», «Цену пиши в сомах». Сюда же автоматически падают твои правки из кнопки «⚠️ Бот ошибся». Это важнее базы знаний — бот выполнит строго.</div>'
+        +'<textarea id="igbot-teach" rows="6" style="'+SS+';resize:vertical;margin-bottom:10px" placeholder="Например: Здоровайся коротко. Если спрашивают цену — сразу называй в сомах и предлагай оформить доставку.">'+esc(_igbot.teach||'')+'</textarea>'
         +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">'
           +'<div><div style="font-size:12px;color:var(--muted);margin-bottom:4px">Модель</div><select id="igbot-model" style="'+SS+'">'
             +['claude-haiku-4-5-20251001','claude-sonnet-4-6','claude-opus-4-8'].map(m=>'<option value="'+m+'"'+(_igbot.model===m?' selected':'')+'>'+m+'</option>').join('')
@@ -3781,8 +3784,10 @@
   }
   async function saveIgBot(){
     const msg=document.getElementById('igbot-msg'), btn=document.getElementById('igbot-save');
+    const teachEl=document.getElementById('igbot-teach');
     const body={enabled:document.getElementById('igbot-en').checked,
       prompt:(document.getElementById('igbot-prompt').value||'').trim(),
+      teach:(teachEl?teachEl.value:(_igbot.teach||'')).trim(),
       model:document.getElementById('igbot-model').value,
       handoff_hours:Number(document.getElementById('igbot-hh').value)||6,
       wa_fallback:document.getElementById('igbot-wafb').checked,
@@ -4590,7 +4595,8 @@
       return;   // НЕ помечаем применёнными, раз не ушло
     }
     pend.forEach(f=>f.applied=true); botfixPersist(); renderBotList();
-    alert('🚀 Отправлено '+pend.length+' исправлений. Они попадут в базу знаний бота — он будет отвечать так, как ты указал.');
+    if(document.getElementById('igbot-body')&&document.getElementById('igbot-panel')&&document.getElementById('igbot-panel').style.display!=='none') loadIgBot();
+    alert('🚀 Применено '+pend.length+' исправлений. Они добавлены в «Указания владельца» — бот будет отвечать так, как ты указал (это важнее базы знаний, и авто-обучение их не сотрёт).');
   }
   // =================== МОЙ ДЕНЬ — личный кабинет сотрудника ===================
   function dealInDept(d){

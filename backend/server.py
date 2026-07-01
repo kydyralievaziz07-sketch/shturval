@@ -1606,7 +1606,7 @@ IGBOT_RU_RULES = (
 
 def _igbot_defaults():
     return {"enabled": False, "prompt": IGBOT_DEFAULT_PROMPT, "model": CFG.get("ANTHROPIC_MODEL"),
-            "handoff_hours": 6, "kb": "", "sources": [], "learn_every_days": 0,
+            "handoff_hours": 6, "kb": "", "teach": "", "sources": [], "learn_every_days": 0,
             "learn_last": 0, "learn_next": 0, "lang": "client",
             # WhatsApp: бот отвечает не сразу, а только если человек не ответил wa_fallback_min минут
             "wa_fallback": True, "wa_fallback_min": 60}
@@ -1617,6 +1617,7 @@ def _igbot_get():
             "model": s.get("model") or CFG.get("ANTHROPIC_MODEL"),
             "handoff_hours": int(s.get("handoff_hours") or 6),
             "kb": s.get("kb") or "",
+            "teach": s.get("teach") or "",
             "sources": s.get("sources") or [],
             "learn_every_days": int(s.get("learn_every_days") or 0),
             "learn_last": int(s.get("learn_last") or 0),
@@ -1627,7 +1628,7 @@ def _igbot_get():
 
 def _igbot_set(patch):
     cur = _igbot_get()
-    for k in ("enabled", "prompt", "model", "handoff_hours", "kb", "sources",
+    for k in ("enabled", "prompt", "model", "handoff_hours", "kb", "teach", "sources",
               "learn_every_days", "learn_last", "learn_next", "lang",
               "wa_fallback", "wa_fallback_min"):
         if k in patch:
@@ -1746,6 +1747,10 @@ def _igbot_generate(history, settings):
     if not merged or merged[-1]["role"] != "user":
         return None
     system = settings["prompt"] + (IGBOT_RU_RULES if settings.get("lang") == "ru" else IGBOT_LANG_RULES)
+    if settings.get("teach"):
+        system += ("\n\n=== ГЛАВНЫЕ УКАЗАНИЯ ВЛАДЕЛЬЦА (это приказы — выполняй в ПЕРВУЮ очередь, они важнее "
+                   "базы знаний и всего остального; если тут сказано отвечать определённым образом — отвечай "
+                   "именно так) ===\n" + settings["teach"])
     if settings.get("kb"):
         system += ("\n\n=== ЗНАНИЯ ИЗ ПРОШЛЫХ ПЕРЕПИСОК (реальные товары, цены, ответы, политика — "
                    "опирайся на них; если тут есть цена/факт — отвечай уверенно) ===\n" + settings["kb"])
@@ -5035,7 +5040,34 @@ class Handler(BaseHTTPRequestHandler):
                         fh.write(json.dumps(f, ensure_ascii=False) + "\n")
             except Exception:
                 pass
-            return self._send(200, {"ok": True, "saved": len(fixes), "total": len(BOT_FEEDBACK)})
+            # ГЛАВНОЕ: складываем правки в «указания владельца» — бот будет реально им следовать
+            # (хранится отдельно от авто-базы знаний, поэтому авто-обучение их не сотрёт).
+            added = 0
+            try:
+                blocks = []
+                for f in fixes:
+                    w = (f.get("wrong") or "").strip()
+                    rgt = (f.get("right") or "").strip()
+                    note = (f.get("note") or "").strip()
+                    if not rgt:
+                        continue
+                    b = ""
+                    if w:
+                        b += "❌ Так бот отвечал НЕВЕРНО: " + w + "\n"
+                    b += "✅ Отвечай так: " + rgt + "\n"
+                    if note:
+                        b += "📝 " + note + "\n"
+                    blocks.append(b)
+                if blocks:
+                    s = _igbot_get()
+                    teach = ((s.get("teach") or "") + "\n" + "\n".join(blocks)).strip()
+                    if len(teach) > 15000:
+                        teach = teach[-15000:]
+                    _igbot_set({"teach": teach})
+                    added = len(blocks)
+            except Exception as e:
+                _igbot_log_error("Обучение (правки владельца)", str(e))
+            return self._send(200, {"ok": True, "saved": len(fixes), "applied": added, "total": len(BOT_FEEDBACK)})
         if self.path.startswith("/api/assistant"):
             try:
                 length = int(self.headers.get("Content-Length", 0))
