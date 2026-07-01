@@ -436,7 +436,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.89.0<br>Обучение бота: владелец задаёт указания, правки «Бот ошибся» реально доходят до бота (приоритет над базой знаний)</div>
+      Штурвал v3.90.0<br>Дубли клиентов слиты: один клиент — одна карточка/сделка (anar.baev и т.п. больше не повторяются)</div>
   </aside>
 
   <!-- MAIN -->
@@ -3279,9 +3279,40 @@
     CRM.tasks=(CRM.tasks||[]).filter(t=>!t.deal_id||okD.has(t.deal_id));
     return before!==(CRM.deals.length + CRM.clients.length);
   }
+  // разовое слияние дублей: один клиент с одним именем = одна карточка и одна сделка
+  // (в приложении у клиента одна сделка; дубли раньше плодились из-за устаревшего индекса)
+  function dedupeClients(){
+    const byName=new Map(), remap=new Map(), keepC=[];
+    (CRM.clients||[]).forEach(c=>{
+      const k=(c.name||'').trim().toLowerCase();
+      if(!k){ keepC.push(c); return; }
+      const first=byName.get(k);
+      if(first){ remap.set(c.id, first.id); if(!first.phone&&c.phone) first.phone=c.phone; }
+      else { byName.set(k,c); keepC.push(c); }
+    });
+    (CRM.deals||[]).forEach(d=>{ if(remap.has(d.client_id)) d.client_id=remap.get(d.client_id); });
+    (CRM.activity||[]).forEach(a=>{ if(a.client_id&&remap.has(a.client_id)) a.client_id=remap.get(a.client_id); });
+    // одна сделка на клиента: оставляем «лучшую» (ручная / с суммой / позже созданная), пустые авто-дубли убираем
+    const best=new Map();
+    const score=d=>(d.manual?100:0)+(((+d.amount>0)||(d.items&&d.items.length))?10:0);
+    (CRM.deals||[]).forEach(d=>{
+      const cur=best.get(d.client_id);
+      if(!cur){ best.set(d.client_id,d); return; }
+      if(score(d)>score(cur) || (score(d)===score(cur) && (d.created_at||'')>(cur.created_at||''))) best.set(d.client_id,d);
+    });
+    const keepD=[...best.values()];
+    const changed=(keepC.length!==(CRM.clients||[]).length)||(keepD.length!==(CRM.deals||[]).length);
+    if(changed){
+      CRM.clients=keepC;
+      const keepIds=new Set(keepD.map(d=>d.id));
+      CRM.tasks=(CRM.tasks||[]).filter(t=>!t.deal_id||keepIds.has(t.deal_id));
+      CRM.deals=keepD;
+    }
+    return changed;
+  }
   let CRM={clients:[],deals:[],tasks:[],activity:[]};
   try{ const s=JSON.parse(localStorage.getItem('shturval_crm')); if(s) CRM=Object.assign(CRM,s); }catch(e){}
-  migrateStatuses(); purgeImported();
+  migrateStatuses(); purgeImported(); dedupeClients();
   // индексы для быстрого поиска (иначе перебор по тысячам сделок тормозит после импорта)
   let _cById=new Map(), _cByName=new Map(), _dById=new Map(), _dByClient=new Map();
   function rebuildCrmIndex(){
@@ -3314,7 +3345,7 @@
       const localHas=(CRM.deals&&CRM.deals.length)||(CRM.clients&&CRM.clients.length);
       if(cloudHas){
         CRM={clients:cloud.clients||[],deals:cloud.deals||[],tasks:cloud.tasks||[],activity:cloud.activity||[]};
-        let _chg=migrateStatuses(); if(purgeImported()) _chg=true; if(_chg) crmPersist();   // стадии + чистка импорта amoCRM
+        let _chg=migrateStatuses(); if(purgeImported()) _chg=true; if(dedupeClients()) _chg=true; if(_chg) crmPersist();   // стадии + чистка импорта + слияние дублей
         rebuildCrmIndex();
         try{ localStorage.setItem('shturval_crm',JSON.stringify(CRM)); }catch(_){}
         _crmCloudReady=true;
@@ -3651,6 +3682,16 @@
     } else {
       items=CRM.deals.filter(d=>d.status===ckView).map(d=>{ const cl=getClient(d.client_id); const chat=COCKPIT_CHATS.find(x=>x.name&&cl.name&&x.name.toLowerCase()===cl.name.toLowerCase()); return {name:cl.name||'Без имени',sub:fmt(dealAmount(d)),chatId:chat?chat.id:null,ts:chat?(chat.ts||0):0,unread:chat?!!chat.unread:false,channel:chat?(chat.channel||'ig'):''}; });
     }
+    // один клиент — одна строка (страховка от дублей): оставляем самый «полезный» вариант
+    (function(){ const by=new Map();
+      items.forEach(it=>{ const k=(it.name||'').trim().toLowerCase(); if(!k){ by.set(Symbol(),it); return; }
+        const cur=by.get(k);
+        if(!cur){ by.set(k,it); return; }
+        const sc=x=>(x.chatId?2:0)+(x.unread?1:0)+((x.ts||0)/1e13);   // с чатом > непрочитанный > свежее
+        if(sc(it)>sc(cur)) by.set(k,it);
+      });
+      items=[...by.values()];
+    })();
     // кто последним написал — всегда сверху (по времени последнего сообщения);
     // кто не писал (ts=0) — уходит вниз; синяя точка «ждёт ответа» — лишь тай-брейк при равном времени
     items.sort((a,b)=>(b.ts-a.ts)||(b.unread-a.unread));
@@ -3679,8 +3720,8 @@
   }
   function findClient(name){ return name?(_cByName.get(name.toLowerCase())||null):null; }
   function findDealByName(name){ const c=findClient(name); return c?(_dByClient.get(c.id)||null):null; }
-  function ensureClient(name){ let c=findClient(name); if(!c){ c={id:uid(),name:name,phone:'',source:'instagram',created_at:new Date().toISOString()}; CRM.clients.push(c); } return c; }
-  function ensureDeal(name,status){ const c=ensureClient(name); let d=CRM.deals.find(x=>x.client_id===c.id); if(!d){ d={id:uid(),client_id:c.id,status:status||'Новая заявка',items:[],owner:(USER.name||''),created_at:new Date().toISOString(),comment:''}; CRM.deals.push(d); logActivity(c.id,d.id,'системное','Заказ создан из чата'); } return d; }
+  function ensureClient(name){ let c=findClient(name); if(!c){ c={id:uid(),name:name,phone:'',source:'instagram',created_at:new Date().toISOString()}; CRM.clients.push(c); _cById.set(c.id,c); if(name) _cByName.set(name.toLowerCase(),c); } return c; }
+  function ensureDeal(name,status){ const c=ensureClient(name); let d=CRM.deals.find(x=>x.client_id===c.id); if(!d){ d={id:uid(),client_id:c.id,status:status||'Новая заявка',items:[],owner:(USER.name||''),created_at:new Date().toISOString(),comment:''}; CRM.deals.push(d); _dById.set(d.id,d); if(!_dByClient.has(c.id)) _dByClient.set(c.id,d); logActivity(c.id,d.id,'системное','Заказ создан из чата'); } return d; }
   // достаём ник Instagram из имени клиента ("@stimul218" → "stimul218"); для имён с пробелами/кириллицей — пусто
   function igHandle(name){
     let s=(name||'').trim();
