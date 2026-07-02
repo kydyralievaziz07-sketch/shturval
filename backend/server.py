@@ -4434,7 +4434,7 @@ def ads_campaigns():
     if not ads_on():
         return {"campaigns": [], "configured": False}
     d = _ads_req("GET", _act() + "/campaigns",
-                 {"fields": "name,status,objective,daily_budget,created_time", "limit": 50})
+                 {"fields": "name,status,effective_status,objective,daily_budget,created_time", "limit": 50})
     ins = {}
     try:
         di = _ads_req("GET", _act() + "/insights",
@@ -4442,6 +4442,34 @@ def ads_campaigns():
                        "date_preset": "maximum", "limit": 200})
         for r in (di.get("data") or []):
             ins[r.get("campaign_id")] = r
+    except Exception:
+        pass
+    # Расход за СЕГОДНЯ по кампаниям — реальный признак «крутится сейчас»
+    # (поле status у кампании остаётся ACTIVE, даже когда группы объявлений на паузе).
+    today = {}
+    try:
+        dt = _ads_req("GET", _act() + "/insights",
+                      {"level": "campaign", "fields": "campaign_id,spend",
+                       "date_preset": "today", "limit": 200})
+        for r in (dt.get("data") or []):
+            today[r.get("campaign_id")] = _num(r.get("spend", 0))
+    except Exception:
+        pass
+    # Активно откручивающиеся группы объявлений: даёт (а) какие кампании реально
+    # доставляются и (б) бюджет с уровня групп, если на кампании он нулевой (CBO выкл.).
+    live_camps = set()
+    adset_budget = {}
+    try:
+        asd = _ads_req("GET", _act() + "/adsets",
+                       {"fields": "campaign_id,daily_budget,effective_status",
+                        "filtering": json.dumps([{"field": "effective_status", "operator": "IN",
+                                                  "value": ["ACTIVE"]}]),
+                        "limit": 200})
+        for a in (asd.get("data") or []):
+            cid = a.get("campaign_id")
+            if cid:
+                live_camps.add(cid)
+                adset_budget[cid] = adset_budget.get(cid, 0) + _num(a.get("daily_budget", 0))
     except Exception:
         pass
     def _action(i, *types):
@@ -4453,15 +4481,26 @@ def ads_campaigns():
         return tot
     out = []
     for c in (d.get("data") or []):
-        i = ins.get(c.get("id"), {})
-        out.append({"id": c.get("id"), "name": c.get("name"), "status": c.get("status"),
+        cid = c.get("id")
+        i = ins.get(cid, {})
+        eff = c.get("effective_status") or c.get("status")
+        sp_today = today.get(cid, 0)
+        cbudget = _num(c.get("daily_budget", 0))
+        budget = cbudget if cbudget > 0 else adset_budget.get(cid, 0)
+        # «Крутится» = кампания включена И есть активная группа И/или сегодня был расход.
+        delivering = (eff == "ACTIVE") and (cid in live_camps or sp_today > 0)
+        out.append({"id": cid, "name": c.get("name"), "status": c.get("status"),
+                    "effective_status": eff, "delivering": delivering,
                     "objective": c.get("objective"),
-                    "budget": round(_num(c.get("daily_budget", 0)) / ADS_CUR_MULT),
+                    "budget": round(budget / ADS_CUR_MULT),
+                    "spend_today": round(sp_today, 2),
                     "spend": round(_num(i.get("spend", 0))), "reach": int(_num(i.get("reach", 0))),
                     "impressions": int(_num(i.get("impressions", 0))),
                     "clicks": int(_num(i.get("clicks", 0))),
                     "conversations": _action(i, "onsite_conversion.messaging_conversation_started_7d",
                                              "onsite_conversion.total_messaging_connection")})
+    # Сначала реально работающие, затем включённые, затем пауза; внутри — по расходу за сегодня.
+    out.sort(key=lambda x: (x["delivering"], x["status"] == "ACTIVE", x["spend_today"]), reverse=True)
     return {"campaigns": out, "configured": True}
 
 def ads_set_status(cid, active):

@@ -436,7 +436,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.93.0<br>Надёжность CRM: сделки не теряются при слиянии клиентов, сообщения не пропадают при сбое базы, нет дублей WhatsApp, комментарий в карточке заказа</div>
+      Штурвал v3.94.0<br>Видно, кто обработал клиента: при ответе или переносе сделки фиксируется сотрудник (метка «✅ обработал: Имя» в карточке и списке воронки)</div>
   </aside>
 
   <!-- MAIN -->
@@ -3472,6 +3472,14 @@
     return open.some(t=>t.due_at && new Date(t.due_at).getTime()<Date.now())?'overdue':'ok';
   }
   function logActivity(cid,did,type,text){ CRM.activity.unshift({id:uid(),client_id:cid,deal_id:did,type:type,text:text,created_at:new Date().toISOString()}); }
+  // «Кто обработал клиента»: фиксируем сотрудника, который ответил клиенту или взял сделку в работу.
+  // handled_by = последний обработавший (имя), handled_at = когда. Запись в историю — только при первом взятии.
+  function markHandled(d){
+    if(!d) return; const who=(USER.name||'').trim(); if(!who) return;
+    const first=!d.handled_by;
+    d.handled_by=who; d.handled_at=new Date().toISOString();
+    if(first) logActivity(d.client_id,d.id,'обработка','Клиента взял в работу: '+who);
+  }
   function fmtDT(s){ if(!s) return ''; const d=new Date(s); return isNaN(d)?esc(s):d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }
 
   // === ЕДИНЫЙ ЭКРАН: воронка сверху + чаты слева + диалог справа ===
@@ -3808,7 +3816,10 @@
       }
       return;
     }
-    box.innerHTML=items.map((it,i)=>'<div class="chatitem'+(it.chatId&&it.chatId===ckCurId?' active':'')+'" draggable="true" data-i="'+i+'"><div class="ci-name">'+(it.unread?'<span title="Клиент написал — без ответа" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2f80ed;margin-right:6px;vertical-align:middle"></span>':'')+esc(it.name)+chanBadge(it.channel)+'</div><div class="ci-last">'+esc(it.sub)+'</div></div>').join('');
+    box.innerHTML=items.map((it,i)=>{
+      const hd=findDealByName(it.name); const hb=(hd&&hd.handled_by)?'<div class="ci-last" style="color:#4a9d5b;font-size:11px">✅ обработал: '+esc(hd.handled_by)+'</div>':'';
+      return '<div class="chatitem'+(it.chatId&&it.chatId===ckCurId?' active':'')+'" draggable="true" data-i="'+i+'"><div class="ci-name">'+(it.unread?'<span title="Клиент написал — без ответа" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2f80ed;margin-right:6px;vertical-align:middle"></span>':'')+esc(it.name)+chanBadge(it.channel)+'</div><div class="ci-last">'+esc(it.sub)+'</div>'+hb+'</div>';
+    }).join('');
     if(moreCount){ box.innerHTML+='<div style="padding:12px;color:var(--muted);font-size:12px;text-align:center">…и ещё '+moreCount+'. Воспользуйся поиском, чтобы найти нужного клиента.</div>'; }
     box.querySelectorAll('.chatitem').forEach(el=>{ const it=items[+el.dataset.i];
       el.addEventListener('click',()=>openItem(it));
@@ -4687,7 +4698,7 @@
     }
     const b=document.getElementById(bid);
     if(b){ const st2=document.getElementById(bid+'-st'); const html=hm+' '+(ok?'✓ отправлено':'⚠️ не доставлено'); if(st2){ st2.innerHTML=html; } else { b.innerHTML=esc(t)+'<span style="display:block;font-size:10px;opacity:.6;margin-top:2px">'+html+'</span>'; } if(!ok) b.style.background='var(--red)'; }
-    if(ok){ const c=COCKPIT_CHATS.find(x=>x.id===idAtSend); if(c) c.unread=false; renderLeft(); if(idAtSend===ckCurId) setTimeout(function(){ loadConvoMsgs(ckCurId, true); },1500); }
+    if(ok){ if(dl){ markHandled(dl); crmPersist(); } const c=COCKPIT_CHATS.find(x=>x.id===idAtSend); if(c) c.unread=false; renderLeft(); if(idAtSend===ckCurId) setTimeout(function(){ loadConvoMsgs(ckCurId, true); },1500); }
     else { const inp=document.getElementById('ck-reply'); if(inp&&!inp.value.trim()) inp.value=t;
       if(box) box.insertAdjacentHTML('beforeend','<div style="font-size:12px;color:#ffb84d;padding:4px 8px 10px">⚠️ '+esc(sendErrText(errMsg))+'</div>'); box.scrollTop=box.scrollHeight; }
   }
@@ -6204,13 +6215,14 @@
     if(status==='Отказ'){ pendingReject=d.id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; }
     d.status=status; d.manual=true; if(status==='Готов к отправке'&&!d.paid_at) d.paid_at=new Date().toISOString();
     logActivity(d.client_id,d.id,'смена статуса','Статус → '+status+' (перетащено)');
+    if(status!=='Новая заявка') markHandled(d);
     crmPersist(); renderFunnel(); renderCrmStats(); renderCrmDash(); renderLeft(); if(ckCurName&&ckCurName.toLowerCase()===nm.toLowerCase()) ckHead();
   }
   let pendingReject=null;
   function moveDeal(id,st){
     const d=getDeal(id); if(!d||d.status===st) return;
     if(st==='Отказ'){ pendingReject=id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; }
-    d.status=st; d.manual=true; logActivity(d.client_id,d.id,'смена статуса','Статус → '+st); crmPersist(); renderBoard();
+    d.status=st; d.manual=true; if(st!=='Новая заявка') markHandled(d); logActivity(d.client_id,d.id,'смена статуса','Статус → '+st); crmPersist(); renderBoard();
   }
   function confirmReject(){
     const d=getDeal(pendingReject); if(!d) return;
@@ -6240,6 +6252,7 @@
       '<div><label>Телефон</label><input value="'+esc(c.phone||'')+'" placeholder="+996…" oninput="updClient(\'phone\',this.value)"></div></div>'+
       '<div class="row"><div><label>Статус</label><select onchange="updStatus(this.value)">'+CRM_STATUSES.map(s=>'<option '+(s===d.status?'selected':'')+'>'+esc(s)+'</option>').join('')+'</select></div>'+
       '<div><label>Ответственный</label><input value="'+esc(d.owner||'')+'" oninput="updDeal(\'owner\',this.value)"></div></div>'+
+      (d.handled_by?'<div style="margin-top:10px;font-size:13px;color:#4a9d5b;background:rgba(74,157,91,.1);border:1px solid rgba(74,157,91,.3);border-radius:8px;padding:7px 10px">✅ Обработал клиента: <b>'+esc(d.handled_by)+'</b>'+(d.handled_at?' <span style="color:var(--muted);font-weight:400">· '+fmtDT(d.handled_at)+'</span>':'')+'</div>':'')+
       '<label style="margin-top:12px">📝 Комментарий</label><textarea placeholder="Заметки по заказу…" oninput="updDeal(\'comment\',this.value)" style="width:100%;min-height:56px;resize:vertical;box-sizing:border-box">'+esc(d.comment||'')+'</textarea>'+
       '<label style="margin-top:12px">Товары (из 1С) · сумма: <b><span class="money" data-som="'+dealAmount(d)+'">'+fmt(dealAmount(d))+'</span></b></label>'+itemsHtml+
       '<input id="di-search" placeholder="🔍 найти товар в 1С и добавить…" oninput="searchItems(this.value)" style="margin-top:8px">'+
@@ -6254,7 +6267,7 @@
   }
   function updClient(f,v){ const d=getDeal(curDealId); const c=getClient(d.client_id); c[f]=v; c.last_contact_at=new Date().toISOString(); crmPersist(); }
   function updDeal(f,v){ const d=getDeal(curDealId); d[f]=v; crmPersist(); }
-  function updStatus(v){ const d=getDeal(curDealId); if(v==='Отказ'){ pendingReject=d.id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; } d.status=v; d.manual=true; if(v==='Готов к отправке'&&!d.paid_at) d.paid_at=new Date().toISOString(); logActivity(d.client_id,d.id,'смена статуса','Статус → '+v); crmPersist(); renderBoard&&renderBoard(); }
+  function updStatus(v){ const d=getDeal(curDealId); if(v==='Отказ'){ pendingReject=d.id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; } d.status=v; d.manual=true; if(v!=='Новая заявка') markHandled(d); if(v==='Готов к отправке'&&!d.paid_at) d.paid_at=new Date().toISOString(); logActivity(d.client_id,d.id,'смена статуса','Статус → '+v); crmPersist(); renderDealModal&&renderDealModal(); renderBoard&&renderBoard(); }
   let itemTimer=null;
   function searchItems(q){
     clearTimeout(itemTimer); const res=document.getElementById('di-res');
