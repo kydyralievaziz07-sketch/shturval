@@ -436,7 +436,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.91.0<br>Кадры: выбор месяца — видно явку, авансы и премии за прошлые месяцы (архив только для чтения)</div>
+      Штурвал v3.92.0<br>В диалогах убраны крестики «✕» на сообщениях — переписку случайно не спрятать</div>
   </aside>
 
   <!-- MAIN -->
@@ -4134,7 +4134,7 @@
       if(box.dataset.sig===sig && !first) return;
       const atBottom=(box.scrollHeight-box.scrollTop-box.clientHeight)<70;
       box.dataset.sig=sig;
-      box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+(m.t==='out'?'out':'in')+'"><a href="#" title="Скрыть у себя (у клиента останется)" onclick="ckHideMsg(\''+ckMsgKey(waId,m)+'\');return false" style="float:right;margin-left:10px;color:var(--muted);text-decoration:none;font-size:12px;opacity:.6">✕</a>'+waBubbleBody(m)+((m.tm||m.t==='out')?'<span style="display:block;font-size:10px;margin-top:2px"><span style="opacity:.5">'+esc(m.tm||'')+'</span> '+waMsgTick(m)+'</span>':'')+'</div>').join(''):'<div style="padding:10px;color:var(--muted)">Нет сообщений</div>';
+      box.innerHTML=msgs.length?msgs.map(m=>'<div class="bubble '+(m.t==='out'?'out':'in')+'">'+waBubbleBody(m)+((m.tm||m.t==='out')?'<span style="display:block;font-size:10px;margin-top:2px"><span style="opacity:.5">'+esc(m.tm||'')+'</span> '+waMsgTick(m)+'</span>':'')+'</div>').join(''):'<div style="padding:10px;color:var(--muted)">Нет сообщений</div>';
       waMarkSeen(c);                                   // открытый диалог считаем прочитанным (локально)
       if(last && last.t==='in') waMarkReadServer();    // и шлём в WhatsApp «прочитано» (клиент видит синие галочки)
       waHydrateMedia(box);
@@ -4445,7 +4445,7 @@
     return '<a href="#" onclick="ckOpenWaMedia(\''+id+'\',\''+ph+'\');return false" style="color:#bcd2ff;display:block;margin-top:4px">📎 '+esc(m.fname||'файл')+'</a>';
   }
   function bubbleHTML(m, hideKey, waPhone){
-    const del=hideKey?'<a href="#" title="Скрыть у себя (у клиента останется)" onclick="ckHideMsg(\''+hideKey+'\');return false" style="float:right;margin-left:10px;color:var(--muted);text-decoration:none;font-size:12px;opacity:.6">✕</a>':'';
+    const del='';   // крестик «скрыть сообщение» убран по просьбе — сообщения в диалоге не удаляются из интерфейса
     const media=m.med?waMediaHTML(m, waPhone):attHTML(m.att);   // WhatsApp (m.med) или Instagram (m.att)
     return '<div class="bubble '+m.t+'">'+del+linkify(m.x)+media+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>';
   }
