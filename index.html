@@ -436,7 +436,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.94.0<br>Видно, кто обработал клиента: при ответе или переносе сделки фиксируется сотрудник (метка «✅ обработал: Имя» в карточке и списке воронки)</div>
+      Штурвал v3.95.0<br>Instagram и WhatsApp теперь внутри раздела CRM (и в меню, и в выборе прав сотрудника) — отдельных вкладок больше нет</div>
   </aside>
 
   <!-- MAIN -->
@@ -1437,10 +1437,8 @@
     rentclients:{icon:'🧑',label:'Клиенты'}, rentcalendar:{icon:'📆',label:'Календарь'}
   };
   const MODULES=[
-    {key:'crm',  icon:'🧲', label:'CRM',     tabs:['crmdash','deals','tasks','clients']},
+    {key:'crm',  icon:'🧲', label:'CRM',     tabs:['crmdash','deals','tasks','clients','iginbox','wainbox']},
     {key:'mkt',  icon:'📣', label:'Реклама', tabs:['ads','adsreport','adsanalysis']},
-    {key:'ig',   icon:'📷', label:'Instagram', tabs:['iginbox']},
-    {key:'wa',   icon:'🟢', label:'WhatsApp', tabs:['wainbox']},
     {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','assort','analytics','supl','fin','exp']},
     {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','renttasks','rentnotes','rentcars','rentlist','rentalert','rentexp','renthanded','rentanalysis','rentplan','rentclients','rentcalendar']},
     {key:'team', icon:'👥', label:'Команда', tabs:['myday','hr']},
@@ -5762,13 +5760,23 @@
       const r=await apiFetch('/api/ads/campaigns',{},ONEC_BASE); const d=await r.json();
       const cs=d.campaigns||[];
       if(!cs.length){ el.innerHTML='<span style="color:var(--muted)">Пока нет кампаний. Создай первую выше ☝️</span>'; return; }
-      el.innerHTML='<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
-        +'<tr style="color:var(--muted);text-align:left"><th style="padding:6px">Кампания</th><th>Статус</th><th>Бюджет/день</th><th>Потрачено</th><th>Охват</th><th>Клики</th><th>💬 Переписок</th><th></th></tr>'
+      const running=cs.filter(c=>c.delivering).length;
+      const note='<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Реально откручивается сейчас: <b style="color:#39d98a">'+running+'</b> из '+cs.length+'. «Крутится» = кампания включена И работает хотя бы одна группа объявлений (тратит деньги сегодня).</div>';
+      el.innerHTML=note+'<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
+        +'<tr style="color:var(--muted);text-align:left"><th style="padding:6px">Кампания</th><th>Статус</th><th>Бюджет/день</th><th>Сегодня</th><th>Потрачено</th><th>Охват</th><th>Клики</th><th>💬 Переписок</th><th></th></tr>'
         +cs.map(c=>{
-          const on=c.status==='ACTIVE';
-          const badge=on?'<span style="color:#39d98a">● Активна</span>':(c.status==='PAUSED'?'<span style="color:#ffb84d">❚❚ Пауза</span>':'<span style="color:var(--muted)">'+esc(c.status||'')+'</span>');
+          const on=c.status==='ACTIVE';           // положение переключателя (для кнопки)
+          const live=!!c.delivering;              // реально крутится
+          let badge;
+          if(live) badge='<span style="color:#39d98a">● Крутится</span>';
+          else if(on) badge='<span style="color:#ffb84d" title="Кампания включена, но группы объявлений на паузе или без бюджета — деньги не тратятся">⚠ Включена, не крутит</span>';
+          else if(c.status==='PAUSED') badge='<span style="color:var(--muted)">❚❚ Пауза</span>';
+          else badge='<span style="color:var(--muted)">'+esc(c.status||'')+'</span>';
+          const today=Number(c.spend_today||0);
           return '<tr style="border-top:1px solid var(--line,#222)"><td style="padding:7px 6px">'+esc(c.name||'')+'</td><td>'+badge+'</td>'
-            +'<td>'+Number(c.budget||0).toLocaleString("ru-RU")+'</td><td>'+Number(c.spend||0).toLocaleString("ru-RU")+'</td>'
+            +'<td>'+Number(c.budget||0).toLocaleString("ru-RU")+'</td>'
+            +'<td'+(today>0?' style="color:#39d98a;font-weight:600"':' style="color:var(--muted)"')+'>'+(today>0?today.toLocaleString("ru-RU"):'—')+'</td>'
+            +'<td>'+Number(c.spend||0).toLocaleString("ru-RU")+'</td>'
             +'<td>'+Number(c.reach||0).toLocaleString("ru-RU")+'</td><td>'+Number(c.clicks||0).toLocaleString("ru-RU")+'</td>'
             +'<td style="font-weight:600;color:#39d98a">'+Number(c.conversations||0).toLocaleString("ru-RU")+'</td>'
             +'<td><button class="btn '+(on?'ghost':'')+'" style="font-size:12px;padding:5px 10px" onclick="adsToggle(\''+c.id+'\','+(on?'false':'true')+')">'+(on?'❚❚ Пауза':'▶ Включить')+'</button></td></tr>';
