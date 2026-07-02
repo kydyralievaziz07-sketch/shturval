@@ -3937,14 +3937,14 @@ def payroll_view(user, rec=None, commission=0, commission_pct=10, fx=0):
             "advance": adv, "to_receive": round(accrued + bonus + commission - adv), "days": days,
             "marked_today": days.get(today) == "p", "marked_absent_today": days.get(today) == "a"}
 
-def payroll_all(company=None):
+def payroll_all(company=None, month=None):
     co = company or COMPANY_ID
+    m = month or _cur_month()
     # ВСЕ записи зарплаты за месяц — ОДНИМ запросом (а не по запросу на каждого: было N+1, ~13с)
     recs = None
     if supa_on():
         recs = {}
         try:
-            m = _cur_month()
             rows = _supa("GET", "payroll",
                          "?company_id=eq.%s&month=eq.%s&select=*" % (_q(co), _q(m)))
             for row in (rows or []):
@@ -5507,7 +5507,15 @@ class Handler(BaseHTTPRequestHandler):
             secs = u.get("sections", [])
             co = u.get("company") or COMPANY_ID
             if "all" in secs or "hr" in secs:      # владелец и HR-менеджер видят всех СВОЕЙ компании
-                return self._send(200, {"all": payroll_all(co)})
+                mon = None
+                try:
+                    q = urllib.parse.urlparse(self.path).query
+                    mv = urllib.parse.parse_qs(q).get("month", [""])[0]
+                    if re.match(r"^\d{4}-\d{2}$", mv or ""):
+                        mon = mv
+                except Exception:
+                    mon = None
+                return self._send(200, {"all": payroll_all(co, mon), "month": mon or _cur_month()})
             _cm, _pf, _dp = rent_commissions(co)
             _c = _cm.get((u.get("name") or "").strip(), 0) or _cm.get((u.get("login") or "").strip(), 0)
             _cp = _pf.get((u.get("name") or "").strip(), _pf.get((u.get("login") or "").strip(), _dp))

@@ -436,7 +436,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.90.0<br>Дубли клиентов слиты: один клиент — одна карточка/сделка (anar.baev и т.п. больше не повторяются)</div>
+      Штурвал v3.91.0<br>Кадры: выбор месяца — видно явку, авансы и премии за прошлые месяцы (архив только для чтения)</div>
   </aside>
 
   <!-- MAIN -->
@@ -5674,10 +5674,28 @@
 
   // ===== Кабинет «Кадры» (HR-менеджер) =====
   let DEPT_PLANS=[], HR_LIST=[], hrClosed=new Set();
+  // Зарплата считается ПОМЕСЯЧНО (явка/авансы/премии — за месяц). HR_MONTH пустой = текущий месяц.
+  let HR_MONTH='';
+  function curMonthStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
+  function hrIsArchive(){ return !!(HR_MONTH && HR_MONTH!==curMonthStr()); }   // просмотр прошлого месяца — только чтение
+  function hrMonthLabel(m){
+    const nm=['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+    const p=(m||'').split('-'); if(p.length!==2) return m;
+    return nm[(+p[1]||1)-1]+' '+p[0];
+  }
+  function hrSetMonth(m){ HR_MONTH=(m===curMonthStr()?'':m); hrClosed=new Set(); loadHR(); }
+  function hrMonthSelect(){
+    const cur=curMonthStr(); const d=new Date(); const opts=[];
+    for(let i=0;i<12;i++){ const y=d.getFullYear(), mo=d.getMonth()-i; const dt=new Date(y,mo,1);
+      const v=dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0');
+      opts.push('<option value="'+v+'"'+(v===(HR_MONTH||cur)?' selected':'')+'>'+hrMonthLabel(v)+(v===cur?' (текущий)':'')+'</option>');
+    }
+    return '<select onchange="hrSetMonth(this.value)" style="padding:5px 10px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:13px">'+opts.join('')+'</select>';
+  }
   async function loadHR(){
     const st=document.getElementById('hr-status');
     try{
-      const r=await apiFetch('/api/payroll',{},ONEC_BASE); const d=await r.json();
+      const r=await apiFetch('/api/payroll'+(HR_MONTH?('?month='+encodeURIComponent(HR_MONTH)):''),{},ONEC_BASE); const d=await r.json();
       HR_LIST=d.all||(d.me?[d.me]:[]);
       try{ const rp=await apiFetch('/api/deptplan',{},ONEC_BASE); const dp=await rp.json(); DEPT_PLANS=dp.departments||[]; }catch(_){ DEPT_PLANS=[]; }
       renderHR(); if(st) st.style.display='none';
@@ -5904,11 +5922,13 @@
         kpiCard('💵 ЗП без авансов','<span class="money" data-som="'+totalGross+'">'+fmt(totalGross)+'</span>')+
         kpiCard('💰 Итого к выплате','<span class="money" data-som="'+totalPay+'">'+fmt(totalPay)+'</span>')+
       '</div>'+
-      '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">'+
-        (canManageTeam()?'<button class="btn" style="font-size:12px;padding:5px 12px" onclick="openEmpAdd(\'\')">➕ Добавить сотрудника</button>':'')+
+      '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">'+
+        '<span style="font-size:13px;color:var(--muted)">📅 Месяц:</span>'+hrMonthSelect()+
+        (hrIsArchive()?'':(canManageTeam()?'<button class="btn" style="font-size:12px;padding:5px 12px" onclick="openEmpAdd(\'\')">➕ Добавить сотрудника</button>':''))+
         '<button class="btn ghost" style="font-size:12px;padding:5px 10px" onclick="hrAllDepts(true)">▼ раскрыть все</button>'+
         '<button class="btn ghost" style="font-size:12px;padding:5px 10px" onclick="hrAllDepts(false)">▶ свернуть все</button>'+
-      '</div>';
+      '</div>'+
+      (hrIsArchive()?'<div class="card" style="margin-bottom:12px;padding:11px 14px;background:var(--panel2);font-size:13px;color:var(--muted)">📖 Просмотр архива за <b style="color:var(--text)">'+esc(hrMonthLabel(HR_MONTH))+'</b> — только чтение. Чтобы отмечать явку, авансы и премии, вернись на текущий месяц.</div>':'');
     order.forEach((d,di)=>{
       const arr=groups[d]; const closed=hrClosed.has(d);
       const dpay=arr.reduce((a,v)=>a+(+v.to_receive||0),0);
@@ -5931,7 +5951,14 @@
     const todayH=(v.hours&&v.hours[td])||'';
     const inpH='padding:5px 8px;width:62px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:14px;text-align:center';
     const hourlyRate=v.hourly_rate||0;
+    const arch=hrIsArchive();
     let mainCtrl, subMonth;
+    if(arch){
+      // архив: только итоги за месяц, без кнопок/полей
+      mainCtrl='';
+      subMonth=v.is_video?('· '+(v.videos_month||0)+' видео за месяц')
+                         :('· '+(v.present_days||0)+' дн'+((v.partial_days>0)?(' · '+v.hours_month+' ч частично'):''));
+    } else
     if(v.is_video){
       // МОБИЛОГРАФ: оплата по числу отснятых видео
       const todayV=(v.videos&&v.videos[td])||'';
@@ -5971,13 +5998,14 @@
           (v.phone?'<div style="font-size:12px;margin-top:2px"><a href="tel:'+esc(v.phone.replace(/[^0-9+]/g,''))+'" style="color:var(--muted);text-decoration:none">📞 '+esc(v.phone)+'</a></div>':'')+'</div>'+
         payInfo+
         '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+mainCtrl+
+          (arch?'':(
           '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHra(\''+lg+'\',\'advance\')" title="Аванс">💸 Аванс</button>'+
           '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHra(\''+lg+'\',\'bonus\')" title="Премия">🎁 Премия</button>'+
           (v.is_video?'':'<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openHrCal(\''+lg+'\')" title="Календарь явки">📅 Календарь</button>')+
           (canManageTeam()?(
             '<button class="btn ghost" style="padding:5px 9px;font-size:12px" onclick="openEmpEdit(\''+lg+'\')" title="Изменить имя/телефон/отдел/зарплату">✏️ Изменить</button>'+
             '<button class="btn ghost" style="padding:5px 9px;font-size:12px;color:var(--red)" onclick="teamRemove(\''+lg+'\',\''+jsn(v.name)+'\')" title="Убрать сотрудника">🗑</button>'
-          ):'')+
+          ):'')))+
         '</div>'+
       '</div>'+
     '</div>';
