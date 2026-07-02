@@ -436,7 +436,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.92.0<br>В диалогах убраны крестики «✕» на сообщениях — переписку случайно не спрятать</div>
+      Штурвал v3.93.0<br>Надёжность CRM: сделки не теряются при слиянии клиентов, сообщения не пропадают при сбое базы, нет дублей WhatsApp, комментарий в карточке заказа</div>
   </aside>
 
   <!-- MAIN -->
@@ -838,6 +838,23 @@
       <div style="display:flex;justify-content:flex-end;margin-bottom:12px;gap:8px;flex-wrap:wrap">
         <button class="btn ghost" style="font-size:12px;padding:6px 12px" onclick="exportAnalytics()">⬇️ Выгрузить в Excel</button>
       </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <div id="an-period-cap" style="font-size:12px;color:var(--muted)">📊 Показатели за месяц — из <b>1С</b> (касса) и расходов</div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <div class="period">
+            <button class="anper" data-anper="today" onclick="setAnPeriod('today')">Сегодня</button>
+            <button class="anper" data-anper="week" onclick="setAnPeriod('week')">7 дней</button>
+            <button class="anper active" data-anper="month" onclick="setAnPeriod('month')">Месяц</button>
+            <button class="anper" data-anper="all" onclick="setAnPeriod('all')">Всё</button>
+          </div>
+          <span style="font-size:12px;color:var(--muted);margin-left:6px">📅</span>
+          <input type="date" id="an-from" style="background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:5px 8px;font-size:12px">
+          <span style="color:var(--muted)">—</span>
+          <input type="date" id="an-to" style="background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:5px 8px;font-size:12px">
+          <button class="btn ghost" style="padding:5px 10px;font-size:12px" onclick="anSetRange()">Показать</button>
+          <button class="btn ghost" id="an-range-clear" style="padding:5px 9px;font-size:12px;display:none" onclick="anClearRange()" title="Сбросить период">✕</button>
+        </div>
+      </div>
       <div id="an-kpis" class="kpis" style="margin-bottom:18px"></div>
       <div class="grid2b">
         <div class="card"><h3>🏆 Топ-10 категорий по деньгам <span style="font-size:12px;color:var(--muted);font-weight:400">— склад в рознице</span></h3>
@@ -1228,8 +1245,8 @@
         <div><label>Пароль</label><input type="text" id="emp-pw" placeholder="оставьте пустым = без входа"></div>
       </div>
     </div>
-    <div style="font-size:12px;color:var(--muted);margin:12px 0 4px">Какие разделы видит (Мой день виден всегда):</div>
-    <div id="emp-secs" style="display:flex;flex-wrap:wrap;gap:8px 14px"></div>
+    <div style="font-size:12px;color:var(--muted);margin:12px 0 4px">Какие разделы видит (Мой день виден всегда). Отметь крупный раздел — или разверни ▶ и выбери отдельные вкладки:</div>
+    <div id="emp-secs" style="display:block;max-height:300px;overflow-y:auto;border:1px solid var(--line);border-radius:10px;padding:2px 12px"></div>
     <div id="emp-err" style="color:var(--red);font-size:12px;margin-top:8px;min-height:14px"></div>
     <div class="modal-foot">
       <button class="btn" id="emp-save-btn" onclick="empSave()">Сохранить</button>
@@ -1445,12 +1462,14 @@
       return canSee('rent_'+tab.slice(4));
     }
     if(tab==='hr') return isOwner()||USER.sections.indexOf('hr')>=0;
-    if(tab==='ads'||tab==='adsreport'||tab==='adsanalysis') return isOwner()||canSee('ads');
-    if(tab==='iginbox') return isOwner()||canSee('chats');
-    if(tab==='wainbox') return isOwner()||canSee('chats');
+    if(tab==='ads') return isOwner()||canSee('ads');
+    if(tab==='adsreport') return isOwner()||canSee('adsreport')||canSee('ads');       // 'ads' = вся реклама (обратная совместимость)
+    if(tab==='adsanalysis') return isOwner()||canSee('adsanalysis')||canSee('ads');
+    if(tab==='iginbox') return isOwner()||canSee('iginbox')||canSee('chats');          // 'chats' = обе переписки (обр. совместимость)
+    if(tab==='wainbox') return isOwner()||canSee('wainbox')||canSee('chats');
     if(tab==='dash') return isOwner()||canSee('dash')||canSee('crm');
-    if(tab==='sim') return isOwner()||canSee('ai')||canSee('analytics')||canSee('dash');
-    if(tab==='assort') return isOwner()||canSee('sales')||canSee('analytics');
+    if(tab==='sim') return isOwner()||canSee('sim')||canSee('ai')||canSee('analytics')||canSee('dash');
+    if(tab==='assort') return isOwner()||canSee('assort')||canSee('sales')||canSee('analytics');
     return canSee(tab);
   }
   // временно скрытые модули — прячем ИКОНКУ у тех, кто видит их только через «all» (владелец-Бизмарт).
@@ -2199,19 +2218,67 @@
     renderMoney();
   }
   function anAvg(arr,key){ if(!arr||!arr.length) return 0; return Math.round(arr.reduce((s,x)=>s+(+x[key]||0),0)/arr.length); }
+  // ---- Аналитика: период (Сегодня / 7 дней / Месяц / Всё / произвольный диапазон) ----
+  let _anPeriod='month', _anRange=null;
+  function anPeriodDays(){
+    const hist=_salesHist||[]; const today=(typeof salesTodayStr==='function'?salesTodayStr():'');
+    if(_anRange) return hist.filter(x=>x.date>=_anRange.from && x.date<=_anRange.to);
+    if(_anPeriod==='today') return hist.filter(x=>x.date===today);
+    if(_anPeriod==='week') return hist.slice(-7);
+    if(_anPeriod==='month'){ const m=(today||'').slice(0,7); const r=hist.filter(x=>(x.date||'').slice(0,7)===m); return r.length?r:hist.slice(-30); }
+    return hist;                                   // всё время
+  }
+  function setAnPeriod(p){
+    _anPeriod=p; _anRange=null;
+    ['an-from','an-to'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+    const c=document.getElementById('an-range-clear'); if(c)c.style.display='none';
+    document.querySelectorAll('.anper').forEach(b=>b.classList.toggle('active',b.dataset.anper===p));
+    anKpis();
+  }
+  function anSetRange(){
+    const f=(document.getElementById('an-from')||{}).value, t=(document.getElementById('an-to')||{}).value;
+    if(!f||!t){ alert('Выбери обе даты периода.'); return; }
+    _anRange={from:f<=t?f:t, to:f<=t?t:f};
+    document.querySelectorAll('.anper').forEach(b=>b.classList.remove('active'));
+    const c=document.getElementById('an-range-clear'); if(c)c.style.display='';
+    anKpis();
+  }
+  function anClearRange(){ setAnPeriod('month'); }
   function anKpis(){
     const box=document.getElementById('an-kpis'); if(!box) return;
-    const h=(_salesHist&&_salesHist.length)?_salesHist:[];
-    const rev=h.length?anAvg(h,'sales'):((window._salesData&&+window._salesData.net_sales)||0);
-    const prof=h.length?anAvg(h,'profit'):((window._salesData&&+window._salesData.profit)||0);
-    const rec=h.length?anAvg(h,'receipts'):((window._salesData&&+window._salesData.sales_count)||0);
-    const check=rec?Math.round(rev/rec):((window._salesData&&+window._salesData.avg_check)||0);
-    let expDay=0; const pm=(_expData&&_expData.periods&&_expData.periods.month)||null;
-    if(pm) expDay=Math.round((+pm.expense||0)/30);
+    const today=(typeof salesTodayStr==='function'?salesTodayStr():'');
+    const days=anPeriodDays();
+    let sales=0,profit=0,rec=0;
+    days.forEach(x=>{ sales+=+x.sales||0; profit+=+x.profit||0; rec+=+x.receipts||0; });
+    // сегодняшний день в истории частичный — подменяем живой цифрой из 1С, если она есть
+    const inclToday=_anRange?(today>=_anRange.from&&today<=_anRange.to):(_anPeriod!=='today'?days.some(x=>x.date===today):true);
+    const live=window._salesData;
+    if(live && inclToday){
+      const td=days.find(x=>x.date===today);
+      if(td){ sales+=(+live.net_sales||0)-(+td.sales||0); profit+=(+live.profit||0)-(+td.profit||0); rec+=(+live.sales_count||0)-(+td.receipts||0); }
+      else if(_anPeriod==='today'&&!_anRange){ sales=+live.net_sales||0; profit=+live.profit||0; rec=+live.sales_count||0; }
+    }
+    const ndays=Math.max(1, days.length);
+    const check=rec?Math.round(sales/rec):0;          // средний чек
+    const recDay=Math.round(rec/ndays);               // среднее число чеков в день
+    // расходы: точная сумма за месяц из финансов; для прочих периодов — оценка по среднему дневному
+    const pm=(_expData&&_expData.periods&&_expData.periods.month)||null;
+    const expDay=pm?((+pm.expense||0)/30):0;
+    const expPeriod=(_anPeriod==='month'&&!_anRange&&pm)?(+pm.expense||0):Math.round(expDay*ndays);
+    const net=profit-expPeriod;                        // чистая прибыль за период
+    const lbl=_anRange?'за период':({today:'сегодня',week:'за 7 дней',month:'за месяц',all:'за всё'}[_anPeriod]||'');
     const km=(l,s,c)=>'<div class="card kpi"><div class="label">'+l+'</div><div class="value"'+(c?' style="color:'+c+'"':'')+'><span class="money" data-som="'+(s||0)+'">'+fmt(s||0)+'</span></div></div>';
-    box.innerHTML=km('💵 Выручка/день',rev)+km('📈 Прибыль/день',prof)+
-      kpiCard('🧾 Чеков/день',rec.toLocaleString('ru-RU'))+km('🛒 Средний чек',check)+
-      km('💸 Расходы/день',expDay,'#ffb84d')+km('✅ Чистая/день',prof-expDay,((prof-expDay)>=0?'#39d98a':'#ff6b6b'));
+    box.innerHTML=
+      kpiCard('🧾 Чеков '+lbl,(rec||0).toLocaleString('ru-RU'))+
+      kpiCard('📊 Чеков в день (среднее)',(recDay||0).toLocaleString('ru-RU'))+
+      km('🛒 Средний чек',check)+
+      km('💵 Выручка '+lbl,sales)+
+      km('📈 Прибыль с товара '+lbl,profit)+
+      km('✅ Чистая прибыль '+lbl,net,(net>=0?'#39d98a':'#ff6b6b'));
+    const cap=document.getElementById('an-period-cap');
+    if(cap) cap.innerHTML=_anRange?('📊 Показатели '+esc(_anRange.from)+' … '+esc(_anRange.to)+' — из 1С и расходов')
+                                  :('📊 Показатели '+lbl+' — из <b>1С</b> (касса) и расходов');
+    renderMoney();
   }
   function anBars(box,items,key,fmtMoney){
     if(!box) return;
@@ -3283,29 +3350,63 @@
   // (в приложении у клиента одна сделка; дубли раньше плодились из-за устаревшего индекса)
   function dedupeClients(){
     const byName=new Map(), remap=new Map(), keepC=[];
+    // Телефон — надёжный признак «это тот же человек». Нормализуем: только цифры.
+    const digits=s=>String(s||'').replace(/\D+/g,'');
     (CRM.clients||[]).forEach(c=>{
       const k=(c.name||'').trim().toLowerCase();
       if(!k){ keepC.push(c); return; }
       const first=byName.get(k);
-      if(first){ remap.set(c.id, first.id); if(!first.phone&&c.phone) first.phone=c.phone; }
-      else { byName.set(k,c); keepC.push(c); }
+      // Сливаем однофамильцев ТОЛЬКО если это точно один человек: телефоны совпадают
+      // или у кого-то из двоих телефона нет. Два разных телефона под одним именем — разные люди.
+      if(first){
+        const p1=digits(first.phone), p2=digits(c.phone);
+        const sameHuman = !p1 || !p2 || p1===p2;
+        if(sameHuman){ remap.set(c.id, first.id); if(!first.phone&&c.phone) first.phone=c.phone; return; }
+      }
+      byName.set(k,c); keepC.push(c);   // первый с этим именем, либо другой человек — оставляем отдельно
     });
     (CRM.deals||[]).forEach(d=>{ if(remap.has(d.client_id)) d.client_id=remap.get(d.client_id); });
     (CRM.activity||[]).forEach(a=>{ if(a.client_id&&remap.has(a.client_id)) a.client_id=remap.get(a.client_id); });
-    // одна сделка на клиента: оставляем «лучшую» (ручная / с суммой / позже созданная), пустые авто-дубли убираем
-    const best=new Map();
+    // Один клиент = одна сделка. Если после слияния у клиента оказалось НЕСКОЛЬКО сделок —
+    // выбираем «лучшую» (ручная / с суммой / позже созданная), но данные остальных НЕ теряем,
+    // а переносим в неё (товары, сумма, комментарий, метки оплаты/статуса).
     const score=d=>(d.manual?100:0)+(((+d.amount>0)||(d.items&&d.items.length))?10:0);
+    const best=new Map(), extras=new Map();   // client_id -> лучшая сделка / список остальных
     (CRM.deals||[]).forEach(d=>{
       const cur=best.get(d.client_id);
       if(!cur){ best.set(d.client_id,d); return; }
-      if(score(d)>score(cur) || (score(d)===score(cur) && (d.created_at||'')>(cur.created_at||''))) best.set(d.client_id,d);
+      const win = score(d)>score(cur) || (score(d)===score(cur) && (d.created_at||'')>(cur.created_at||''));
+      const winner = win?d:cur, loser = win?cur:d;
+      best.set(d.client_id, winner);
+      if(!extras.has(d.client_id)) extras.set(d.client_id, []);
+      extras.get(d.client_id).push(loser);
     });
+    // переносим данные проигравших сделок в оставшуюся, чтобы ничего не пропало
+    const mergeInto=(w,l)=>{
+      if(!w.items||!w.items.length){ if(l.items&&l.items.length) w.items=l.items; }
+      else if(l.items&&l.items.length){ const seen=new Set(w.items.map(x=>(x.title||'')+'|'+(x.price||''))); l.items.forEach(x=>{ const kk=(x.title||'')+'|'+(x.price||''); if(!seen.has(kk)){ w.items.push(x); seen.add(kk); } }); }
+      if(!(+w.amount>0) && +l.amount>0) w.amount=l.amount;
+      if(!w.phone && l.phone) w.phone=l.phone;
+      if(!w.paid_at && l.paid_at) w.paid_at=l.paid_at;
+      const note=[w.comment,l.comment].filter(Boolean).join(' · ');
+      if(note) w.comment=note;
+    };
+    extras.forEach((list,cid)=>{ const w=best.get(cid); list.forEach(l=>mergeInto(w,l)); });
     const keepD=[...best.values()];
     const changed=(keepC.length!==(CRM.clients||[]).length)||(keepD.length!==(CRM.deals||[]).length);
     if(changed){
       CRM.clients=keepC;
       const keepIds=new Set(keepD.map(d=>d.id));
-      CRM.tasks=(CRM.tasks||[]).filter(t=>!t.deal_id||keepIds.has(t.deal_id));
+      // задачи проигравших сделок перецепляем на оставшуюся сделку клиента (не теряем)
+      const dealClient=new Map(); keepD.forEach(d=>dealClient.set(d.id,d.client_id));
+      const clientDeal=new Map(); keepD.forEach(d=>clientDeal.set(d.client_id,d.id));
+      const oldDealClient=new Map(); (CRM.deals||[]).forEach(d=>oldDealClient.set(d.id,d.client_id));
+      CRM.tasks=(CRM.tasks||[]).map(t=>{
+        if(!t.deal_id||keepIds.has(t.deal_id)) return t;
+        const cid=oldDealClient.get(t.deal_id); const nd=cid!=null?clientDeal.get(cid):null;
+        if(nd){ t.deal_id=nd; return t; }
+        return null;
+      }).filter(Boolean);
       CRM.deals=keepD;
     }
     return changed;
@@ -5775,32 +5876,99 @@
     DEPT_ORDER.forEach(d=>set.add(d));
     document.getElementById('emp-depts').innerHTML=[...set].map(d=>'<option value="'+esc(d)+'">').join('');
   }
-  const EMP_SECS=[['deals','Сделки и переписка'],['crmdash','CRM рабочий стол'],['prod','Товары'],['sales','Продажи'],['clients','Клиенты'],['analytics','Аналитика'],['fin','Финансы'],['exp','Расходы (магазин)'],['supl','Поставщики'],['hr','Кадры'],['rent','Авто Рент'],['ai','ИИ-помощник'],['dash','Дашборд Магазина']];
-  // под-разделы Авто Рента — чтобы выдавать сотруднику только нужные вкладки
-  const RENT_SUBS=[['rent_dash','Дашборд'],['rent_cars','Машины'],['rent_list','Аренды'],['rent_exp','Расходы'],['rent_handed','Сдано'],['rent_analysis','Анализ'],['rent_plan','План'],['rent_clients','Клиенты'],['rent_calendar','Календарь']];
-  // разделы, доступные ЭТОЙ компании = разделы её владельца (у Бизмарта «all» = все).
-  // Чтобы в прокатной компании сотруднику нельзя было выдать Сделки/CRM/Товары и т.п.
-  function _companySecs(){
-    if(isOwner()) return EMP_SECS;                       // владелец «всё» (Бизмарт) — все разделы
+  // Двухуровневый выбор прав: КРУПНЫЙ раздел (модуль) → его под-вкладки.
+  // Ключи прав = то, что реально проверяет tabVisible/canSee. Вкладка → ключ права:
+  const TAB_SEC={
+    crmdash:'crmdash', deals:'deals', tasks:'tasks', clients:'clients',
+    ads:'ads', adsreport:'adsreport', adsanalysis:'adsanalysis',
+    iginbox:'iginbox', wainbox:'wainbox',
+    dash:'dash', prod:'prod', sales:'sales', assort:'assort', analytics:'analytics', supl:'supl', fin:'fin', exp:'exp',
+    rentdash:'rent_dash', renttasks:'rent_tasks', rentnotes:'rent_notes', rentcars:'rent_cars',
+    rentlist:'rent_list', rentalert:'rent_alert', rentexp:'rent_exp', renthanded:'rent_handed',
+    rentanalysis:'rent_analysis', rentplan:'rent_plan', rentclients:'rent_clients', rentcalendar:'rent_calendar',
+    hr:'hr', ai:'ai', sim:'sim'
+  };
+  function _tabLabel(tab){ return (TABMETA[tab]&&TABMETA[tab].label)||(titles[tab]&&titles[tab][0])||tab; }
+  // Может ли ВЛАДЕЛЕЦ этого кабинета выдать данный раздел? (Бизмарт-владелец = всё; прокат = только rent_*)
+  function _canGrant(secKey){
+    if(isOwner()) return true;
     const allow=new Set(USER.sections||[]);
-    let opts=[];
-    if(allow.has('rent')) opts=opts.concat(RENT_SUBS);   // прокат: дать выбор отдельных вкладок аренды
-    EMP_SECS.forEach(([k,l])=>{ if(k!=='rent' && allow.has(k)) opts.push([k,l]); });  // прочие разделы компании
-    return opts;
+    if(allow.has(secKey)) return true;
+    if(secKey.indexOf('rent')===0 && [...allow].some(s=>s==='rent'||s.indexOf('rent')===0)) return true;
+    return false;
+  }
+  // Дерево прав для ЭТОЙ компании: [{key,icon,label,leaves:[{sec,label}]}]
+  function _permTree(){
+    const out=[];
+    MODULES.forEach(m=>{
+      if(m.key==='team'){                                   // «Команда»: Мой день всегда; выбираем только Кадры
+        if(_canGrant('hr')) out.push({key:m.key,icon:m.icon,label:'Команда',leaves:[{sec:'hr',label:'Кадры'}]});
+        return;
+      }
+      const leaves=[];
+      m.tabs.forEach(tab=>{
+        if(tab==='myday') return;                           // виден всегда
+        const sec=TAB_SEC[tab]; if(!sec) return;
+        if(!_canGrant(sec)) return;
+        if(leaves.some(l=>l.sec===sec)) return;             // без дублей
+        leaves.push({sec:sec,label:_tabLabel(tab)});
+      });
+      if(leaves.length) out.push({key:m.key,icon:m.icon,label:(m.key==='rent'?rentBrand():m.label),leaves:leaves});
+    });
+    return out;
+  }
+  function permLeafSync(mod){
+    const leaves=[...document.querySelectorAll('#permleaves-'+mod+' .perm-leaf')];
+    const on=leaves.filter(c=>c.checked).length;
+    const all=document.querySelector('.perm-mod-all[data-mod="'+mod+'"]');
+    if(all){ all.checked=on>0&&on===leaves.length; all.indeterminate=on>0&&on<leaves.length; }
+    const cnt=document.getElementById('permcnt-'+mod); if(cnt) cnt.textContent=on?(on+'/'+leaves.length):'';
+  }
+  function permModToggle(mod,on){
+    [...document.querySelectorAll('#permleaves-'+mod+' .perm-leaf')].forEach(c=>{ c.checked=on; });
+    permLeafSync(mod);
+    if(on){ const b=document.getElementById('permleaves-'+mod); if(b) b.style.display=''; const a=document.getElementById('permarrow-'+mod); if(a) a.textContent='▼'; }
+  }
+  function permExpand(mod){
+    const b=document.getElementById('permleaves-'+mod); if(!b) return;
+    const open=(b.style.display==='none'); b.style.display=open?'':'none';
+    const a=document.getElementById('permarrow-'+mod); if(a) a.textContent=open?'▼':'▶';
   }
   function renderEmpSecs(active){
     const set=new Set(active||[]);
-    const opts=_companySecs();
+    const tree=_permTree();
     const el=document.getElementById('emp-secs');
-    el.innerHTML=opts.length
-      ? opts.map(([k,l])=>'<label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" value="'+k+'"'+(set.has(k)?' checked':'')+'> '+esc(l)+'</label>').join('')
-      : '<span style="font-size:12px;color:var(--muted)">Все сотрудники видят «Мой день» и «Кадры».</span>';
+    if(!tree.length){ el.innerHTML='<div style="font-size:12px;color:var(--muted);padding:8px 0">Все сотрудники видят «Мой день». Других разделов для выдачи нет.</div>'; return; }
+    el.innerHTML=tree.map(m=>{
+      // модуль с одной вкладкой (Instagram, WhatsApp) — просто один флажок, без раскрытия
+      if(m.leaves.length===1){
+        const lf=m.leaves[0];
+        return '<div style="border-bottom:1px solid var(--line)"><label style="display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;cursor:pointer;padding:9px 0">'+
+          '<input type="checkbox" class="perm-leaf" data-mod="'+m.key+'" value="'+lf.sec+'"'+(set.has(lf.sec)?' checked':'')+'>'+
+          '<span>'+m.icon+' '+esc(m.label)+'</span></label></div>';
+      }
+      const anyOn=m.leaves.some(l=>set.has(l.sec));
+      const leaves=m.leaves.map(l=>
+        '<label style="display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;padding:4px 0 4px 28px">'+
+          '<input type="checkbox" class="perm-leaf" data-mod="'+m.key+'" value="'+l.sec+'"'+(set.has(l.sec)?' checked':'')+' onchange="permLeafSync(\''+m.key+'\')">'+
+          '<span>'+esc(l.label)+'</span></label>').join('');
+      return '<div style="border-bottom:1px solid var(--line)">'+
+        '<div style="display:flex;align-items:center;gap:8px;padding:9px 0">'+
+          '<input type="checkbox" class="perm-mod-all" data-mod="'+m.key+'" onchange="permModToggle(\''+m.key+'\',this.checked)">'+
+          '<span onclick="permExpand(\''+m.key+'\')" style="flex:1;font-size:14px;font-weight:600;cursor:pointer">'+m.icon+' '+esc(m.label)+'</span>'+
+          '<span id="permcnt-'+m.key+'" style="font-size:12px;color:var(--muted)"></span>'+
+          '<span onclick="permExpand(\''+m.key+'\')" id="permarrow-'+m.key+'" style="cursor:pointer;color:var(--muted);font-size:13px;padding:0 4px">'+(anyOn?'▼':'▶')+'</span>'+
+        '</div>'+
+        '<div class="perm-leaves" id="permleaves-'+m.key+'"'+(anyOn?'':' style="display:none"')+'>'+leaves+'</div>'+
+      '</div>';
+    }).join('');
+    tree.forEach(m=>{ if(m.leaves.length>1) permLeafSync(m.key); });   // проставить состояние «шапок»
   }
   function readEmpSecs(){
-    const s=[...document.querySelectorAll('#emp-secs input:checked')].map(i=>i.value);
+    const s=[...document.querySelectorAll('#emp-secs .perm-leaf:checked')].map(i=>i.value);
     const out=['myday'].concat(s);
-    // для «Сделки/переписка» и CRM-дашборда нужен доступ к чатам Instagram
-    if((out.indexOf('deals')>=0||out.indexOf('crmdash')>=0)&&out.indexOf('chats')<0) out.push('chats');
+    // Сделки/CRM-дашборд и переписки Instagram/WhatsApp требуют доступ к чатам
+    if(['deals','crmdash','iginbox','wainbox'].some(k=>out.indexOf(k)>=0) && out.indexOf('chats')<0) out.push('chats');
     return out;
   }
   function openEmpAdd(dept){
@@ -6072,6 +6240,7 @@
       '<div><label>Телефон</label><input value="'+esc(c.phone||'')+'" placeholder="+996…" oninput="updClient(\'phone\',this.value)"></div></div>'+
       '<div class="row"><div><label>Статус</label><select onchange="updStatus(this.value)">'+CRM_STATUSES.map(s=>'<option '+(s===d.status?'selected':'')+'>'+esc(s)+'</option>').join('')+'</select></div>'+
       '<div><label>Ответственный</label><input value="'+esc(d.owner||'')+'" oninput="updDeal(\'owner\',this.value)"></div></div>'+
+      '<label style="margin-top:12px">📝 Комментарий</label><textarea placeholder="Заметки по заказу…" oninput="updDeal(\'comment\',this.value)" style="width:100%;min-height:56px;resize:vertical;box-sizing:border-box">'+esc(d.comment||'')+'</textarea>'+
       '<label style="margin-top:12px">Товары (из 1С) · сумма: <b><span class="money" data-som="'+dealAmount(d)+'">'+fmt(dealAmount(d))+'</span></b></label>'+itemsHtml+
       '<input id="di-search" placeholder="🔍 найти товар в 1С и добавить…" oninput="searchItems(this.value)" style="margin-top:8px">'+
       '<div class="crm-res" id="di-res" style="display:none"></div>'+

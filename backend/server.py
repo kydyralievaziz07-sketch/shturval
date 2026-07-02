@@ -1321,23 +1321,17 @@ def ig_store_event(evt):
                 cust = str((m.get("recipient") or {}).get("id", ""))
                 etext = msg.get("text", "")
                 if etext and cust and not _igbot_is_own_echo(cust, etext):
-                    try:
-                        _supa("POST", "ig_inbox", "",
-                              {"company_id": COMPANY_ID, "sender_id": acct, "recipient_id": cust,
-                               "text": etext, "ts": int(m.get("timestamp") or time.time() * 1000),
-                               "direction": "out", "raw": {"by": "human"}})
-                    except Exception:
-                        pass
+                    _inbox_save("ig_inbox",
+                                {"company_id": COMPANY_ID, "sender_id": acct, "recipient_id": cust,
+                                 "text": etext, "ts": int(m.get("timestamp") or time.time() * 1000),
+                                 "direction": "out", "raw": {"by": "human"}})
                 continue
             sender = str((m.get("sender") or {}).get("id", ""))
             recipient = str((m.get("recipient") or {}).get("id", ""))  # наш аккаунт
             row = {"company_id": COMPANY_ID, "sender_id": sender, "recipient_id": recipient,
                    "mid": msg.get("mid", ""), "text": msg.get("text", ""),
                    "ts": int(m.get("timestamp") or 0), "direction": "in", "raw": m}
-            try:
-                _supa("POST", "ig_inbox", "", row)
-            except Exception:
-                pass
+            _inbox_save("ig_inbox", row)
             if sender and sender not in _ig_names:   # новый клиент — узнаём ник в фоне
                 _ig_fetch_name_async(sender, recipient)
             # ИИ-бот: если включён — Claude отвечает клиенту (в фоне, чтобы webhook был быстрым)
@@ -1548,9 +1542,17 @@ def ig_send_media(recipient_id, media_url, mtype="image", from_account_id=None):
 _ig_outmedia = {}   # token -> (bytes, mime, ts)
 def _ig_outmedia_put(data, mime):
     tok = hashlib.sha256(os.urandom(24)).hexdigest()[:32]
-    _ig_outmedia[tok] = (data, mime, time.time())
-    if len(_ig_outmedia) > 200:                       # чистим самые старые
-        for k in sorted(_ig_outmedia, key=lambda k: _ig_outmedia[k][2])[:60]:
+    now = time.time()
+    _ig_outmedia[tok] = (data, mime, now)
+    # 1) убираем протухшие (старше 1 часа) — Meta и фронт их давно скачали
+    for k in [k for k, v in list(_ig_outmedia.items()) if now - v[2] > 3600]:
+        _ig_outmedia.pop(k, None)
+    # 2) если всё ещё много — вытесняем самые старые, но НЕ трогаем свежие (<2 мин),
+    #    чтобы Meta гарантированно успела скачать только что отправленный файл
+    if len(_ig_outmedia) > 200:
+        old = sorted([k for k, v in _ig_outmedia.items() if now - v[2] > 120],
+                     key=lambda k: _ig_outmedia[k][2])
+        for k in old[:max(0, len(_ig_outmedia) - 140)]:
             _ig_outmedia.pop(k, None)
     return tok
 
@@ -2252,6 +2254,17 @@ def _wa_seen_mid(mid):
         return False
     if mid in _wa_seen:
         return True
+    # ПЕРЕЖИВАЕМ РЕСТАРТ: память обнуляется на free-плане Render, а Meta переотправляет
+    # webhook, пока не получит 200. Поэтому при промахе памяти проверяем БД — если это
+    # сообщение уже сохранено, значит это повтор, и мы его не дублируем.
+    try:
+        if supa_on():
+            rows = _supa("GET", "wa_inbox", "?mid=eq.%s&select=mid&limit=1" % _q(str(mid)))
+            if rows:
+                _wa_seen.add(mid)
+                return True
+    except Exception:
+        pass
     _wa_seen.add(mid)
     if len(_wa_seen) > 5000:
         _wa_seen.clear()
@@ -2322,10 +2335,7 @@ def wa_store_event(evt):
                        "mid": msg.get("id", ""), "text": text,
                        "ts": int(str(msg.get("timestamp") or "0") or 0) * 1000,
                        "direction": "in", "raw": msg}
-                try:
-                    _supa("POST", "wa_inbox", "", row)
-                except Exception:
-                    pass
+                _inbox_save("wa_inbox", row)
                 # ИИ-бот «Акылай»: отвечает в фоне с паузой ~5 сек (вдруг клиент допишет ещё)
                 if text and phone_id:
                     _wabot_schedule(sender, phone_id)
@@ -3645,6 +3655,32 @@ def _supa(method, table, params="", body=None):
         txt = r.read().decode("utf-8")
         return json.loads(txt) if txt.strip() else []
 
+def _inbox_save(table, row, retries=2):
+    """Сохранить сообщение (ig_inbox / wa_inbox) в БД с повторами. Если после повторов
+    не удалось — кладём в постоянный журнал inbox_errors и печатаем предупреждение,
+    чтобы сообщение не пропало БЕЗ СЛЕДА при сбое Supabase. Возвращает True при успехе."""
+    last = ""
+    for i in range(max(1, retries)):
+        try:
+            _supa("POST", table, "", row)
+            return True
+        except Exception as e:
+            last = str(e)
+            if i + 1 < retries:
+                time.sleep(0.5)
+    try:
+        buf = kv_load("inbox_errors") or []
+        if not isinstance(buf, list):
+            buf = []
+        buf.insert(0, {"t": int(time.time()), "table": table, "from": row.get("sender_id"),
+                       "mid": row.get("mid", ""), "text": (row.get("text") or "")[:200],
+                       "err": last[:200], "row": row})
+        kv_save("inbox_errors", buf[:100])
+    except Exception:
+        pass
+    print("[inbox] WARN: не удалось сохранить в %s после %d попыток: %s" % (table, retries, last))
+    return False
+
 def _supa_upload(raw, content_type, name, folder="receipts"):
     """Загрузить файл (байты) в Supabase Storage (бакет receipts) и вернуть публичный URL.
     Путь: {company_id}/{unix}_{безопасное_имя}. Возвращает '' при неудаче."""
@@ -4719,12 +4755,15 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 raw = b""
             # БЕЗОПАСНОСТЬ: проверяем подпись Meta (HMAC-SHA256 от сырого тела с IG_APP_SECRET).
+            # fail-closed: если секрет НЕ задан — отклоняем (иначе любой мог бы слать боту фейки).
             secret = CFG.get("IG_APP_SECRET", "")
-            if secret:
-                sig = self.headers.get("X-Hub-Signature-256", "")
-                expected = "sha256=" + hmac.new(secret.encode("utf-8"), raw, hashlib.sha256).hexdigest()
-                if not (sig and hmac.compare_digest(expected, sig)):
-                    self.send_response(403); self.end_headers(); return   # поддельный запрос
+            if not secret:
+                print("[ig/webhook] WARN: IG_APP_SECRET не задан — событие отклонено (нельзя проверить подпись)")
+                self.send_response(403); self.end_headers(); return
+            sig = self.headers.get("X-Hub-Signature-256", "")
+            expected = "sha256=" + hmac.new(secret.encode("utf-8"), raw, hashlib.sha256).hexdigest()
+            if not (sig and hmac.compare_digest(expected, sig)):
+                self.send_response(403); self.end_headers(); return   # поддельный запрос
             try:
                 evt = json.loads(raw or b"{}")
             except Exception:
@@ -4744,12 +4783,15 @@ class Handler(BaseHTTPRequestHandler):
                 raw = b""
             # БЕЗОПАСНОСТЬ: проверяем подпись Meta (HMAC-SHA256 от сырого тела).
             # WA_APP_SECRET, а если не задан — IG_APP_SECRET (обычно то же приложение Meta).
+            # fail-closed: без секрета отклоняем событие.
             secret = CFG.get("WA_APP_SECRET", "") or CFG.get("IG_APP_SECRET", "")
-            if secret:
-                sig = self.headers.get("X-Hub-Signature-256", "")
-                expected = "sha256=" + hmac.new(secret.encode("utf-8"), raw, hashlib.sha256).hexdigest()
-                if not (sig and hmac.compare_digest(expected, sig)):
-                    self.send_response(403); self.end_headers(); return   # поддельный запрос
+            if not secret:
+                print("[wa/webhook] WARN: WA_APP_SECRET/IG_APP_SECRET не заданы — событие отклонено")
+                self.send_response(403); self.end_headers(); return
+            sig = self.headers.get("X-Hub-Signature-256", "")
+            expected = "sha256=" + hmac.new(secret.encode("utf-8"), raw, hashlib.sha256).hexdigest()
+            if not (sig and hmac.compare_digest(expected, sig)):
+                self.send_response(403); self.end_headers(); return   # поддельный запрос
             try:
                 evt = json.loads(raw or b"{}")
             except Exception:
