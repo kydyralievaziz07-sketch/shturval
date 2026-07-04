@@ -3352,6 +3352,18 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
             "top": rows,
         })
     out_groups.sort(key=lambda g: -g["profit"])
+    # ПОЛНЫЙ плоский список всех проданных товаров (для поиска по всему ассортименту)
+    all_products = []
+    for grp, items in groups.items():
+        for i in items:
+            rev = i["rev"]; pr = i["profit"]
+            all_products.append({
+                "name": i["name"], "group": grp, "qty": round(i["qty"]),
+                "revenue": round(rev), "profit": round(pr),
+                "margin": round(rev and pr / rev * 100),
+                "profit_per_unit": round(pr / i["qty"]) if i["qty"] else 0,
+            })
+    all_products.sort(key=lambda i: -i["profit"])
     res = {
         "period_days": days, "top_n": top_n,
         "from": dates[-1], "to": today,
@@ -3359,6 +3371,7 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
         "avg_margin": round(tot_profit / tot_rev * 100, 1) if tot_rev else 0,
         "total_products": len(agg), "days_ok": days_ok, "days_fail": days_fail,
         "groups": out_groups,
+        "all_products": all_products,
         "generated_ts": int(time.time()),
         "updated": time.strftime("%d.%m.%Y %H:%M"),
     }

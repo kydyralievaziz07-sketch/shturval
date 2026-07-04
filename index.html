@@ -430,7 +430,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.1.0<br>В базе клиентов видно источник: 📷 Instagram или 🟢 WhatsApp (у кого оба канала — оба значка)</div>
+      Штурвал v4.2.0<br>Аналитика: переключатель периода (день/неделя/месяц) · Ассортимент: поиск по всем товарам</div>
   </aside>
 
   <!-- MAIN -->
@@ -787,6 +787,7 @@
       <div style="display:flex;gap:8px;align-items:center;margin:6px 0 14px;flex-wrap:wrap">
         <span style="font-size:13px;color:var(--muted)">🗂 Группа:</span>
         <select id="assort-group" onchange="renderAssort()" style="background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:7px 10px;font-size:13px"><option value="">Все группы</option></select>
+        <input id="assort-search" type="search" placeholder="🔍 Поиск товара по названию…" oninput="renderAssort()" style="flex:1;min-width:200px;background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:7px 10px;font-size:13px">
         <button class="btn ghost" style="font-size:12px;padding:6px 12px" onclick="exportAssort()">⬇️ В Excel</button>
       </div>
       <div id="assort-body"><span style="color:var(--muted);font-size:13px">—</span></div>
@@ -2907,8 +2908,41 @@
   function renderAssort(){
     const d=window._assortData; if(!d){ return; }
     const sel=document.getElementById('assort-group'); const pick=sel?sel.value:'';
-    const groups=(d.groups||[]).filter(g=> !pick || g.group===pick);
     const box=document.getElementById('assort-body'); if(!box) return;
+    const qEl=document.getElementById('assort-search'); const q=(qEl?qEl.value:'').trim().toLowerCase();
+    // --- режим ПОИСКА: плоская таблица по всем проданным товарам ---
+    if(q){
+      const all=d.all_products;
+      if(!all){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Полный список товаров ещё считается (после обновления сервера — раз в 6 ч). Обнови страницу через минуту.</span>'; return; }
+      const words=q.split(/\s+/).filter(Boolean);
+      let list=all.filter(p=>{ const hay=((p.name||'')+' '+(p.group||'')).toLowerCase(); return words.every(w=>hay.indexOf(w)>=0); });
+      if(pick) list=list.filter(p=>p.group===pick);
+      if(!list.length){ box.innerHTML='<div class="card"><span style="color:var(--muted);font-size:13px">Ничего не найдено по «'+esc(q)+'».</span></div>'; return; }
+      const sumRev=list.reduce((s,p)=>s+(+p.revenue||0),0), sumProf=list.reduce((s,p)=>s+(+p.profit||0),0), sumQty=list.reduce((s,p)=>s+(+p.qty||0),0);
+      const shown=list.slice(0,500);
+      box.innerHTML='<div class="card">'+
+        '<div class="note" style="margin:0 0 12px">🔍 Найдено <b>'+list.length+'</b> товаров'+(list.length>500?' (показаны первые 500)':'')+' · продано <b>'+sumQty.toLocaleString('ru-RU')+'</b> шт · выручка <b>'+fmt(sumRev)+'</b> · чистая прибыль <b>'+fmt(sumProf)+'</b> сом</div>'+
+        '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'+
+          '<tr style="text-align:left;color:var(--muted);font-weight:500">'+
+            '<th style="padding:6px 8px">#</th><th style="padding:6px 8px">Товар</th><th style="padding:6px 8px">Группа</th>'+
+            '<th style="padding:6px 8px;text-align:right">Продано</th>'+
+            '<th style="padding:6px 8px;text-align:right">Выручка</th>'+
+            '<th style="padding:6px 8px;text-align:right">Чистая прибыль</th>'+
+            '<th style="padding:6px 8px;text-align:right">Маржа</th>'+
+            '<th style="padding:6px 8px;text-align:right">Прибыль/шт</th></tr>'+
+          shown.map((p,i)=>'<tr style="border-top:1px solid var(--line)">'+
+            '<td style="padding:6px 8px;color:var(--muted)">'+(i+1)+'</td>'+
+            '<td style="padding:6px 8px">'+esc(p.name)+'</td>'+
+            '<td style="padding:6px 8px;color:var(--muted)">'+esc(p.group||'')+'</td>'+
+            '<td style="padding:6px 8px;text-align:right">'+(p.qty||0).toLocaleString('ru-RU')+'</td>'+
+            '<td style="padding:6px 8px;text-align:right">'+fmt(p.revenue)+'</td>'+
+            '<td style="padding:6px 8px;text-align:right;font-weight:600">'+fmt(p.profit)+'</td>'+
+            '<td style="padding:6px 8px;text-align:right">'+(p.margin||0)+'%</td>'+
+            '<td style="padding:6px 8px;text-align:right">'+fmt(p.profit_per_unit)+'</td></tr>').join('')+
+        '</table></div></div>';
+      return;
+    }
+    const groups=(d.groups||[]).filter(g=> !pick || g.group===pick);
     if(!groups.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет данных за период.</span>'; return; }
     let html='';
     groups.forEach(g=>{
