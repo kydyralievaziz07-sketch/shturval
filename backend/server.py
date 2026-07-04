@@ -1351,11 +1351,27 @@ def ig_send(recipient_id, text, from_account_id=None):
     if not token:
         raise RuntimeError("Instagram пока не подключён (нет токена). Сначала настройте приложение Meta.")
     url = IG_GRAPH + "/me/messages?access_token=" + _q(token)
-    body = json.dumps({"recipient": {"id": recipient_id}, "message": {"text": text}}).encode()
-    req = urllib.request.Request(url, data=body, method="POST",
-                                 headers={"Content-Type": "application/json", "User-Agent": "Shturval/1.0"})
-    with urllib.request.urlopen(req, timeout=20) as r:
-        return json.loads(r.read().decode() or "{}")
+    def _post(payload):
+        req = urllib.request.Request(url, data=json.dumps(payload).encode(), method="POST",
+                                     headers={"Content-Type": "application/json", "User-Agent": "Shturval/1.0"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.loads(r.read().decode() or "{}")
+    base = {"recipient": {"id": recipient_id}, "message": {"text": text}}
+    try:
+        return _post(base)                       # обычная отправка (окно 24 часа)
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode()
+        except Exception:
+            pass
+        # Вне 24 часов Instagram блокирует обычный ответ. Официальный режим «ответ живого
+        # агента» (HUMAN_AGENT) продлевает окно до 7 дней — пробуем повтором.
+        if e.code in (400, 403) and _re.search(r"24|outside|window|reengag|re-engag|allowed", detail, _re.I):
+            tagged = {"recipient": {"id": recipient_id}, "messaging_type": "MESSAGE_TAG",
+                      "tag": "HUMAN_AGENT", "message": {"text": text}}
+            return _post(tagged)                  # окно до 7 дней
+        raise
 
 # имена клиентов по их IGSID. Кэш в памяти + таблица ig_names (БЕЗ живых запросов в момент загрузки).
 _ig_names = {}

@@ -4637,23 +4637,27 @@
   let ckWindowOpen=true;
   function ckWindowCheck(msgs){
     const w=document.getElementById('ck-warn'); if(!w) return;
+    const cc=COCKPIT_CHATS.find(x=>x.id===ckCurId); const isWa=cc&&cc.channel==='wa';
+    const NET=isWa?'WhatsApp':'Instagram';
+    const LIMIT=isWa?24:168;          // WhatsApp — 24 часа; Instagram — 7 дней (режим «ответ живого агента»)
+    const LIMTXT=isWa?'24 часа':'7 дней';
     let lastIn=0;
     for(const m of (msgs||[])){ if(m.t==='in' && m.ts){ const s=(m.ts>1e12?m.ts/1000:m.ts); if(s>lastIn) lastIn=s; } }
-    if(!lastIn){            // клиент ни разу не писал — Instagram писать не даст
+    if(!lastIn){            // клиент ни разу не писал — писать первым нельзя
       ckWindowOpen=false;
       w.style.display='block'; w.style.background='rgba(255,107,107,.15)'; w.style.color='#ff8f8f';
-      w.innerHTML='🔴 <b>Клиент ещё не писал вам.</b> Instagram разрешает писать первым только из рекламы — обычное сообщение не уйдёт.';
+      w.innerHTML='🔴 <b>Клиент ещё не писал вам.</b> '+NET+' разрешает писать первым только из рекламы — обычное сообщение не уйдёт.';
       return;
     }
     const h=(Date.now()/1000 - lastIn)/3600;
-    if(h>24){
+    if(h>LIMIT){
       ckWindowOpen=false;
       const days=Math.floor(h/24);
       w.style.display='block'; w.style.background='rgba(255,107,107,.15)'; w.style.color='#ff8f8f';
-      w.innerHTML='🔴 <b>Окно закрыто.</b> Клиент писал '+(days>=1?days+' дн. назад':Math.round(h)+' ч назад')+'. Instagram даёт отвечать только 24 часа после сообщения клиента — ответ <b>не уйдёт</b>, пока он не напишет снова.';
-    } else if(h>20){
+      w.innerHTML='🔴 <b>Окно закрыто.</b> Клиент писал '+(days>=1?days+' дн. назад':Math.round(h)+' ч назад')+'. '+NET+' даёт отвечать только '+LIMTXT+' после сообщения клиента — ответ <b>не уйдёт</b>, пока он не напишет снова.';
+    } else if(h>LIMIT-4){
       ckWindowOpen=true;
-      const left=Math.max(1,Math.round(24-h));
+      const left=Math.max(1,Math.round(LIMIT-h));
       w.style.display='block'; w.style.background='rgba(241,188,55,.15)'; w.style.color='#f1bc37';
       w.innerHTML='🟡 <b>Окно скоро закроется</b> — осталось ~'+left+' ч. Успейте ответить.';
     } else {
@@ -4664,7 +4668,7 @@
   function sendErrText(m){
     m=(m||'').toLowerCase();
     if(m.includes('window')||m.includes('24')||m.includes('окн')||m.includes('outside')||m.includes('allowed')||m.includes('срок')||m.includes('messaging')||m.includes('reengage')||m.includes('re-engag')||m.includes('policy'))
-      return 'Instagram разрешает отвечать клиенту только в течение 24 часов после его последнего сообщения. Этот клиент писал давно — Instagram заблокировал ответ. Можно будет ответить, когда он напишет снова (или напомнить о себе через сторис/публикацию).';
+      return 'Ответить можно ограниченное время после сообщения клиента (WhatsApp — 24 часа, Instagram — до 7 дней). Этот клиент писал давно — площадка заблокировала ответ. Можно будет ответить, когда он напишет снова (или напомнить о себе через сторис/публикацию).';
     if(m.includes('not found')||m.includes('не найден'))
       return 'Чат не найден — возможно, переписку удалили в Instagram.';
     if(m.includes('429')||m.includes('limit')||m.includes('rate')||m.includes('ограничил'))
