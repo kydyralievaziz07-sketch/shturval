@@ -436,7 +436,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.95.0<br>Instagram и WhatsApp теперь внутри раздела CRM (и в меню, и в выборе прав сотрудника) — отдельных вкладок больше нет</div>
+      Штурвал v3.97.0<br>Зарплата по-новому: полный оклад, 4 бесплатных выходных в месяц, с 5-го пропуска минус ставка за день; неотмеченные дни оплачиваются</div>
   </aside>
 
   <!-- MAIN -->
@@ -4956,8 +4956,9 @@
         '<div style="font-size:11px;color:var(--muted);margin-top:8px">Дни отмечает HR-менеджер. Оклад пока не задан.</div></div>';
       return;
     }
-    const subline='Отработано дней: <b style="color:var(--text)">'+(v.present_days||0)+'</b> · ставка '+fmt(v.daily_rate)+' '+MUNIT()+'/день'+
-      ((v.paid_weekends>0)?(' · выходные (оплач.): <b style="color:var(--text)">'+v.paid_weekends+'</b>'):'')+
+    const subline='Пропусков: <b style="color:var(--text)">'+(v.absent_days||0)+'</b> из '+(v.weekend_days||4)+' выходных'+
+      ((v.deduct_days>0)?(' · <b style="color:var(--red)">вычтено '+v.deduct_days+' дн</b>'):' · зарплата полная')+
+      ((v.present_days>0)?(' · пришёл '+v.present_days+' дн'):'')+
       ((v.partial_days>0)?(' · ещё '+v.hours_month+' ч частично (по '+fmt(v.hourly_rate||0)+' '+MUNIT()+'/ч)'):'');
     box.innerHTML='<div class="card" style="margin-top:16px"><h3>💼 Зарплата за '+mName+'</h3>'+
       '<div style="font-size:12px;color:var(--muted);margin-bottom:12px">'+subline+'</div>'+
@@ -4966,7 +4967,7 @@
       payBar('🎁 Премия',v.bonus,v.bonus_month,'#a78bfa')+
       payBar('💸 Аванс (взято)',v.advance,v.salary_month,'#ffb84d')+
       '<div style="border-top:1px solid var(--line);margin-top:6px;padding-top:12px;display:flex;justify-content:space-between;font-size:15px"><span>К выплате сейчас:</span><b><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span> '+MUNIT()+'</b></div>'+
-      '<div style="font-size:11px;color:var(--muted);margin-top:8px">Полный день считается по ставке. Если отработал не весь день, HR вписывает часы — тогда день считается по часам.</div></div>';
+      '<div style="font-size:11px;color:var(--muted);margin-top:8px">Зарплата = полный оклад. Первые '+(v.weekend_days||4)+' пропуска в месяц — бесплатные выходные; дальше за каждый пропуск вычитается ставка за день. Неотмеченные дни оплачиваются. Часы вписывает HR, если пришёл не весь день.</div></div>';
     renderMoney();
   }
   // =================== ИИ-ПОМОЩНИК МАГАЗИНА ===================
@@ -5255,7 +5256,7 @@
       const btn=v.marked_today
         ? '<button class="btn ghost" style="padding:4px 9px;font-size:12px;background:rgba(57,217,138,.15)" onclick="hrMark(\''+lg+'\',\'unpresent\')">✓ был сегодня</button>'
         : '<button class="btn" style="padding:4px 9px;font-size:12px" onclick="hrMark(\''+lg+'\',\'present\')">Пришёл сегодня</button>';
-      return '<tr><td><b>'+esc(s.name)+'</b></td><td>'+v.present_days+((v.paid_weekends>0)?(' <span style="color:var(--muted);font-size:11px" title="оплачиваемые выходные">+'+v.paid_weekends+' вых</span>'):'')+'</td>'+
+      return '<tr><td><b>'+esc(s.name)+'</b></td><td>'+'проп. '+(v.absent_days||0)+'/'+(v.weekend_days||4)+((v.deduct_days>0)?(' <span style="color:var(--red);font-size:11px" title="вычтено дней сверх выходных">−'+v.deduct_days+'</span>'):'')+'</td>'+
         '<td><span class="money" data-som="'+v.accrued+'">'+fmt(v.accrued)+'</span></td>'+
         '<td><span class="money" data-som="'+v.bonus+'">'+fmt(v.bonus)+'</span></td>'+
         '<td><span class="money" data-som="'+v.advance+'">'+fmt(v.advance)+'</span></td>'+
@@ -5760,16 +5761,16 @@
       const r=await apiFetch('/api/ads/campaigns',{},ONEC_BASE); const d=await r.json();
       const cs=d.campaigns||[];
       if(!cs.length){ el.innerHTML='<span style="color:var(--muted)">Пока нет кампаний. Создай первую выше ☝️</span>'; return; }
-      const running=cs.filter(c=>c.delivering).length;
-      const note='<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Реально откручивается сейчас: <b style="color:#39d98a">'+running+'</b> из '+cs.length+'. «Крутится» = кампания включена И работает хотя бы одна группа объявлений (тратит деньги сегодня).</div>';
+      const running=cs.filter(c=>c.spending).length;
+      const note='<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Тратят деньги сегодня: <b style="color:#39d98a">'+running+'</b> из '+cs.length+'. <span style="color:#39d98a">● Крутится</span> = реально откручивается сегодня; <span style="color:#5aa9ff">◐ Готова</span> = включена, но пока $0 за сегодня; <span style="color:#ffb84d">⚠ группы на паузе</span> = тумблер включён, но объявления не идут.</div>';
       el.innerHTML=note+'<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
         +'<tr style="color:var(--muted);text-align:left"><th style="padding:6px">Кампания</th><th>Статус</th><th>Бюджет/день</th><th>Сегодня</th><th>Потрачено</th><th>Охват</th><th>Клики</th><th>💬 Переписок</th><th></th></tr>'
         +cs.map(c=>{
           const on=c.status==='ACTIVE';           // положение переключателя (для кнопки)
-          const live=!!c.delivering;              // реально крутится
           let badge;
-          if(live) badge='<span style="color:#39d98a">● Крутится</span>';
-          else if(on) badge='<span style="color:#ffb84d" title="Кампания включена, но группы объявлений на паузе или без бюджета — деньги не тратятся">⚠ Включена, не крутит</span>';
+          if(c.spending) badge='<span style="color:#39d98a">● Крутится</span>';
+          else if(c.armed) badge='<span style="color:#5aa9ff" title="Кампания включена и группа объявлений активна, но за сегодня расхода ещё нет">◐ Готова</span>';
+          else if(on) badge='<span style="color:#ffb84d" title="Кампания включена, но группы объявлений на паузе или без бюджета — деньги не тратятся">⚠ группы на паузе</span>';
           else if(c.status==='PAUSED') badge='<span style="color:var(--muted)">❚❚ Пауза</span>';
           else badge='<span style="color:var(--muted)">'+esc(c.status||'')+'</span>';
           const today=Number(c.spend_today||0);
@@ -6144,7 +6145,7 @@
       // архив: только итоги за месяц, без кнопок/полей
       mainCtrl='';
       subMonth=v.is_video?('· '+(v.videos_month||0)+' видео за месяц')
-                         :('· '+(v.present_days||0)+' дн'+((v.partial_days>0)?(' · '+v.hours_month+' ч частично'):''));
+                         :('· пропусков '+(v.absent_days||0)+'/'+(v.weekend_days||4)+((v.deduct_days>0)?(' · −'+v.deduct_days+' дн'):'')+((v.partial_days>0)?(' · '+v.hours_month+' ч частично'):''));
     } else
     if(v.is_video){
       // МОБИЛОГРАФ: оплата по числу отснятых видео
@@ -6173,7 +6174,7 @@
           '</div>';
         mainCtrl=presentBtn+absentBtn+hoursCtrl;
       }
-      subMonth='· '+(v.present_days||0)+' дн'+((v.partial_days>0)?(' · '+v.hours_month+' ч частично'):'');
+      subMonth='· пропусков '+(v.absent_days||0)+'/'+(v.weekend_days||4)+((v.deduct_days>0)?(' · −'+v.deduct_days+' дн'):'')+((v.partial_days>0)?(' · '+v.hours_month+' ч частично'):'');
     }
     const payInfo=v.salary_month
       ? '<div style="font-size:12px;color:var(--muted)">К выплате <b style="color:var(--text)"><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span></b>'+

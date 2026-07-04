@@ -3937,25 +3937,32 @@ def payroll_view(user, rec=None, commission=0, commission_pct=10, fx=0):
         rate = round(sal / 30.0)            # оклад ÷ 30 (магазин работает каждый день)
     hr_precise = (rate / SHIFT_HOURS) if rate > 0 else 0.0
     hourly_rate = round(hr_precise)         # цена часа (для показа)
-    # По каждому дню: если есть часы — день частичный, считаем по часам;
-    # иначе если отмечен «пришёл» — полный день по ставке. («пришёл» + часы → по часам.)
-    dates = set([d for d in days.keys() if isinstance(d, str) and d[:7] == m] +
-                [d for d in hrs.keys() if isinstance(d, str) and d[:7] == m])
-    present_days = 0; partial_days = 0; hours_month = 0.0; accrued = 0.0
-    for d in dates:
-        h = float(hrs.get(d) or 0)
+    # За месяц: «пришёл» (полный день), частичные дни (по часам — пришёл не весь день) и «не пришёл» (пропуск).
+    present_days = 0; partial_days = 0; hours_month = 0.0; absent_days = 0
+    partial_deduct = 0.0                    # недоработка в частичные дни (пришёл, но меньше смены)
+    seen = set()
+    for d, hv in hrs.items():
+        if not (isinstance(d, str) and d[:7] == m):
+            continue
+        h = float(hv or 0)
         if h > 0:
-            accrued += h * hr_precise; hours_month += h; partial_days += 1
-        elif days.get(d) == "p":
-            accrued += rate; present_days += 1
-    accrued = round(accrued); hours_month = round(hours_month, 1)
-    # Оплачиваемые выходные: до N пропущенных дней в месяц считаем выходными и оплачиваем
-    # (магазин формально работает каждый день, но сотруднику положены выходные).
-    # Кап: present + partial + выходные ≤ 30 — чтобы не превысить полный оклад.
+            partial_days += 1; hours_month += h; seen.add(d)
+            partial_deduct += max(0.0, (SHIFT_HOURS - min(h, SHIFT_HOURS)) / SHIFT_HOURS) * rate
+    for d, st in days.items():
+        if not (isinstance(d, str) and d[:7] == m) or d in seen:
+            continue
+        if st == "p":
+            present_days += 1
+        elif st == "a":
+            absent_days += 1
+    hours_month = round(hours_month, 1)
+    # ЗАРПЛАТА = ПОЛНЫЙ ОКЛАД − пропуски сверх нормы выходных − недоработка в частичные дни.
+    # Каждому положено `weekends` выходных/мес (по умолч. 4): первые N пропусков НЕ вычитаются.
+    # С (N+1)-го пропуска — минус дневная ставка за каждый лишний день. Неотмеченные дни ОПЛАЧИВАЮТСЯ.
     weekends = int(float(user.get("weekend_days"))) if user.get("weekend_days") not in (None, "") else 4
-    paid_weekends = max(0, min(weekends, 30 - present_days - partial_days)) if (present_days + partial_days) > 0 else 0
-    if paid_weekends > 0 and rate > 0:
-        accrued = round(accrued + paid_weekends * rate)
+    free_used = min(absent_days, weekends)           # использованные выходные (не вычитаются)
+    deduct_days = max(0, absent_days - weekends)      # пропуски сверх нормы — вычитаются по ставке
+    accrued = round(max(0.0, sal - deduct_days * rate - partial_deduct))
     bonus = float(r.get("bonus") or 0); adv = float(r.get("advance") or 0)
     return {"name": name, "login": user.get("login", ""),
             "role": user.get("role", ""), "department": user.get("department", ""),
@@ -3963,7 +3970,8 @@ def payroll_view(user, rec=None, commission=0, commission_pct=10, fx=0):
             "sections": user.get("sections", []),
             "salary_month": sal, "daily_rate": rate, "bonus_month": float(user.get("bonus_month") or 0),
             "present_days": present_days, "partial_days": partial_days,
-            "paid_weekends": paid_weekends, "weekend_days": weekends,
+            "absent_days": absent_days, "deduct_days": deduct_days,
+            "paid_weekends": free_used, "weekend_days": weekends,
             "accrued": accrued, "bonus": bonus,
             "hourly_rate": hourly_rate, "shift_hours": SHIFT_HOURS,
             "hours_month": hours_month, "hours_today": float(hrs.get(today) or 0),
@@ -4487,10 +4495,16 @@ def ads_campaigns():
         sp_today = today.get(cid, 0)
         cbudget = _num(c.get("daily_budget", 0))
         budget = cbudget if cbudget > 0 else adset_budget.get(cid, 0)
-        # «Крутится» = кампания включена И есть активная группа И/или сегодня был расход.
-        delivering = (eff == "ACTIVE") and (cid in live_camps or sp_today > 0)
+        # Три честных состояния, а не один «активна»:
+        #  spending   — реально тратит деньги СЕГОДНЯ (это и есть «крутится»);
+        #  armed      — включена и есть активная группа, но пока $0 за сегодня (готова/раскачивается);
+        #  eff ACTIVE без активных групп — тумблер включён, но группы на паузе (деньги не идут).
+        spending = sp_today > 0
+        armed = (eff == "ACTIVE") and (cid in live_camps)
+        delivering = spending or armed   # совместимость: «работает вообще»
         out.append({"id": cid, "name": c.get("name"), "status": c.get("status"),
                     "effective_status": eff, "delivering": delivering,
+                    "spending": spending, "armed": armed,
                     "objective": c.get("objective"),
                     "budget": round(budget / ADS_CUR_MULT),
                     "spend_today": round(sp_today, 2),
@@ -4499,8 +4513,8 @@ def ads_campaigns():
                     "clicks": int(_num(i.get("clicks", 0))),
                     "conversations": _action(i, "onsite_conversion.messaging_conversation_started_7d",
                                              "onsite_conversion.total_messaging_connection")})
-    # Сначала реально работающие, затем включённые, затем пауза; внутри — по расходу за сегодня.
-    out.sort(key=lambda x: (x["delivering"], x["status"] == "ACTIVE", x["spend_today"]), reverse=True)
+    # Сначала реально тратящие, затем готовые, затем просто включённые, затем пауза.
+    out.sort(key=lambda x: (x["spending"], x["armed"], x["status"] == "ACTIVE", x["spend_today"]), reverse=True)
     return {"campaigns": out, "configured": True}
 
 def ads_set_status(cid, active):
