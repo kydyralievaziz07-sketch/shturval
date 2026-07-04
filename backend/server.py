@@ -221,7 +221,7 @@ SECTION_OF = [
     ("/api/market", "market"),
     ("/api/chats", "chats"), ("/api/chat", "chats"), ("/api/send", "chats"),
     ("/api/bot-feedback", "chats"),
-    ("/api/ig/clients", "clients"),
+    ("/api/ig/clients", "clients"), ("/api/wa/clients", "clients"),
     ("/api/ig/conversations", "chats"), ("/api/ig/thread", "chats"),
     ("/api/ig/reply", "chats"), ("/api/ig/accounts", "chats"),
     ("/api/ig/broadcast", "chats"), ("/api/ig/bot", "chats"), ("/api/ig/media", "chats"),
@@ -1481,8 +1481,12 @@ def _build_ig_conversations():
         convos[key]["count"] += 1
     out = sorted(convos.values(), key=lambda c: c["last_ts"], reverse=True)
     for c in out:
-        c["customer"] = ig_customer_name(c["customer_id"]) or c["customer_id"]
+        nm = ig_customer_name(c["customer_id"]) or c["customer_id"]
+        c["customer"] = nm
+        # username: из отдельной колонки, а если её нет — из имени, когда оно похоже на ник инстаграма
         uname = ig_customer_username(c["customer_id"])
+        if not uname and _re.match(r"^[A-Za-z0-9._]{1,30}$", nm):
+            uname = nm
         c["username"] = uname
         c["profile_url"] = ("https://instagram.com/" + uname) if uname else ""
     return out
@@ -2436,6 +2440,17 @@ def _build_wa_conversations():
 def wa_conversations():
     """Список диалогов WhatsApp (кэш 5с, имена — из БД, без живых запросов → быстро)."""
     return cached("wa_convos", 5, _build_wa_conversations)
+
+def wa_clients_base():
+    """База клиентов WhatsApp: номер телефона (wa_id) и имя (если известно)."""
+    out = []
+    for c in wa_conversations():
+        nm = c.get("customer") or ""
+        if nm.startswith("+"):          # это просто номер, имени нет
+            nm = ""
+        out.append({"phone": c.get("customer_id") or "", "name": nm,
+                    "last_ts": c.get("last_ts") or 0, "count": c.get("count") or 0})
+    return out
 
 def wa_thread(account_id, customer_id):
     """Сообщения одного диалога по возрастанию времени."""
@@ -5850,6 +5865,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/ig/clients"):
             try:
                 return self._send(200, {"clients": ig_clients_base()})
+            except Exception as e:
+                return self._send(200, {"clients": [], "error": str(e)})
+        if self.path.startswith("/api/wa/clients"):
+            try:
+                return self._send(200, {"clients": wa_clients_base()})
             except Exception as e:
                 return self._send(200, {"clients": [], "error": str(e)})
         if self.path.startswith("/api/ig/conversations"):

@@ -430,7 +430,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.99.0<br>Раздел «Клиенты»: единая база — имена и телефоны, а для писавших в Instagram — имя, @ник и ссылка на профиль; поиск и выгрузка в Excel</div>
+      Штурвал v4.0.0<br>База клиентов: живые ссылки на Instagram-профили (@ник) и номера телефонов из WhatsApp; пустые строки убраны, поиск по всем каналам</div>
   </aside>
 
   <!-- MAIN -->
@@ -5208,44 +5208,59 @@
       rows.map((r,i)=>'<tr><td>'+(i===0?'🥇 ':i===1?'🥈 ':i===2?'🥉 ':'')+esc(r.name)+'</td><td><b><span class="money" data-som="'+r.sum+'">'+fmt(r.sum)+'</span></b></td><td>'+r.cnt+'</td></tr>').join('')+
       '</tbody></table>';
   }
-  // ===== База клиентов: CRM (имя+телефон) + Instagram (имя, @ник, ссылка на профиль) =====
-  let CLBASE_IG=[];   // клиенты, писавшие в Instagram (из /api/ig/clients)
+  // ===== База клиентов: CRM (имя+телефон) + Instagram (@ник+ссылка) + WhatsApp (номер+имя) =====
+  let CLBASE_IG=[], CLBASE_WA=[];
+  function igHandle(x){ x=(x||'').trim(); return /^[A-Za-z0-9._]{1,30}$/.test(x)?x:''; }
   async function loadClientsBase(){
-    try{ const r=await apiFetch('/api/ig/clients',{},ONEC_BASE); const d=await r.json(); CLBASE_IG=Array.isArray(d.clients)?d.clients:[]; }
-    catch(e){ CLBASE_IG=[]; }
+    const jf=async(u)=>{ try{ const r=await apiFetch(u,{},ONEC_BASE); return await r.json(); }catch(e){ return {}; } };
+    const ig=await jf('/api/ig/clients');
+    CLBASE_IG=Array.isArray(ig.clients)?ig.clients:[];
+    let wa=await jf('/api/wa/clients');                 // новый фид (после редеплоя)
+    if(Array.isArray(wa.clients)) CLBASE_WA=wa.clients;
+    else { const c=await jf('/api/wa/conversations');   // запасной путь: из диалогов
+      CLBASE_WA=(Array.isArray(c.conversations)?c.conversations:[]).map(x=>({phone:x.customer_id||'',name:(x.customer&&x.customer[0]!=='+')?x.customer:''})); }
     renderClientsBase();
   }
   function clientsBaseRows(){
-    const byName=new Map();
-    (CRM.clients||[]).forEach(c=>{
-      const k=(c.name||'').trim().toLowerCase();
-      const row={name:c.name||'',phone:c.phone||'',source:c.source||'',ig_user:'',ig_url:'',ig_name:''};
-      if(k){ if(!byName.has(k)) byName.set(k,row); else { const ex=byName.get(k); if(!ex.phone&&row.phone) ex.phone=row.phone; } }
-      else byName.set(Symbol(),row);
-    });
-    (CLBASE_IG||[]).forEach(ic=>{
-      const nm=(ic.name||'').trim(); const k=nm.toLowerCase();
-      const ex=k?byName.get(k):null;
-      if(ex){ ex.ig_user=ic.username||''; ex.ig_url=ic.profile_url||''; ex.ig_name=ic.name||''; if(!ex.source) ex.source='instagram'; }
-      else byName.set(k||Symbol(),{name:nm||ic.username||'клиент',phone:'',source:'instagram',ig_user:ic.username||'',ig_url:ic.profile_url||'',ig_name:ic.name||''});
-    });
-    return [...byName.values()];
+    const rows=[], byName=new Map(), byPhone=new Map();
+    const digits=s=>String(s||'').replace(/\D+/g,'');
+    function push(r){
+      const p=digits(r.phone), nk=(r.name||'').trim().toLowerCase();
+      let ex=null;
+      if(p&&byPhone.has(p)) ex=byPhone.get(p);
+      else if(nk&&byName.has(nk)) ex=byName.get(nk);
+      if(ex){
+        if(!ex.phone&&r.phone){ ex.phone=r.phone; if(p) byPhone.set(p,ex); }
+        if(!ex.name&&r.name){ ex.name=r.name; }
+        if(!ex.ig_url&&r.ig_url){ ex.ig_url=r.ig_url; ex.ig_user=r.ig_user; }
+        if((!ex.source||ex.source==='')&&r.source) ex.source=r.source;
+        return;
+      }
+      rows.push(r); if(p) byPhone.set(p,r); if(nk) byName.set(nk,r);
+    }
+    (CRM.clients||[]).forEach(c=>push({name:c.name||'',phone:c.phone||'',source:c.source||'',ig_user:'',ig_url:''}));
+    (CLBASE_IG||[]).forEach(ic=>{ const uname=ic.username||igHandle(ic.name);
+      push({name:ic.name||uname||'',phone:'',source:'instagram',ig_user:uname||'',ig_url:ic.profile_url||(uname?('https://instagram.com/'+uname):'')}); });
+    (CLBASE_WA||[]).forEach(wc=>push({name:wc.name||'',phone:wc.phone||'',source:'whatsapp',ig_user:'',ig_url:''}));
+    // выбрасываем совсем пустые строки (нет ни имени, ни телефона, ни ссылки)
+    return rows.filter(r=>(r.name&&r.name.trim())||r.phone||r.ig_url);
   }
   function renderClientsBase(){
     const box=document.getElementById('clbase-table'); if(!box) return;
     let rows=clientsBaseRows();
     const q=((document.getElementById('clbase-search')||{}).value||'').trim().toLowerCase();
-    if(q) rows=rows.filter(r=>(r.name+' '+r.phone+' '+r.ig_user+' '+r.ig_name).toLowerCase().includes(q));
+    if(q) rows=rows.filter(r=>(r.name+' '+r.phone+' '+r.ig_user).toLowerCase().includes(q));
     rows.sort((a,b)=>(a.name||'').localeCompare(b.name||'','ru'));
-    if(!rows.length){ box.innerHTML='<div style="color:var(--muted);font-size:13px">Пока никого. Клиенты появятся из заявок CRM и из переписок Instagram.</div>'; return; }
-    const CAP=500; const shown=rows.slice(0,CAP);
-    const igCell=r=>{
+    if(!rows.length){ box.innerHTML='<div style="color:var(--muted);font-size:13px">Пока никого. Клиенты появятся из заявок CRM и переписок Instagram/WhatsApp.</div>'; return; }
+    const CAP=800; const shown=rows.slice(0,CAP);
+    const chan=r=>{
       if(r.ig_url) return '<a href="'+esc(r.ig_url)+'" target="_blank" rel="noopener" style="color:#c98cff;text-decoration:none">@'+esc(r.ig_user)+' ↗</a>';
-      if(r.source&&r.source.indexOf('insta')>=0) return '<span style="color:var(--muted)">Instagram</span>';
+      if((r.source||'').indexOf('insta')>=0) return '<span style="color:var(--muted)">Instagram</span>';
+      if((r.source||'').indexOf('what')>=0||(r.source||'').indexOf('wa')>=0) return '<span style="color:#3fae5a">WhatsApp</span>';
       return '<span style="color:var(--muted)">—</span>';
     };
-    box.innerHTML='<div style="overflow-x:auto"><table><thead><tr><th>Имя</th><th>Телефон</th><th>Instagram</th></tr></thead><tbody>'+
-      shown.map(r=>'<tr><td>'+esc(r.name||'—')+'</td><td>'+(r.phone?'<a href="tel:'+esc(r.phone)+'" style="color:inherit;text-decoration:none">'+esc(r.phone)+'</a>':'<span style="color:var(--muted)">—</span>')+'</td><td>'+igCell(r)+'</td></tr>').join('')+
+    box.innerHTML='<div style="overflow-x:auto"><table><thead><tr><th>Имя</th><th>Телефон</th><th>Instagram / WhatsApp</th></tr></thead><tbody>'+
+      shown.map(r=>'<tr><td>'+esc(r.name||'—')+'</td><td>'+(r.phone?'<a href="tel:'+esc(r.phone)+'" style="color:inherit;text-decoration:none">'+esc(r.phone)+'</a>':'<span style="color:var(--muted)">—</span>')+'</td><td>'+chan(r)+'</td></tr>').join('')+
       '</tbody></table></div>'+
       '<div style="margin-top:8px;font-size:12px;color:var(--muted)">Всего: '+rows.length+(rows.length>CAP?(' · показаны первые '+CAP+', уточни поиском'):'')+'</div>';
   }
