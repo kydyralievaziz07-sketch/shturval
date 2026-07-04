@@ -430,7 +430,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.98.0<br>Реклама: в «Отчётах» можно выбрать любой период (и свой диапазон дат), кампании идут от новых к старым; в «Анализе» можно выбрать конкретную кампанию и период</div>
+      Штурвал v3.99.0<br>Раздел «Клиенты»: единая база — имена и телефоны, а для писавших в Instagram — имя, @ник и ссылка на профиль; поиск и выгрузка в Excel</div>
   </aside>
 
   <!-- MAIN -->
@@ -1525,7 +1525,7 @@
     const sec=document.getElementById('tab-'+tab); if(sec) sec.classList.remove('hide');
     document.body.classList.toggle('tab-wa', tab==='wainbox');   // WhatsApp на всю высоту, без скролла страницы
     document.body.classList.toggle('wa-open', tab==='wainbox' && !!waCur);  // мобильный: переписка только если выбран чат
-    if(titles[tab]){ const pt=document.getElementById('page-title'),ps=document.getElementById('page-sub'); let _t0=titles[tab][0]; if(tab==='rentdash') _t0=rentBrand()+' — Дашборд'; if(pt)pt.textContent=_t0; if(ps)ps.textContent=titles[tab][1]; }
+    if(titles[tab]){ const pt=document.getElementById('page-title'),ps=document.getElementById('page-sub'); if(pt)pt.textContent=titles[tab][0]; if(ps)ps.textContent=titles[tab][1]; }
     renderTopNav(); renderSubmenu();
     dispatchTab(tab);
     // кнопки периода (Сегодня/Неделя/Месяц) показываем только там, где они реально работают
@@ -5192,6 +5192,7 @@
       kpiCard('Покупок (1С)','—')+kpiCard('Товаров продано сегодня','—')+'</div>'+
       '<div class="note" style="margin-top:12px">⏳ Эти цифры появятся автоматически, когда 1С начнёт отдавать продажи. Сейчас ждём метод выгрузки продаж от 1С-программиста.</div>';
     renderClientsBest();
+    loadClientsBase();
     renderMoney();
   }
   function renderClientsBest(){
@@ -5991,8 +5992,6 @@
         leaves.push({sec:sec,label:_tabLabel(tab)});
       });
       // «Машины: полный доступ» — сотрудник видит весь автопарк, цены и правит машины
-      // (обычная галочка «Машины» = только сводка парка). Показываем только главному
-      // владельцу (isOwner): кабинет FreeWays остаётся ровно как сейчас.
       if(m.key==='rent' && isOwner()){
         var _ci=leaves.findIndex(function(l){return l.sec==='rent_cars';});
         if(_ci>=0) leaves.splice(_ci+1,0,{sec:'rent_cars_full',label:'↳ Машины: полный доступ (цены + правка)'});
@@ -6423,9 +6422,6 @@
   function rentS(){ return (RENT&&RENT.summary)||{}; }
   // владелец проката (полный контроль: машины, план, импорт). Менеджеры — только операции.
   function rentIsOwner(){ return (typeof isCabinetOwner==='function') && isCabinetOwner(); }
-  // Полный доступ к «Машинам» (список, цены, добавление/правка/продажа): владелец ИЛИ
-  // сотрудник с явной галочкой «rent_cars_full». Клиентский кабинет FreeWays её не
-  // получает — его сотрудники по-прежнему видят только сводку парка (без списка и цен).
   function rentCarsFull(){ return rentIsOwner() || (USER.sections||[]).indexOf('rent_cars_full')>=0; }
   // администратор проката: владелец ИЛИ роль содержит «админ» (плюс старый токен rent_notes_edit)
   function isRentAdmin(){ var r=(USER.role||'').toLowerCase(); return rentIsOwner() || r.indexOf('админ')>=0 || r.indexOf('admin')>=0 || ((USER.sections||[]).indexOf('rent_notes_edit')>=0); }
@@ -6680,7 +6676,7 @@
       kpiCard('Всего машин',active.length)+kpiCard('Свободно',cnt('свобод'))+kpiCard('В аренде',cnt('аренд'))+kpiCard('На ремонте',cnt('ремонт'))+'</div></div>';
     // сотрудник видит ТОЛЬКО общий статус парка, без списка машин
     if(!own){
-      b.innerHTML=park+'<div class="note">🔒 Список машин и цены видит только владелец. Вам доступен общий статус парка: сколько всего машин, свободно, в аренде и на ремонте.</div>';
+      b.innerHTML=park+'<div class="note">🔒 Список машин и цены доступны владельцу и сотрудникам с полным доступом к «Машинам». Вам доступен общий статус парка: сколько всего машин, свободно, в аренде и на ремонте.</div>';
       return;
     }
     // владелец — полный список + продажа + архив проданных с прибылью

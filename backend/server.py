@@ -735,7 +735,6 @@ def rent_apply(action, p, company=None, user=None):
                   "add_rtask", "edit_rtask", "del_rtask") and not is_admin:
         return {"error": "Заметки и задачи может ставить и менять владелец или администратор"}
     # Машины: владелец ИЛИ сотрудник с полным доступом «rent_cars_full»
-    # (у кабинета FreeWays этого токена нет — там правит только владелец, как раньше).
     can_cars = is_owner or ("rent_cars_full" in (user.get("sections") or []))
     if action in ("add_car", "edit_car", "del_car") and not can_cars:
         return {"error": "Машины может менять владелец или сотрудник с доступом «Машины: полный»"}
