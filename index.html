@@ -15,13 +15,7 @@
     --bg:#eef1f6; --panel:#ffffff; --panel2:#f1f4f9; --line:#dfe4ec;
     --text:#1b2030; --muted:#697586;
   }
-  /* фирменная тема (FREE WAYS — чёрный фон, красный акцент) */
-  body.brand{
-    --bg:#0a0a0a; --panel:#141414; --panel2:#1d1d1f; --line:#2c2c2e;
-    --text:#f5f5f7; --muted:#8d8d93; --accent:#e11d2a;
-    --red:#ff5b5b; --green:#37d39a; --amber:#ffb84d; --purple:#b08bff;
-  }
-  body.brand .topnav,body.brand .sidebar{background:#000}
+  /* тема «brand» удалена — была для стороннего клиента */
   /* WhatsApp-тема (тёмно-зелёная, как в WhatsApp) */
   body.wa{
     --bg:#0b141a; --panel:#111b21; --panel2:#202c33; --line:#2a3942;
@@ -436,7 +430,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v3.97.0<br>Зарплата по-новому: полный оклад, 4 бесплатных выходных в месяц, с 5-го пропуска минус ставка за день; неотмеченные дни оплачиваются</div>
+      Штурвал v3.98.0<br>Реклама: в «Отчётах» можно выбрать любой период (и свой диапазон дат), кампании идут от новых к старым; в «Анализе» можно выбрать конкретную кампанию и период</div>
   </aside>
 
   <!-- MAIN -->
@@ -810,6 +804,14 @@
       </div>
       <div id="clients-kpis" class="kpis"></div>
       <div class="card" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+          <h3 style="margin:0">🗂 База клиентов</h3>
+          <button class="btn ghost" style="font-size:12px;padding:6px 12px" onclick="exportClientsBase()">⬇️ База в Excel</button>
+        </div>
+        <input id="clbase-search" placeholder="🔍 поиск по имени, телефону или @нику…" oninput="renderClientsBase()" style="margin-top:10px">
+        <div id="clbase-table" style="margin-top:10px">Загрузка…</div>
+      </div>
+      <div class="card" style="margin-bottom:16px">
         <h3>📦 Продажи из 1С</h3>
         <div id="clients-1c"></div>
       </div>
@@ -1066,7 +1068,6 @@
           <div class="thsel" style="display:flex;gap:6px;flex-wrap:wrap">
             <button class="btn ghost" id="thbtn-dark" onclick="setTheme('dark')">🌙 Тёмно-синяя</button>
             <button class="btn ghost" id="thbtn-light" onclick="setTheme('light')">☀️ Светлая</button>
-            <button class="btn ghost" id="thbtn-brand" onclick="setTheme('brand')">🏁 FREE WAYS</button>
             <button class="btn ghost" id="thbtn-wa" onclick="setTheme('wa')">🟢 WhatsApp</button>
             <button class="btn ghost" id="thbtn-branddark" onclick="setTheme('branddark')">🔵 Bizmart тёмная</button>
             <button class="btn ghost" id="thbtn-brandlight" onclick="setTheme('brandlight')">🟡 Bizmart светлая</button>
@@ -1445,9 +1446,8 @@
     {key:'ai',   icon:'🤖', label:'ИИ',      tabs:['ai','sim']}
   ];
   let curModule='crm', curTab='dash';
-  // У компании FREE WAYS раздел «Авто Рент» называется «FreeWays».
-  function rentBrand(){ return isRentCabinet() ? 'FreeWays' : 'Авто Рент'; }
-  function modLabel(m){ return m.key==='rent' ? rentBrand() : m.label; }
+  function rentBrand(){ return 'Авто Рент'; }
+  function modLabel(m){ return m.label; }
   function tabVisible(tab){
     if(tab==='set'||tab==='myday') return true;
     if(tab.indexOf('rent')===0){
@@ -1457,6 +1457,8 @@
       if(tab==='rentalert') return (USER.sections||[]).some(function(s){return s.indexOf('rent')===0;});
       // «Заметки» и «Задачи» видят все сотрудники проката (заметки — читают, задачи — свои)
       if(tab==='rentnotes'||tab==='renttasks') return (USER.sections||[]).some(function(s){return s.indexOf('rent')===0;});
+      // «Машины» открывает обычный доступ к вкладке ИЛИ полный доступ «rent_cars_full»
+      if(tab==='rentcars') return canSee('rent_cars')||canSee('rent_cars_full');
       return canSee('rent_'+tab.slice(4));
     }
     if(tab==='hr') return isOwner()||USER.sections.indexOf('hr')>=0;
@@ -1470,9 +1472,7 @@
     if(tab==='assort') return isOwner()||canSee('assort')||canSee('sales')||canSee('analytics');
     return canSee(tab);
   }
-  // временно скрытые модули — прячем ИКОНКУ у тех, кто видит их только через «all» (владелец-Бизмарт).
-  // У кого есть ПРЯМОЙ доступ к разделу (напр. FREE WAYS с 'rent') — модуль остаётся.
-  // Чтобы вернуть «Авто Рент» владельцу — очистить массив: const HIDDEN_MODULES=[];
+  // временно скрытые модули — прячем ИКОНКУ у тех, кто видит их только через «all».
   const HIDDEN_MODULES=[];
   function _explicitModule(key){
     if(key==='rent') return (USER.sections||[]).some(function(s){ return s==='rent'||s.indexOf('rent_')===0; });
@@ -1670,34 +1670,22 @@
   // --- пользователь и роли (что ему показывать) ---
   let USER={name:'',sections:['all'],role:'',department:'',plan_day:0};
   function canSee(tab){ return USER.sections.indexOf('all')>=0 || USER.sections.indexOf(tab)>=0; }
-  // isOwner = ПОЛНЫЙ доступ ко всем модулям (только аккаунт с разделом 'all', напр. Бизмарт).
-  // Видимость вкладок идёт по разделам, чтобы у проката были ТОЛЬКО Авто Рент/Команда/ИИ.
   function isOwner(){ return USER.sections.indexOf('all')>=0; }
-  // владелец КОНКРЕТНОГО кабинета (флаг owner) — правит машины/план/импорт в своём разделе,
-  // но НЕ расширяет список видимых модулей.
   function isCabinetOwner(){ return !!USER.owner || USER.sections.indexOf('all')>=0; }
-  // кабинет проката (не магазин Бизмарт): в форме сотрудника показываем «% за авто» вместо «ставки за видео»
-  function isRentCabinet(){ return USER.sections.indexOf('all')<0 && (canSee('rent') || (USER.sections||[]).some(function(s){return s.indexOf('rent')===0;})); }
-  // подпись валюты: в прокате — из настроек кабинета (по умолч. $), в магазине — сом
-  function MUNIT(){ return isRentCabinet() ? ((typeof RENT!=='undefined'&&RENT&&RENT.summary&&RENT.summary.currency)||'$') : 'сом'; }
+  function isRentCabinet(){ return false; }
+  function MUNIT(){ return 'сом'; }
   function _toggleEmpPay(){
-    var rc=isRentCabinet();
     var cb=document.getElementById('emp-comm-block'), vb=document.getElementById('emp-video-block');
-    if(cb) cb.style.display=rc?'':'none';
-    if(vb) vb.style.display=rc?'none':'';
-    // оклад вводится в СОМАХ (потом переводим в $ кабинета по курсу), в магазине — как обычно
-    var sl=document.getElementById('emp-salary-label'); if(sl) sl.textContent='Зарплата в месяц, '+(rc?'сом':MUNIT());
+    if(cb) cb.style.display='none';
+    if(vb) vb.style.display='';
+    var sl=document.getElementById('emp-salary-label'); if(sl) sl.textContent='Зарплата в месяц, '+MUNIT();
     empSalaryHint();
   }
   // курс сом→$ из сводки проката (для подсказки и формы); по умолчанию 87
   function rentFx(){ try{ return (RENT&&RENT.summary&&+RENT.summary.som_per_usd)||87; }catch(e){ return 87; } }
-  // подсказка «≈ $X» под полем оклада (только в кабинете проката)
   function empSalaryHint(){
     var h=document.getElementById('emp-salary-usd'); if(!h) return;
-    var rc=(typeof isRentCabinet==='function'&&isRentCabinet());
-    if(!rc){ h.textContent=''; return; }
-    var som=parseFloat((document.getElementById('emp-salary').value||'').replace(/\s/g,'').replace(',','.'))||0;
-    h.textContent=som>0?('≈ '+Math.round(som/rentFx())+' '+MUNIT()+' (курс '+Math.round(rentFx())+' сом/$)'):'';
+    h.textContent='';
   }
   function applyUser(d){
     // ВАЖНО: пустой массив [] = «нет доступа к разделам» (только Мой день/Настройки),
@@ -1725,13 +1713,9 @@
     if(firstMod){ curModule=firstMod.key; const t=firstMod.tabs.filter(tabVisible); curTab=t[0]||'set'; }
     else { curModule='crm'; curTab='set'; }
     renderTopNav(); renderSubmenu(); openTab(curTab);
-    // колокольчик «Требует внимания» — торговля ИЛИ прокат (должники + сдачи авто)
     const bell=document.getElementById('bell-btn');
-    const _rentCab=(typeof isRentCabinet==='function'&&isRentCabinet());
     if(bell){
-      // обновления (колокольчик): в прокате — ТОЛЬКО владельцу; в торговле — владелец/CRM/товары/дашборд
-      const showBell=_rentCab ? (typeof isCabinetOwner==='function'&&isCabinetOwner())
-                              : (isOwner()||canSee('prod')||canSee('crm')||canSee('dash'));
+      const showBell=isOwner()||canSee('prod')||canSee('crm')||canSee('dash');
       bell.style.display=showBell?'':'none';
     }
     const u=document.querySelector('.user'); if(u&&u.childNodes[0]) u.childNodes[0].nodeValue=(USER.name||'Пользователь')+' ';
@@ -1749,15 +1733,11 @@
     const sl=document.getElementById('set-login'); if(sl) sl.value=getLg()||'';
     const pn=document.getElementById('set-pname'); if(pn) pn.value=USER.name||'';
     const pr=document.getElementById('set-prole'); if(pr) pr.value=(all?'Владелец':(USER.role||''));
-    // авто-воронка по переписке — только для кабинетов с CRM/чатами (в прокате прячем)
     var ra=document.getElementById('set-row-auto');
     if(ra) ra.style.display=(all||canSee('crm')||canSee('deals')||canSee('chats'))?'':'none';
-    // блок оплаты менеджеров проката — только владельцу кабинета проката
     var rp=document.getElementById('set-rentpay');
-    // оплата+валюта проката — ТОЛЬКО в кабинете проката (Freeways). В Бизмарте (полный кабинет) этого блока нет.
-    if(rp){ var showPay=(typeof rentIsOwner==='function'&&rentIsOwner()&&typeof isRentCabinet==='function'&&isRentCabinet()); rp.style.display=showPay?'':'none'; if(showPay) loadRentPay(); }
-    // долларовый тумблер (FX, для магазина) прячем в кабинете проката — там своя валюта
-    var fx=document.getElementById('set-row-fx'); if(fx) fx.style.display=(typeof isRentCabinet==='function'&&isRentCabinet())?'none':'';
+    if(rp){ rp.style.display='none'; }
+    var fx=document.getElementById('set-row-fx'); if(fx) fx.style.display='';
     applyAvatar();
   }
   function _hlCur(){
@@ -2005,8 +1985,7 @@
   }
   // число без валюты (валюту дописывает MUNIT() рядом) — для кабинета проката, где суммы уже в $
   function nfmt(n){ return (Number(n)||0).toLocaleString('ru-RU'); }
-  // формат суммы для зарплатных окон: прокат → число (рядом MUNIT '$'), магазин → как было
-  function hfmt(n){ return (typeof isRentCabinet==='function'&&isRentCabinet()) ? nfmt(n) : fmt(n); }
+  function hfmt(n){ return fmt(n); }
   function esc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
   // превращаем ссылки в кликабельные (например, когда клиент пришёл с рекламы/сторис)
   function linkify(s){
@@ -3144,9 +3123,8 @@
   // --- ВАЛЮТА: переключение сом / доллар с автоматическим курсом ---
   function mkMoney(som){const s=document.createElement('span');s.className='money';s.dataset.som=som;s.textContent=fmt(som);return s;}
   function renderMoney(){
-    var rent=(typeof isRentCabinet==='function'&&isRentCabinet());
     document.querySelectorAll('.money').forEach(function(el){
-      el.textContent = rent ? (nfmt(el.dataset.som)+' '+MUNIT()) : fmt(el.dataset.som);
+      el.textContent = fmt(el.dataset.som);
     });
   }
   function renderAll(){renderMoney(); if(window._crmData) renderCRM(window._crmData);}
@@ -4855,8 +4833,6 @@
   }
   function renderMyDay(){
     const box=document.getElementById('myday-body'); if(!box) return;
-    // КАБИНЕТ ПРОКАТА: свой «Мой день» — личная статистика по аренде (без магазина/1С)
-    if(typeof isRentCabinet==='function' && isRentCabinet()){ renderMyDayRent(); return; }
     if(!_salesHist) loadSalesHistory();         // подтянуть продажи 1С для графиков
     // HR-менеджер и администраторы не продают — показываем только зарплату/дни
     const isHR=(USER.role==='hr')||((USER.sections||[]).indexOf('hr')>=0 && !isOwner());
@@ -5231,6 +5207,52 @@
       rows.map((r,i)=>'<tr><td>'+(i===0?'🥇 ':i===1?'🥈 ':i===2?'🥉 ':'')+esc(r.name)+'</td><td><b><span class="money" data-som="'+r.sum+'">'+fmt(r.sum)+'</span></b></td><td>'+r.cnt+'</td></tr>').join('')+
       '</tbody></table>';
   }
+  // ===== База клиентов: CRM (имя+телефон) + Instagram (имя, @ник, ссылка на профиль) =====
+  let CLBASE_IG=[];   // клиенты, писавшие в Instagram (из /api/ig/clients)
+  async function loadClientsBase(){
+    try{ const r=await apiFetch('/api/ig/clients',{},ONEC_BASE); const d=await r.json(); CLBASE_IG=Array.isArray(d.clients)?d.clients:[]; }
+    catch(e){ CLBASE_IG=[]; }
+    renderClientsBase();
+  }
+  function clientsBaseRows(){
+    const byName=new Map();
+    (CRM.clients||[]).forEach(c=>{
+      const k=(c.name||'').trim().toLowerCase();
+      const row={name:c.name||'',phone:c.phone||'',source:c.source||'',ig_user:'',ig_url:'',ig_name:''};
+      if(k){ if(!byName.has(k)) byName.set(k,row); else { const ex=byName.get(k); if(!ex.phone&&row.phone) ex.phone=row.phone; } }
+      else byName.set(Symbol(),row);
+    });
+    (CLBASE_IG||[]).forEach(ic=>{
+      const nm=(ic.name||'').trim(); const k=nm.toLowerCase();
+      const ex=k?byName.get(k):null;
+      if(ex){ ex.ig_user=ic.username||''; ex.ig_url=ic.profile_url||''; ex.ig_name=ic.name||''; if(!ex.source) ex.source='instagram'; }
+      else byName.set(k||Symbol(),{name:nm||ic.username||'клиент',phone:'',source:'instagram',ig_user:ic.username||'',ig_url:ic.profile_url||'',ig_name:ic.name||''});
+    });
+    return [...byName.values()];
+  }
+  function renderClientsBase(){
+    const box=document.getElementById('clbase-table'); if(!box) return;
+    let rows=clientsBaseRows();
+    const q=((document.getElementById('clbase-search')||{}).value||'').trim().toLowerCase();
+    if(q) rows=rows.filter(r=>(r.name+' '+r.phone+' '+r.ig_user+' '+r.ig_name).toLowerCase().includes(q));
+    rows.sort((a,b)=>(a.name||'').localeCompare(b.name||'','ru'));
+    if(!rows.length){ box.innerHTML='<div style="color:var(--muted);font-size:13px">Пока никого. Клиенты появятся из заявок CRM и из переписок Instagram.</div>'; return; }
+    const CAP=500; const shown=rows.slice(0,CAP);
+    const igCell=r=>{
+      if(r.ig_url) return '<a href="'+esc(r.ig_url)+'" target="_blank" rel="noopener" style="color:#c98cff;text-decoration:none">@'+esc(r.ig_user)+' ↗</a>';
+      if(r.source&&r.source.indexOf('insta')>=0) return '<span style="color:var(--muted)">Instagram</span>';
+      return '<span style="color:var(--muted)">—</span>';
+    };
+    box.innerHTML='<div style="overflow-x:auto"><table><thead><tr><th>Имя</th><th>Телефон</th><th>Instagram</th></tr></thead><tbody>'+
+      shown.map(r=>'<tr><td>'+esc(r.name||'—')+'</td><td>'+(r.phone?'<a href="tel:'+esc(r.phone)+'" style="color:inherit;text-decoration:none">'+esc(r.phone)+'</a>':'<span style="color:var(--muted)">—</span>')+'</td><td>'+igCell(r)+'</td></tr>').join('')+
+      '</tbody></table></div>'+
+      '<div style="margin-top:8px;font-size:12px;color:var(--muted)">Всего: '+rows.length+(rows.length>CAP?(' · показаны первые '+CAP+', уточни поиском'):'')+'</div>';
+  }
+  function exportClientsBase(){
+    const rows=[['Имя','Телефон','Instagram ник','Ссылка на профиль','Источник']];
+    clientsBaseRows().forEach(r=>rows.push([r.name||'',r.phone||'',r.ig_user?('@'+r.ig_user):'',r.ig_url||'',r.source||'']));
+    downloadCSV('База_клиентов_Бизмарт.csv',rows);
+  }
   // =================== ПЕРСОНАЛ (владелец) ===================
   let STAFF_PAY={};
   async function loadStaff(){
@@ -5427,18 +5449,44 @@
     renderAdsForm();
     loadAdsCampaigns();
   }
+  // Периоды для отчётов/анализа (совпадают с бэкендом ADS_PERIODS).
+  const ADS_PERIODS=[['today','Сегодня'],['yesterday','Вчера'],['last_7d','7 дней'],['last_14d','14 дней'],['last_30d','30 дней'],['last_90d','90 дней'],['this_month','Этот месяц'],['last_month','Прошлый месяц'],['maximum','Всё время']];
+  let _adsRep={period:'maximum',since:'',until:''};
+  let _adsAn={campaign:'',period:'maximum',since:'',until:'',camps:[]};
+  function adsPeriodQuery(st){
+    if(st.period==='custom'&&st.since&&st.until) return 'since='+encodeURIComponent(st.since)+'&until='+encodeURIComponent(st.until);
+    return 'period='+encodeURIComponent(st.period==='custom'?'maximum':st.period);
+  }
+  function adsPeriodSelect(st,onChangeFn,onDatesFn,idp){
+    const isC=st.period==='custom';
+    const opts=ADS_PERIODS.map(p=>'<option value="'+p[0]+'"'+(p[0]===st.period?' selected':'')+'>'+p[1]+'</option>').join('')
+      +'<option value="custom"'+(isC?' selected':'')+'>Свой период…</option>';
+    let h='<span style="font-size:12px;color:var(--muted);margin-right:6px">Период</span>'
+      +'<select onchange="'+onChangeFn+'(this.value)" style="'+ADS_INP+';max-width:190px;display:inline-block;width:auto">'+opts+'</select>';
+    if(isC){
+      h+=' <input type="date" id="'+idp+'-since" value="'+esc(st.since||'')+'" onchange="'+onDatesFn+'()" style="'+ADS_INP+';max-width:160px;display:inline-block;width:auto">'
+        +' <span style="color:var(--muted)">—</span> <input type="date" id="'+idp+'-until" value="'+esc(st.until||'')+'" onchange="'+onDatesFn+'()" style="'+ADS_INP+';max-width:160px;display:inline-block;width:auto">';
+    }
+    return h;
+  }
+  function adsRepSetPeriod(v){ _adsRep.period=v; if(v!=='custom'){_adsRep.since='';_adsRep.until='';} loadAdsReport(); }
+  function adsRepSetDates(){ const s=document.getElementById('adsrepdt-since'),u=document.getElementById('adsrepdt-until'); if(!s||!u)return; _adsRep.since=s.value; _adsRep.until=u.value; if(s.value&&u.value) loadAdsReport(); }
+  function adsAnSetPeriod(v){ _adsAn.period=v; if(v!=='custom'){_adsAn.since='';_adsAn.until='';} loadAdsAnalysis(); }
+  function adsAnSetDates(){ const s=document.getElementById('adsandt-since'),u=document.getElementById('adsandt-until'); if(!s||!u)return; _adsAn.since=s.value; _adsAn.until=u.value; if(s.value&&u.value) loadAdsAnalysis(); }
+  function adsAnSetCampaign(v){ _adsAn.campaign=v; loadAdsAnalysis(); }
   async function loadAdsReport(){
     const el=document.getElementById('adsreport-body'); if(!el) return;
     if(!ONEC_BASE){ el.innerHTML='<div class="card">🟠 Нужен подключённый сервер.</div>'; return; }
-    el.innerHTML='<div class="card"><span style="color:var(--muted)">⏳ Собираю отчёт…</span></div>';
+    const controls='<div class="card" style="padding:12px;margin-bottom:12px">'+adsPeriodSelect(_adsRep,'adsRepSetPeriod','adsRepSetDates','adsrepdt')+'</div>';
+    el.innerHTML=controls+'<div class="card"><span style="color:var(--muted)">⏳ Собираю отчёт…</span></div>';
     try{
-      const r=await apiFetch('/api/ads/report',{},ONEC_BASE); const d=await r.json();
-      if(!d.configured){ el.innerHTML='<div class="card">🟠 Сначала подключи рекламный кабинет (раздел «Реклама»).</div>'; return; }
-      if(d.error){ el.innerHTML='<div class="card">🔴 '+esc(d.error)+'</div>'; return; }
+      const r=await apiFetch('/api/ads/report?'+adsPeriodQuery(_adsRep),{},ONEC_BASE); const d=await r.json();
+      if(!d.configured){ el.innerHTML=controls+'<div class="card">🟠 Сначала подключи рекламный кабинет (раздел «Реклама»).</div>'; return; }
+      if(d.error){ el.innerHTML=controls+'<div class="card">🔴 '+esc(d.error)+'</div>'; return; }
       const cur=d.currency||'', t=d.totals||{};
       const N=n=>Number(n||0).toLocaleString('ru-RU');
       const kpi=(ic,lbl,val)=>'<div class="card" style="padding:12px"><div style="font-size:12px;color:var(--muted)">'+ic+' '+lbl+'</div><div style="font-size:20px;font-weight:700;margin-top:4px">'+val+'</div></div>';
-      let html='<div class="kpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px">'
+      let html=controls+'<div class="kpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px">'
         +kpi('💸','Потрачено',N(t.spend)+' '+esc(cur))
         +kpi('👁','Охват',N(t.reach))
         +kpi('📊','Показы',N(t.impr))
@@ -5446,27 +5494,38 @@
         +kpi('💬','Переписки',N(t.conv))
         +kpi('🎯','Цена переписки',t.cpconv?N(t.cpconv)+' '+esc(cur):'—')
         +'</div>';
-      if(!(d.rows||[]).length){ html+='<div class="card"><span style="color:var(--muted)">Пока нет данных по кампаниям. Запусти рекламу — отчёт заполнится.</span></div>'; el.innerHTML=html; return; }
-      html+='<div class="card"><h3>Кампании</h3><div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
+      if(!(d.rows||[]).length){ html+='<div class="card"><span style="color:var(--muted)">Нет данных за выбранный период. Поменяй период или запусти рекламу.</span></div>'; el.innerHTML=html; return; }
+      html+='<div class="card"><h3>Кампании <span style="font-size:12px;color:var(--muted);font-weight:400">(от новых к старым)</span></h3><div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
         +'<tr style="color:var(--muted);text-align:left"><th style="padding:6px">Кампания</th><th>Потрачено</th><th>Охват</th><th>Показы</th><th>Клики</th><th>CTR%</th><th>CPC</th><th>CPM</th><th>Частота</th><th>💬</th><th>Цена 💬</th></tr>'
         +d.rows.map(c=>'<tr style="border-top:1px solid var(--line,#222)"><td style="padding:7px 6px">'+esc(c.name||'')+'</td><td>'+N(c.spend)+'</td><td>'+N(c.reach)+'</td><td>'+N(c.impr)+'</td><td>'+N(c.clicks)+'</td><td>'+N(c.ctr)+'</td><td>'+N(c.cpc)+'</td><td>'+N(c.cpm)+'</td><td>'+N(c.freq)+'</td><td>'+N(c.conv)+'</td><td>'+(c.cpconv?N(c.cpconv):'—')+'</td></tr>').join('')
         +'</table></div></div>';
       if((d.days||[]).length){
         const mx=Math.max.apply(null,d.days.map(x=>x.spend).concat([1]));
-        html+='<div class="card"><h3>Расход по дням (30 дней)</h3><div style="display:flex;align-items:flex-end;gap:3px;height:120px">'
+        html+='<div class="card"><h3>Расход по дням ('+d.days.length+')</h3><div style="display:flex;align-items:flex-end;gap:3px;height:120px">'
           +d.days.map(x=>'<div title="'+esc(x.date)+': '+N(x.spend)+' '+esc(cur)+'" style="flex:1;background:#39d98a;border-radius:3px 3px 0 0;height:'+Math.max(2,Math.round(x.spend/mx*110))+'px"></div>').join('')
           +'</div></div>';
       }
       el.innerHTML=html;
-    }catch(e){ el.innerHTML='<div class="card">🔴 Не удалось загрузить отчёт</div>'; }
+    }catch(e){ el.innerHTML=controls+'<div class="card">🔴 Не удалось загрузить отчёт</div>'; }
+  }
+  function adsAnControls(){
+    const cur=_adsAn.campaign;
+    const opts='<option value="">Весь аккаунт (все кампании)</option>'
+      +(_adsAn.camps||[]).map(c=>'<option value="'+esc(c.id)+'"'+(c.id===cur?' selected':'')+'>'+esc(c.name||c.id)+'</option>').join('');
+    const camp='<span style="font-size:12px;color:var(--muted);margin-right:6px">Кампания</span>'
+      +'<select onchange="adsAnSetCampaign(this.value)" style="'+ADS_INP+';max-width:280px;display:inline-block;width:auto">'+opts+'</select>';
+    return '<div class="card" style="padding:12px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">'
+      +'<div>'+camp+'</div><div>'+adsPeriodSelect(_adsAn,'adsAnSetPeriod','adsAnSetDates','adsandt')+'</div></div>';
   }
   async function loadAdsAnalysis(){
     const el=document.getElementById('adsanalysis-body'); if(!el) return;
     if(!ONEC_BASE){ el.innerHTML='<div class="card">🟠 Нужен подключённый сервер.</div>'; return; }
-    el.innerHTML='<div class="card"><span style="color:var(--muted)">⏳ Анализирую…</span></div>';
+    el.innerHTML=adsAnControls()+'<div class="card"><span style="color:var(--muted)">⏳ Анализирую…</span></div>';
     try{
-      const r=await apiFetch('/api/ads/analysis',{},ONEC_BASE); const d=await r.json();
+      const q='campaign='+encodeURIComponent(_adsAn.campaign||'')+'&'+adsPeriodQuery(_adsAn);
+      const r=await apiFetch('/api/ads/analysis?'+q,{},ONEC_BASE); const d=await r.json();
       if(!d.configured){ el.innerHTML='<div class="card">🟠 Сначала подключи рекламный кабинет.</div>'; return; }
+      if(Array.isArray(d.campaigns)) _adsAn.camps=d.campaigns;   // обновляем список для селектора
       const N=n=>Number(n||0).toLocaleString('ru-RU');
       const tbl=(title,rows)=>{
         if(!(rows||[]).length) return '';
@@ -5475,10 +5534,10 @@
           +rows.map(x=>'<tr style="border-top:1px solid var(--line,#222)"><td style="padding:7px 6px">'+esc(x.seg)+'</td><td>'+N(x.clicks)+'</td><td>'+N(x.impr)+'</td><td>'+N(x.reach)+'</td><td>'+N(x.spend)+'</td></tr>').join('')
           +'</table></div></div>';
       };
-      let html='<div class="card"><h3>💡 Выводы</h3><div style="font-size:14px;line-height:1.8">'+(d.tips||[]).map(t=>'• '+t).join('<br>')+'</div></div>';
+      let html=adsAnControls()+'<div class="card"><h3>💡 Выводы</h3><div style="font-size:14px;line-height:1.8">'+(d.tips||[]).map(t=>'• '+t).join('<br>')+'</div></div>';
       html+=tbl('👥 Пол и возраст',d.age_gender)+tbl('📱 Площадки',d.platform)+tbl('📍 Плейсменты',d.placement);
       el.innerHTML=html;
-    }catch(e){ el.innerHTML='<div class="card">🔴 Не удалось загрузить анализ</div>'; }
+    }catch(e){ el.innerHTML=adsAnControls()+'<div class="card">🔴 Не удалось загрузить анализ</div>'; }
   }
   function adsChecklist(s){
     const row=(ok,t)=>(ok?'✅ ':'⬜ ')+t;
@@ -5885,9 +5944,7 @@
   function jsn(s){ return (s||'').replace(/'/g,''); }
   const DEPT_ORDER=['Администраторы','Детский','1 этаж','Касса','Склад','Мужской','Женский','Онлайн','Маркетплейс','Обувь','Мобилограф'];
   // ===== управление командой: добавить / изменить / убрать сотрудника =====
-  // Редактировать сотрудников (добавить/изменить/удалить/оклад): владелец кабинета; в магазине — и HR.
-  // В кабинете проката админ (hr, не владелец) НЕ редактирует — только аванс/премия/явка/календарь.
-  function canManageTeam(){ return isCabinetOwner() || ((USER.sections||[]).indexOf('hr')>=0 && !isRentCabinet()); }
+  function canManageTeam(){ return isCabinetOwner() || (USER.sections||[]).indexOf('hr')>=0; }
   // Операции HR (аванс, премия, отметка явки) — владелец и любой с разделом «Кадры».
   function canHrOps(){ return isCabinetOwner() || (USER.sections||[]).indexOf('hr')>=0; }
   let empEditLogin=null;   // null = режим добавления
@@ -5933,7 +5990,14 @@
         if(leaves.some(l=>l.sec===sec)) return;             // без дублей
         leaves.push({sec:sec,label:_tabLabel(tab)});
       });
-      if(leaves.length) out.push({key:m.key,icon:m.icon,label:(m.key==='rent'?rentBrand():m.label),leaves:leaves});
+      // «Машины: полный доступ» — сотрудник видит весь автопарк, цены и правит машины
+      // (обычная галочка «Машины» = только сводка парка). Показываем только главному
+      // владельцу (isOwner): кабинет FreeWays остаётся ровно как сейчас.
+      if(m.key==='rent' && isOwner()){
+        var _ci=leaves.findIndex(function(l){return l.sec==='rent_cars';});
+        if(_ci>=0) leaves.splice(_ci+1,0,{sec:'rent_cars_full',label:'↳ Машины: полный доступ (цены + правка)'});
+      }
+      if(leaves.length) out.push({key:m.key,icon:m.icon,label:m.label,leaves:leaves});
     });
     return out;
   }
@@ -6074,14 +6138,6 @@
         body.sections=secs;
       }
       const res=await teamPost(body);
-      // прокат: сохранить персональный % за сдачу авто (комиссия)
-      if(isRentCabinet() && commRaw!=='' && commRaw!=null){
-        const lg=(res&&res.login)||empEditLogin||body.login;
-        if(lg){
-          var m={}; m[lg]=commRaw;
-          try{ await apiFetch('/api/rent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_commission',map:m})},ONEC_BASE); }catch(_){}
-        }
-      }
       closeEmp(); await loadHR();
     }catch(e){ err.textContent=e.message; }
     finally{ btn.disabled=false; btn.textContent='Сохранить'; }
@@ -6367,6 +6423,10 @@
   function rentS(){ return (RENT&&RENT.summary)||{}; }
   // владелец проката (полный контроль: машины, план, импорт). Менеджеры — только операции.
   function rentIsOwner(){ return (typeof isCabinetOwner==='function') && isCabinetOwner(); }
+  // Полный доступ к «Машинам» (список, цены, добавление/правка/продажа): владелец ИЛИ
+  // сотрудник с явной галочкой «rent_cars_full». Клиентский кабинет FreeWays её не
+  // получает — его сотрудники по-прежнему видят только сводку парка (без списка и цен).
+  function rentCarsFull(){ return rentIsOwner() || (USER.sections||[]).indexOf('rent_cars_full')>=0; }
   // администратор проката: владелец ИЛИ роль содержит «админ» (плюс старый токен rent_notes_edit)
   function isRentAdmin(){ var r=(USER.role||'').toLowerCase(); return rentIsOwner() || r.indexOf('админ')>=0 || r.indexOf('admin')>=0 || ((USER.sections||[]).indexOf('rent_notes_edit')>=0); }
   // право писать заметки И ставить задачи — у владельца и администратора
@@ -6579,7 +6639,7 @@
   function rentRestoreCar(id){ rentPost('edit_car',{id:id,status:'Свободна'}).then(function(){ RENT_SOLD_OPEN=true; }).catch(function(e){ alert('Не получилось: '+e.message); }); }
   function _carRow(c,archived){
     var acts;
-    if(!rentIsOwner()){ acts='<td '+RT_TD+' style="text-align:right;color:var(--muted);font-size:12px">🔒</td>'; }
+    if(!rentCarsFull()){ acts='<td '+RT_TD+' style="text-align:right;color:var(--muted);font-size:12px">🔒</td>'; }
     else acts=archived
       ? ('<td '+RT_TD+' style="white-space:nowrap;text-align:right">'+
          '<button class="btn ghost" title="Вернуть в парк" style="padding:3px 8px;font-size:13px;color:var(--green)" onclick="rentRestoreCar(\''+c.id+'\')">↩︎ Вернуть</button> '+
@@ -6598,7 +6658,7 @@
   function _soldRow(c){
     var cost=rnum(c.cost), sp=rnum(c.sold_price), prof=sp-cost;
     var pc=prof>0?'var(--green)':(prof<0?'var(--red)':'var(--muted)');
-    var acts=rentIsOwner()
+    var acts=rentCarsFull()
       ? ('<td '+RT_TD+' style="white-space:nowrap;text-align:right">'+
          '<button class="btn ghost" title="Вернуть в парк" style="padding:3px 8px;font-size:13px;color:var(--green)" onclick="rentRestoreCar(\''+c.id+'\')">↩︎</button> '+
          '<button class="btn ghost" title="Изменить (в т.ч. цену продажи)" style="padding:3px 8px;font-size:13px" onclick="openRentForm(\'car\',\''+c.id+'\')">✏️</button> '+
@@ -6614,7 +6674,7 @@
     var b=document.getElementById('rent-cars'); if(!b) return;
     var all=rentD().cars||[];
     var active=all.filter(function(c){ return !carIsSold(c); });
-    var own=rentIsOwner();
+    var own=rentCarsFull();
     var cnt=function(w){ return active.filter(function(c){ return (c.status_live||c.status||'').toLowerCase().indexOf(w)>=0; }).length; };
     var park='<div class="card" style="margin-bottom:14px"><h3>🚗 Парк</h3><div class="kpis" style="grid-template-columns:repeat(4,1fr);margin:0">'+
       kpiCard('Всего машин',active.length)+kpiCard('Свободно',cnt('свобод'))+kpiCard('В аренде',cnt('аренд'))+kpiCard('На ремонте',cnt('ремонт'))+'</div></div>';

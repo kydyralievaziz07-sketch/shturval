@@ -221,6 +221,7 @@ SECTION_OF = [
     ("/api/market", "market"),
     ("/api/chats", "chats"), ("/api/chat", "chats"), ("/api/send", "chats"),
     ("/api/bot-feedback", "chats"),
+    ("/api/ig/clients", "clients"),
     ("/api/ig/conversations", "chats"), ("/api/ig/thread", "chats"),
     ("/api/ig/reply", "chats"), ("/api/ig/accounts", "chats"),
     ("/api/ig/broadcast", "chats"), ("/api/ig/bot", "chats"), ("/api/ig/media", "chats"),
@@ -733,9 +734,14 @@ def rent_apply(action, p, company=None, user=None):
     if action in ("add_note", "edit_note", "del_note",
                   "add_rtask", "edit_rtask", "del_rtask") and not is_admin:
         return {"error": "Заметки и задачи может ставить и менять владелец или администратор"}
-    # Машины, план, оплата — только владелец
-    if action in ("add_car", "edit_car", "del_car", "set_plan", "set_commission", "set_currency", "set_fx") and not is_owner:
-        return {"error": "Машины, план и оплату может менять только владелец"}
+    # Машины: владелец ИЛИ сотрудник с полным доступом «rent_cars_full»
+    # (у кабинета FreeWays этого токена нет — там правит только владелец, как раньше).
+    can_cars = is_owner or ("rent_cars_full" in (user.get("sections") or []))
+    if action in ("add_car", "edit_car", "del_car") and not can_cars:
+        return {"error": "Машины может менять владелец или сотрудник с доступом «Машины: полный»"}
+    # План и оплата — только владелец
+    if action in ("set_plan", "set_commission", "set_currency", "set_fx") and not is_owner:
+        return {"error": "План и оплату может менять только владелец"}
     def keep(lst, _id):
         return [x for x in lst if x.get("id") != _id]
     def find(lst, _id):
@@ -1299,7 +1305,8 @@ def _ig_fetch_name_async(igsid, account_id):
             url = IG_GRAPH + "/" + _q(str(igsid)) + "?fields=username,name&access_token=" + _q(tok)
             d = json.loads(urllib.request.urlopen(
                 urllib.request.Request(url, headers={"User-Agent": "Shturval/1.0"}), timeout=15).read().decode())
-            ig_save_name(igsid, d.get("username") or d.get("name") or "")
+            # сохраняем И имя, И @username: имя — для показа, username — для ссылки на профиль
+            ig_save_name(igsid, d.get("name") or d.get("username") or "", username=d.get("username") or "")
         except Exception:
             pass
     threading.Thread(target=run, daemon=True).start()
@@ -1353,20 +1360,32 @@ def ig_send(recipient_id, text, from_account_id=None):
 
 # имена клиентов по их IGSID. Кэш в памяти + таблица ig_names (БЕЗ живых запросов в момент загрузки).
 _ig_names = {}
+_ig_users = {}          # igsid -> @username (для ссылки на профиль Instagram)
 _ig_names_ts = 0
 def ig_load_names():
-    """Подгрузить имена из БД в память; обновлять не чаще раза в 5 минут."""
+    """Подгрузить имена и @username из БД в память; обновлять не чаще раза в 5 минут."""
     global _ig_names_ts
     if time.time() - _ig_names_ts < 300 and _ig_names:
         return
     try:
         off = 0
+        sel = "igsid,name,username"          # пробуем с колонкой username
         while True:                          # БД отдаёт максимум 1000 строк — тянем постранично
-            rows = _supa("GET", "ig_names",
-                         "?company_id=eq.%s&select=igsid,name&order=igsid&limit=1000&offset=%d"
-                         % (_q(COMPANY_ID), off)) or []
+            try:
+                rows = _supa("GET", "ig_names",
+                             "?company_id=eq.%s&select=%s&order=igsid&limit=1000&offset=%d"
+                             % (_q(COMPANY_ID), sel, off)) or []
+            except Exception:
+                # колонки username ещё нет в таблице — читаем без неё (без ссылок на профиль)
+                sel = "igsid,name"
+                rows = _supa("GET", "ig_names",
+                             "?company_id=eq.%s&select=%s&order=igsid&limit=1000&offset=%d"
+                             % (_q(COMPANY_ID), sel, off)) or []
             for row in rows:
-                _ig_names[str(row.get("igsid"))] = row.get("name") or ""
+                gid = str(row.get("igsid"))
+                _ig_names[gid] = row.get("name") or ""
+                if row.get("username"):
+                    _ig_users[gid] = row.get("username")
             if len(rows) < 1000:
                 break
             off += 1000
@@ -1379,15 +1398,35 @@ def ig_customer_name(igsid, account_id=None):
     ig_load_names()
     return _ig_names.get(str(igsid), "")
 
-def ig_save_name(igsid, name):
-    if not name:
+def ig_customer_username(igsid):
+    """@username клиента (для ссылки на профиль), '' если неизвестен."""
+    ig_load_names()
+    return _ig_users.get(str(igsid), "")
+
+def ig_save_name(igsid, name, username=None):
+    gid = str(igsid)
+    if name:
+        _ig_names[gid] = name
+    if username:
+        _ig_users[gid] = username
+    if not (name or username):
         return
-    _ig_names[str(igsid)] = name
+    row = {"company_id": COMPANY_ID, "igsid": gid}
+    if name:
+        row["name"] = name
+    if username:
+        row["username"] = username
     try:
-        _supa("POST", "ig_names", "?on_conflict=company_id,igsid",
-              {"company_id": COMPANY_ID, "igsid": str(igsid), "name": name})
+        _supa("POST", "ig_names", "?on_conflict=company_id,igsid", row)
     except Exception:
-        pass
+        # колонки username может не быть в таблице — сохраняем хотя бы имя
+        if username and "username" in row:
+            row.pop("username", None)
+            if row.get("name"):
+                try:
+                    _supa("POST", "ig_names", "?on_conflict=company_id,igsid", row)
+                except Exception:
+                    pass
 
 def _ig_atts(r):
     """Вложения сообщения (фото/видео/посты) из сырого webhook."""
@@ -1444,11 +1483,25 @@ def _build_ig_conversations():
     out = sorted(convos.values(), key=lambda c: c["last_ts"], reverse=True)
     for c in out:
         c["customer"] = ig_customer_name(c["customer_id"]) or c["customer_id"]
+        uname = ig_customer_username(c["customer_id"])
+        c["username"] = uname
+        c["profile_url"] = ("https://instagram.com/" + uname) if uname else ""
     return out
 
 def ig_conversations():
     """Список диалогов (кэш 5с, имена — из БД, без живых запросов → быстро)."""
     return cached("ig_convos", 5, _build_ig_conversations)
+
+def ig_clients_base():
+    """База клиентов, писавших в Instagram: имя, @username, ссылка на профиль,
+    последнее сообщение и число сообщений. Один клиент = одна строка."""
+    out = []
+    for c in ig_conversations():
+        out.append({"customer_id": c["customer_id"], "name": c.get("customer") or "",
+                    "username": c.get("username") or "", "profile_url": c.get("profile_url") or "",
+                    "account": c.get("account") or "", "last_ts": c.get("last_ts") or 0,
+                    "count": c.get("count") or 0})
+    return out
 
 def ig_thread(account_id, customer_id):
     """Сообщения одного диалога по возрастанию времени."""
@@ -4535,20 +4588,56 @@ def _ins_conv(i):
     return sum(int(_num(a.get("value"))) for a in (i.get("actions") or [])
                if a.get("action_type") in _CONV_ACTIONS)
 
-def ads_report():
-    """Подробный отчёт по рекламе: метрики по каждой кампании + итог + динамика по дням."""
+# Периоды для отчётов/анализа. Ключ Meta → человеческая подпись (используется и на фронте).
+ADS_PERIODS = [
+    ("today", "Сегодня"), ("yesterday", "Вчера"),
+    ("last_7d", "7 дней"), ("last_14d", "14 дней"), ("last_30d", "30 дней"),
+    ("last_90d", "90 дней"),
+    ("this_month", "Этот месяц"), ("last_month", "Прошлый месяц"),
+    ("maximum", "Всё время"),
+]
+_ADS_PERIOD_KEYS = {k for k, _ in ADS_PERIODS}
+
+def _ads_date_params(period=None, since=None, until=None):
+    """Параметры диапазона дат для Meta insights: свой период (time_range) или
+    пресет (date_preset). По умолчанию — всё время."""
+    since = (since or "").strip(); until = (until or "").strip()
+    if since and until:
+        return {"time_range": json.dumps({"since": since, "until": until})}
+    period = (period or "").strip()
+    if period in _ADS_PERIOD_KEYS:
+        return {"date_preset": period}
+    return {"date_preset": "maximum"}
+
+def _ads_campaign_index():
+    """id → {name, created}. Для сортировки отчёта по новизне и списка выбора кампаний."""
+    idx = {}
+    try:
+        cc = _ads_req("GET", _act() + "/campaigns",
+                      {"fields": "id,name,created_time", "limit": 200})
+        for c in (cc.get("data") or []):
+            idx[c.get("id")] = {"name": c.get("name") or "", "created": c.get("created_time") or ""}
+    except Exception:
+        pass
+    return idx
+
+def ads_report(period=None, since=None, until=None):
+    """Подробный отчёт по рекламе: метрики по каждой кампании + итог + динамика по дням.
+    period/since/until — выбранный диапазон (по умолчанию всё время)."""
     if not ads_on():
         return {"configured": False, "rows": [], "totals": {}, "days": []}
+    dr = _ads_date_params(period, since, until)
     cur = ""
     try:
         cur = _ads_req("GET", _act(), {"fields": "currency"}).get("currency", "")
     except Exception:
         pass
-    flds = "campaign_name,spend,impressions,reach,clicks,ctr,cpc,cpm,frequency,actions"
+    cidx = _ads_campaign_index()  # для сортировки от новых к старым
+    flds = "campaign_id,campaign_name,spend,impressions,reach,clicks,ctr,cpc,cpm,frequency,actions"
     rows, tot = [], {"spend": 0.0, "impr": 0, "reach": 0, "clicks": 0, "conv": 0}
     try:
-        di = _ads_req("GET", _act() + "/insights",
-                      {"level": "campaign", "fields": flds, "date_preset": "maximum", "limit": 200})
+        pr = {"level": "campaign", "fields": flds, "limit": 200}; pr.update(dr)
+        di = _ads_req("GET", _act() + "/insights", pr)
         for i in (di.get("data") or []):
             spend = _num(i.get("spend")); conv = _ins_conv(i)
             clicks = int(_num(i.get("clicks")))
@@ -4556,17 +4645,18 @@ def ads_report():
                          "reach": int(_num(i.get("reach"))), "clicks": clicks,
                          "ctr": round(_num(i.get("ctr")), 2), "cpc": round(_num(i.get("cpc")), 2),
                          "cpm": round(_num(i.get("cpm")), 2), "freq": round(_num(i.get("frequency")), 1),
-                         "conv": conv, "cpconv": round(spend / conv, 2) if conv else 0})
+                         "conv": conv, "cpconv": round(spend / conv, 2) if conv else 0,
+                         "created": cidx.get(i.get("campaign_id"), {}).get("created", "")})
             tot["spend"] += spend; tot["impr"] += _num(i.get("impressions"))
             tot["reach"] += _num(i.get("reach")); tot["clicks"] += clicks; tot["conv"] += conv
     except Exception as e:
         return {"configured": True, "rows": [], "totals": {}, "days": [], "error": str(e), "currency": cur}
-    rows.sort(key=lambda r: -r["spend"])
+    # От новых к старым (по дате создания кампании); кампании без даты — в конец.
+    rows.sort(key=lambda r: r.get("created") or "", reverse=True)
     days = []
     try:
-        dd = _ads_req("GET", _act() + "/insights",
-                      {"fields": "spend,impressions,clicks", "time_increment": "1",
-                       "date_preset": "last_30d", "limit": 60})
+        dp = {"fields": "spend,impressions,clicks", "time_increment": "1", "limit": 180}; dp.update(dr)
+        dd = _ads_req("GET", _act() + "/insights", dp)
         days = [{"date": x.get("date_start"), "spend": round(_num(x.get("spend"))),
                  "clicks": int(_num(x.get("clicks")))} for x in (dd.get("data") or [])]
     except Exception:
@@ -4576,17 +4666,22 @@ def ads_report():
          "ctr": round(tot["clicks"] / tot["impr"] * 100, 2) if tot["impr"] else 0,
          "cpc": round(tot["spend"] / tot["clicks"], 2) if tot["clicks"] else 0,
          "cpconv": round(tot["spend"] / tot["conv"], 2) if tot["conv"] else 0}
-    return {"configured": True, "rows": rows, "totals": t, "days": days, "currency": cur}
+    return {"configured": True, "rows": rows, "totals": t, "days": days, "currency": cur,
+            "periods": ADS_PERIODS, "period": (period or "maximum")}
 
-def ads_analysis():
-    """Анализ аудитории: разбивки по полу/возрасту, платформе, плейсменту + авто-выводы."""
+def ads_analysis(campaign=None, period=None, since=None, until=None):
+    """Анализ аудитории: разбивки по полу/возрасту, платформе, плейсменту + авто-выводы.
+    campaign — id конкретной кампании (пусто = весь аккаунт); period/since/until — диапазон."""
     if not ads_on():
         return {"configured": False}
+    dr = _ads_date_params(period, since, until)
+    campaign = (str(campaign).strip() if campaign else "")
+    base = (campaign + "/insights") if campaign else (_act() + "/insights")
     def bd(breakdowns):
         try:
-            d = _ads_req("GET", _act() + "/insights",
-                         {"fields": "spend,impressions,clicks,reach", "breakdowns": breakdowns,
-                          "date_preset": "maximum", "limit": 100})
+            pr = {"fields": "spend,impressions,clicks,reach", "breakdowns": breakdowns, "limit": 100}
+            pr.update(dr)
+            d = _ads_req("GET", base, pr)
             return d.get("data") or []
         except Exception:
             return []
@@ -4612,7 +4707,13 @@ def ads_analysis():
         tips.append("📍 Лучший плейсмент: <b>%s</b>." % place[0]["seg"])
     if not tips:
         tips.append("Пока мало данных для выводов — запусти кампанию, и здесь появится анализ аудитории.")
-    return {"configured": True, "age_gender": ag[:12], "platform": plat, "placement": place[:12], "tips": tips}
+    # Список кампаний для выбора (от новых к старым).
+    cidx = _ads_campaign_index()
+    camps = [{"id": cid, "name": v["name"]} for cid, v in
+             sorted(cidx.items(), key=lambda kv: kv[1].get("created") or "", reverse=True)]
+    return {"configured": True, "age_gender": ag[:12], "platform": plat, "placement": place[:12],
+            "tips": tips, "campaigns": camps, "campaign": campaign,
+            "periods": ADS_PERIODS, "period": (period or "maximum")}
 
 def ads_create(p):
     """Полный мастер Ads Manager: Кампания → Группа объявлений → Креатив → Объявление.
@@ -5692,16 +5793,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"items": [], "error": str(e)})
         if self.path.startswith("/api/ads/"):
             from urllib.parse import urlparse, parse_qs
-            q = (parse_qs(urlparse(self.path).query).get("q", [""])[0] or "").strip()
+            _qp = parse_qs(urlparse(self.path).query)
+            q = (_qp.get("q", [""])[0] or "").strip()
+            _per = (_qp.get("period", [""])[0] or "").strip()
+            _since = (_qp.get("since", [""])[0] or "").strip()
+            _until = (_qp.get("until", [""])[0] or "").strip()
+            _camp = (_qp.get("campaign", [""])[0] or "").strip()
             try:
                 if self.path.startswith("/api/ads/status"):
                     return self._send(200, ads_status())
                 if self.path.startswith("/api/ads/campaigns"):
                     return self._send(200, ads_campaigns())
                 if self.path.startswith("/api/ads/report"):
-                    return self._send(200, ads_report())
+                    return self._send(200, ads_report(_per, _since, _until))
                 if self.path.startswith("/api/ads/analysis"):
-                    return self._send(200, ads_analysis())
+                    return self._send(200, ads_analysis(_camp, _per, _since, _until))
                 if self.path.startswith("/api/ads/interests"):
                     return self._send(200, ads_search_interests(q))
                 if self.path.startswith("/api/ads/geo"):
@@ -5742,6 +5848,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, search_products(q, max(1, page), cat=cat, in_stock=in_stock, scat=scat))
             except Exception as e:
                 return self._send(200, {"error": "Нет связи с 1С: " + str(e), "items": [], "total": 0})
+        if self.path.startswith("/api/ig/clients"):
+            try:
+                return self._send(200, {"clients": ig_clients_base()})
+            except Exception as e:
+                return self._send(200, {"clients": [], "error": str(e)})
         if self.path.startswith("/api/ig/conversations"):
             try:
                 return self._send(200, {"conversations": ig_conversations(),
