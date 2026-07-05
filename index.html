@@ -430,7 +430,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.3.0<br>Новый раздел «Отчёт по продажам»: этаж → категория → выручка, прибыль и маржа</div>
+      Штурвал v4.4.0<br>Категории расходов: добавлена «Погашение долгов поставщикам»; «Погашение» теперь только для банка/кредита</div>
   </aside>
 
   <!-- MAIN -->
@@ -1372,7 +1372,7 @@
     <input type="number" id="exp-amt" inputmode="decimal" placeholder="0" onkeydown="if(event.key==='Enter')saveExpense()">
     <label>Категория</label>
     <input id="exp-cat" list="exp-cats" placeholder="Аренда, Зарплата, Реклама, Доставка…">
-    <datalist id="exp-cats"><option>Аренда</option><option>Зарплата</option><option>Реклама</option><option>Доставка</option><option>Коммуналка</option><option>Налоги</option><option>Закуп</option><option>Прочее</option></datalist>
+    <datalist id="exp-cats"><option value="Аренда"></option><option value="Зарплата"></option><option value="Погашение долгов поставщикам"></option><option value="Погашение" label="только банк/кредит"></option><option value="Реклама"></option><option value="Доставка"></option><option value="Транспорт"></option><option value="Хозтовары"></option><option value="Питание"></option><option value="Упаковка"></option><option value="Материалы"></option><option value="Услуги"></option><option value="Инструменты"></option><option value="Одежда"></option><option value="Коммуналка"></option><option value="Налоги"></option><option value="Закуп"></option><option value="Прочее"></option></datalist>
     <label>Комментарий (необязательно)</label>
     <input id="exp-note" placeholder="за что">
     <label>Дата</label>
