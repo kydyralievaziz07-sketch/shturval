@@ -430,7 +430,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.2.0<br>Аналитика: переключатель периода (день/неделя/месяц) · Ассортимент: поиск по всем товарам</div>
+      Штурвал v4.3.0<br>Новый раздел «Отчёт по продажам»: этаж → категория → выручка, прибыль и маржа</div>
   </aside>
 
   <!-- MAIN -->
@@ -792,6 +792,18 @@
       </div>
       <div id="assort-body"><span style="color:var(--muted);font-size:13px">—</span></div>
       <div class="note" style="margin-top:14px">📌 Считаем <b>только по чистой прибыли</b> из чеков 1С за период. Склад и остатки не учитываются. «Оставить топ-N» — позиции, которые дают почти всю прибыль группы; остальные — кандидаты на сокращение.</div>
+    </section>
+
+    <!-- ОТЧЁТ ПО ПРОДАЖАМ -->
+    <section id="tab-report" class="hide">
+      <div id="report-status" class="note" style="margin-bottom:14px">⏳ Собираю отчёт по продажам из чеков 1С…</div>
+      <div id="report-kpis" class="kpis" style="margin-bottom:14px"></div>
+      <div style="display:flex;gap:8px;align-items:center;margin:6px 0 14px;flex-wrap:wrap">
+        <input id="report-search" type="search" placeholder="🔍 Поиск категории…" oninput="renderReport()" style="flex:1;min-width:200px;background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:7px 10px;font-size:13px">
+        <button class="btn ghost" style="font-size:12px;padding:6px 12px" onclick="exportReport()">⬇️ В Excel</button>
+      </div>
+      <div id="report-body"><span style="color:var(--muted);font-size:13px">—</span></div>
+      <div class="note" style="margin-top:14px">📊 Продажи по этажам и категориям из чеков 1С за период. Выручка — что пробили на кассе; прибыль — за вычетом себестоимости товара. Категории отсортированы по выручке.</div>
     </section>
 
     <!-- CLIENTS -->
@@ -1393,6 +1405,7 @@
     prod     :["Товары","Каталог, остатки и маржа"],
     sales    :["Продажи","Продажи за день и за период"],
     assort   :["Анализ ассортимента","Топ позиций по чистой прибыли — что оставить в каждой группе"],
+    report   :["Отчёт по продажам","Выручка и прибыль по этажам и категориям"],
     clients  :["Клиенты","Кто покупает и кто возвращается"],
     market   :["Рынок","Предложения и цены конкурентов"],
     analytics:["Аналитика","ABC-анализ, остатки, прогнозы"],
@@ -1425,7 +1438,7 @@
     dash:{icon:'📊',label:'Рабочий стол'}, deals:{icon:'🧲',label:'Сделки'},
     tasks:{icon:'✅',label:'Задачи'}, clients:{icon:'👥',label:'Клиенты'},
     analytics:{icon:'📈',label:'Аналитика'}, crm:{icon:'📡',label:'Живые данные'},
-    prod:{icon:'📦',label:'Товары'}, sales:{icon:'🛒',label:'Продажи'}, assort:{icon:'🎯',label:'Ассортимент'},
+    prod:{icon:'📦',label:'Товары'}, sales:{icon:'🛒',label:'Продажи'}, assort:{icon:'🎯',label:'Ассортимент'}, report:{icon:'📋',label:'Отчёт по продажам'},
     supl:{icon:'🤝',label:'Поставщики'}, fin:{icon:'💰',label:'Финансы'}, exp:{icon:'💸',label:'Расходы'},
     myday:{icon:'🎯',label:'Мой день'}, hr:{icon:'🗓',label:'Кадры'},
     ads:{icon:'📣',label:'Реклама'}, adsreport:{icon:'📑',label:'Отчёты по рекламе'}, adsanalysis:{icon:'🔬',label:'Анализ'},
@@ -1441,7 +1454,7 @@
   const MODULES=[
     {key:'crm',  icon:'🧲', label:'CRM',     tabs:['crmdash','deals','tasks','clients','iginbox','wainbox']},
     {key:'mkt',  icon:'📣', label:'Реклама', tabs:['ads','adsreport','adsanalysis']},
-    {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','assort','analytics','supl','fin','exp']},
+    {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','assort','report','analytics','supl','fin','exp']},
     {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','renttasks','rentnotes','rentcars','rentlist','rentalert','rentexp','renthanded','rentanalysis','rentplan','rentclients','rentcalendar']},
     {key:'team', icon:'👥', label:'Команда', tabs:['myday','hr']},
     {key:'ai',   icon:'🤖', label:'ИИ',      tabs:['ai','sim']}
@@ -1471,6 +1484,7 @@
     if(tab==='dash') return isOwner()||canSee('dash')||canSee('crm');
     if(tab==='sim') return isOwner()||canSee('sim')||canSee('ai')||canSee('analytics')||canSee('dash');
     if(tab==='assort') return isOwner()||canSee('assort')||canSee('sales')||canSee('analytics');
+    if(tab==='report') return isOwner()||canSee('assort')||canSee('sales')||canSee('analytics');
     return canSee(tab);
   }
   // временно скрытые модули — прячем ИКОНКУ у тех, кто видит их только через «all».
@@ -1501,6 +1515,7 @@
     else if(tab==='prod'){ loadInventory(); loadProducts(); startProdAuto(); }
     else if(tab==='sales'){ loadSales(); startSalesAuto(); }
     else if(tab==='assort') loadAssort();
+    else if(tab==='report') loadReport();
     else if(tab==='dash') loadDashSales();
     else if(tab==='analytics') renderAnalytics();
     else if(tab==='fin') renderFinance();
@@ -2899,6 +2914,7 @@
         kpiCard('Средняя маржа',(d.avg_margin||0)+'%');
       renderAssort();
       if(document.getElementById('an-abc')) anAbc();   // обновить ABC во вкладке «Аналитика»
+      if(document.getElementById('report-body')) renderReport();   // обновить «Отчёт по продажам»
     }catch(e){
       if(st){ st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d';
         if(attempt<6){ st.innerHTML='⏳ <b>Сервер 1С просыпается…</b> жду (попытка '+attempt+'/6)…'; clearTimeout(_assortTimer); _assortTimer=setTimeout(()=>loadAssort(attempt+1),12000); }
@@ -2986,6 +3002,69 @@
       rows.push([g.group,r.rank,r.name,r.qty,r.revenue,r.profit,r.group_share,r.margin,r.profit_per_unit]);
     }); });
     downloadCSV('bizmart-ассортимент-прибыль.csv',rows);
+  }
+  // ===== ОТЧЁТ ПО ПРОДАЖАМ (этаж → категория → выручка + прибыль) =====
+  function loadReport(){
+    if(window._assortData) renderReport();
+    else loadAssort();            // отчёт берёт те же данные, что и анализ ассортимента
+  }
+  function renderReport(){
+    const d=window._assortData;
+    const st=document.getElementById('report-status');
+    const box=document.getElementById('report-body'); if(!box) return;
+    if(!d){ return; }
+    if(st){ st.style.borderStyle='solid'; st.style.borderColor=d.stale?'#ffb84d':'#39d98a';
+      st.innerHTML=(d.stale?'🟠 <b>Последний расчёт</b> (1С долго не отвечала) · ':'🟢 <b>Отчёт по продажам</b> · ')+
+        'период '+esc(d.from||'')+' … '+esc(d.to||'')+' ('+(d.period_days||0)+' дн.) · обновлено '+esc(d.updated||''); }
+    const floors=d.floors;
+    if(!floors){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Отчёт готовится — сервер пересчитает его в ближайшее время. Обнови страницу через минуту.</span>'; return; }
+    const km=(label,som)=>'<div class="card kpi"><div class="label">'+label+'</div><div class="value"><span class="money" data-som="'+(som||0)+'">'+fmt(som||0)+'</span></div></div>';
+    const kp=document.getElementById('report-kpis');
+    if(kp) kp.innerHTML=
+      kpiCard('Период','за '+(d.period_days||0)+' дн.')+
+      km('Выручка',d.total_revenue)+
+      km('Чистая прибыль',d.total_profit)+
+      kpiCard('Средняя маржа',(d.avg_margin||0)+'%');
+    const qEl=document.getElementById('report-search'); const q=(qEl?qEl.value:'').trim().toLowerCase();
+    let html='';
+    floors.forEach(f=>{
+      let cats=(f.cats||[]);
+      if(q) cats=cats.filter(c=>((c.name||'')+' '+(f.floor||'')).toLowerCase().indexOf(q)>=0);
+      if(!cats.length) return;
+      html+='<div class="card" style="margin-bottom:16px">'+
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">'+
+          '<h3 style="margin:0">'+esc(f.floor)+'</h3>'+
+          '<div style="font-size:13px;color:var(--muted)">Выручка: <b style="color:var(--text)">'+fmt(f.revenue)+' сом</b> · прибыль <b style="color:var(--text)">'+fmt(f.profit)+'</b> · маржа '+(f.margin||0)+'%</div>'+
+        '</div>'+
+        '<div style="overflow:auto;margin-top:10px"><table style="width:100%;border-collapse:collapse;font-size:13px">'+
+          '<tr style="text-align:left;color:var(--muted);font-weight:500">'+
+            '<th style="padding:6px 8px">Категория</th>'+
+            '<th style="padding:6px 8px;text-align:right">Продано</th>'+
+            '<th style="padding:6px 8px;text-align:right">Выручка</th>'+
+            '<th style="padding:6px 8px;text-align:right">Чистая прибыль</th>'+
+            '<th style="padding:6px 8px;text-align:right">Маржа</th></tr>'+
+          cats.map(c=>'<tr style="border-top:1px solid var(--line)">'+
+            '<td style="padding:6px 8px">'+esc(c.name)+'</td>'+
+            '<td style="padding:6px 8px;text-align:right">'+(c.qty||0).toLocaleString('ru-RU')+'</td>'+
+            '<td style="padding:6px 8px;text-align:right">'+fmt(c.revenue)+'</td>'+
+            '<td style="padding:6px 8px;text-align:right;font-weight:600">'+fmt(c.profit)+'</td>'+
+            '<td style="padding:6px 8px;text-align:right">'+(c.margin||0)+'%</td></tr>').join('')+
+        '</table></div></div>';
+    });
+    box.innerHTML=html||'<div class="card"><span style="color:var(--muted);font-size:13px">Ничего не найдено.</span></div>';
+    renderMoney();
+  }
+  function exportReport(){
+    const d=window._assortData; if(!d||!(d.floors||[]).length){ alert('Отчёт ещё не загрузился.'); return; }
+    const rows=[['BIZMART — отчёт по продажам (этаж → категория)'],
+      ['Период',(d.from||'')+' … '+(d.to||''),(d.period_days||0)+' дн.'],
+      ['Выручка',d.total_revenue,'Чистая прибыль',d.total_profit,'Маржа',(d.avg_margin||0)+'%'],
+      [],
+      ['Этаж','Категория','Продано шт','Выручка','Чистая прибыль','Маржа %']];
+    (d.floors||[]).forEach(f=>{ (f.cats||[]).forEach(c=>{
+      rows.push([f.floor,c.name,c.qty,c.revenue,c.profit,c.margin]);
+    }); });
+    downloadCSV('bizmart-отчёт-продажи.csv',rows);
   }
   function onSalesDate(){ const sel=document.getElementById('sales-date'); salesDate=(sel&&sel.value!=='today')?sel.value:''; loadSales(); }
   async function loadSales(attempt){

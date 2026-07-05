@@ -3294,6 +3294,30 @@ def _cat_top_resolver():
         return None
     return top
 
+def _cat_floor_sub_resolver():
+    """Возвращает функцию cid -> (этаж, подкатегория): этаж = верхняя группа (ребёнок
+    корня «Товары»), подкатегория = прямой ребёнок этажа на пути от товара к корню.
+    Для отчёта по продажам «этаж → категория»."""
+    data = yaros_get("/categories")
+    nodes = {}
+    for c in data.get("categories", []):
+        nodes[c.get("ID")] = {"title": (c.get("TITLE") or "").strip(),
+                              "parent": c.get("PARENT_ID") or ""}
+    def resolve(cid):
+        seen = set(); path = []
+        while cid and cid in nodes and cid not in seen:
+            seen.add(cid); path.append(cid)
+            p = nodes[cid]["parent"]
+            if not p or p not in nodes or nodes.get(p, {}).get("title") == "Товары":
+                floor = nodes[cid]["title"] or None
+                # подкатегория = узел на уровень ниже этажа (предыдущий в пути); если товар
+                # сам прямой ребёнок этажа — подкатегория = сам этаж
+                sub = nodes[path[-2]]["title"] if len(path) >= 2 else floor
+                return (floor, sub or floor)
+            cid = p
+        return (None, None)
+    return resolve
+
 def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
     """Аггрегирует прибыль по каждому товару из чеков за последние `days` дней,
     раскладывает по верхним группам 1С и берёт топ-`top_n` по чистой прибыли в каждой.
@@ -3380,6 +3404,29 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
                 "profit_per_unit": round(pr / i["qty"]) if i["qty"] else 0,
             })
     all_products.sort(key=lambda i: -i["profit"])
+    # ОТЧЁТ ПО ПРОДАЖАМ: этаж → категория → выручка + прибыль + маржа
+    fsub = _cat_floor_sub_resolver()
+    fmap = {}
+    for nm, a in agg.items():
+        cid = name2cat.get(nm, "")
+        floor, sub = fsub(cid) if cid else (None, None)
+        floor = floor or "— без категории —"; sub = sub or floor
+        fm = fmap.setdefault(floor, {"revenue": 0.0, "profit": 0.0, "qty": 0.0, "cats": {}})
+        fm["revenue"] += a["rev"]; fm["profit"] += a["profit"]; fm["qty"] += a["qty"]
+        cm = fm["cats"].setdefault(sub, {"revenue": 0.0, "profit": 0.0, "qty": 0.0})
+        cm["revenue"] += a["rev"]; cm["profit"] += a["profit"]; cm["qty"] += a["qty"]
+    floors = []
+    for fl, fm in fmap.items():
+        cats = [{"name": k, "revenue": round(v["revenue"]), "profit": round(v["profit"]),
+                 "qty": round(v["qty"]),
+                 "margin": round(v["revenue"] and v["profit"] / v["revenue"] * 100)}
+                for k, v in fm["cats"].items()]
+        cats.sort(key=lambda c: -c["revenue"])
+        floors.append({"floor": fl, "revenue": round(fm["revenue"]),
+                       "profit": round(fm["profit"]), "qty": round(fm["qty"]),
+                       "margin": round(fm["revenue"] and fm["profit"] / fm["revenue"] * 100),
+                       "cats": cats})
+    floors.sort(key=lambda f: -f["revenue"])
     res = {
         "period_days": days, "top_n": top_n,
         "from": dates[-1], "to": today,
@@ -3388,6 +3435,7 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
         "total_products": len(agg), "days_ok": days_ok, "days_fail": days_fail,
         "groups": out_groups,
         "all_products": all_products,
+        "floors": floors,
         "generated_ts": int(time.time()),
         "updated": time.strftime("%d.%m.%Y %H:%M"),
     }
