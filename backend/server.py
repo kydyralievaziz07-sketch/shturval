@@ -1686,11 +1686,21 @@ def _igbot_defaults():
             # WhatsApp: бот отвечает не сразу, а только если человек не ответил wa_fallback_min минут
             "wa_fallback": True, "wa_fallback_min": 60}
 
+def _hhours(v, default=6):
+    """Пауза после ответа человека (часов). Явный 0 — ДОПУСТИМ (бот отвечает всегда).
+    Раньше «0 or 6» превращал 0 обратно в 6 — из-за этого нельзя было выключить паузу."""
+    if v is None or v == "":
+        return default
+    try:
+        return max(0, int(_num(v)))
+    except Exception:
+        return default
+
 def _igbot_get():
     s = kv_load("igbot_settings") or {}
     return {"enabled": bool(s.get("enabled")), "prompt": s.get("prompt") or IGBOT_DEFAULT_PROMPT,
             "model": s.get("model") or CFG.get("ANTHROPIC_MODEL"),
-            "handoff_hours": int(s.get("handoff_hours") or 6),
+            "handoff_hours": _hhours(s.get("handoff_hours")),
             "kb": s.get("kb") or "",
             "teach": s.get("teach") or "",
             "sources": s.get("sources") or [],
@@ -1709,7 +1719,7 @@ def _igbot_set(patch):
         if k in patch:
             cur[k] = patch[k]
     cur["enabled"] = bool(cur["enabled"])
-    cur["handoff_hours"] = int(_num(cur["handoff_hours"]) or 6)
+    cur["handoff_hours"] = _hhours(cur.get("handoff_hours"))
     cur["wa_fallback"] = bool(cur.get("wa_fallback"))
     cur["wa_fallback_min"] = max(5, int(_num(cur.get("wa_fallback_min")) or 60))
     cur["learn_every_days"] = int(_num(cur.get("learn_every_days")) or 0)
