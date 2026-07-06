@@ -603,7 +603,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.23.0<br>Рассылка WhatsApp: выбор периода спящих — 1 месяц / 2 месяца / своё число дней</div>
+      Штурвал v4.24.0<br>Кадры: после смены логина/пароля сотрудника — подтверждение с новыми данными (раньше модалка молча закрывалась)</div>
   </aside>
 
   <!-- MAIN -->
@@ -6828,7 +6828,7 @@
     document.getElementById('emp-login').value=v.login||'';
     document.getElementById('emp-pw').value='';
     document.getElementById('emp-login').placeholder='латиницей';
-    document.getElementById('emp-pw').placeholder='пусто = не менять';
+    document.getElementById('emp-pw').placeholder='оставьте пустым — пароль прежний';
     document.getElementById('emp-login-block').style.display='';   // владелец может сменить логин/пароль
     document.getElementById('emp-err').textContent='';
     renderEmpSecs((v.sections||[]).filter(s=>s!=='all'));
@@ -6872,7 +6872,15 @@
         body.sections=secs;
       }
       const res=await teamPost(body);
+      const changedLogin=!!body.new_login, changedPw=!!body.pw;
       closeEmp(); await loadHR();
+      if(changedLogin||changedPw){
+        let msg='✅ Сохранено.';
+        if(changedLogin) msg+='\nНовый логин: '+((res&&res.login)||body.new_login);
+        if(changedPw) msg+='\nПароль изменён.';
+        msg+='\nПередайте сотруднику новый вход. Ему нужно выйти и войти заново.';
+        alert(msg);
+      }
     }catch(e){ err.textContent=e.message; }
     finally{ btn.disabled=false; btn.textContent='Сохранить'; }
   }
