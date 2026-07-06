@@ -430,7 +430,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.5.0<br>Выплата долга поставщику в разделе «Поставщики» теперь автоматически попадает в расходы («Погашение долгов поставщикам»)</div>
+      Штурвал v4.6.0<br>В сделках видно и можно отправлять фото/видео/файлы (Instagram и WhatsApp); бот отвечает вернувшимся клиентам</div>
   </aside>
 
   <!-- MAIN -->
@@ -6495,11 +6495,29 @@
       if(!chat){ box.innerHTML='<span style="color:var(--muted)">Переписка не найдена (имя в Instagram/WhatsApp может отличаться)</span>'; return; }
       const cid=chat.id;
       const r2=await apiFetch(ckBase(cid)+'/thread?account='+encodeURIComponent(chat.account_id)+'&customer='+encodeURIComponent(chat.customer_id),{},ONEC_BASE); const md=await r2.json();
-      const msgs=(md.msgs||[]).map(m=>'<div class="bubble '+m.t+'" style="max-width:90%">'+linkify(m.x)+attHTML(m.att)+'</div>').join('');
+      const msgs=(md.msgs||[]).map(m=>bubbleHTML(m,'',chat.account_id)).join('');
       box.innerHTML='<div class="msgs" style="max-height:220px;background:var(--bg);border-radius:10px;padding:10px;margin-bottom:8px">'+(msgs||'<span style="color:var(--muted)">Нет сообщений</span>')+'</div>'+
-        '<div style="display:flex;gap:8px"><input id="dl-reply" placeholder="Ответить клиенту…" style="flex:1"><button class="btn ghost" onclick="openTpl(\'dl-reply\')" title="Шаблоны ответов">📋</button><button class="btn" onclick="dealReply(\''+cid+'\')">→</button></div>';
-      const mb=box.querySelector('.msgs'); if(mb){ igHydrateMedia(mb); mb.scrollTop=mb.scrollHeight; }
+        '<div style="display:flex;gap:8px;align-items:center">'+
+        '<input type="file" id="dl-file" style="display:none" onchange="if(this.files[0]){dealSendFile(this.files[0],\''+cid+'\');this.value=\'\';}">'+
+        '<button class="btn ghost" title="Прикрепить фото, видео или файл" onclick="document.getElementById(\'dl-file\').click()">📎</button>'+
+        '<input id="dl-reply" placeholder="Ответить клиенту…" style="flex:1"><button class="btn ghost" onclick="openTpl(\'dl-reply\')" title="Шаблоны ответов">📋</button><button class="btn" onclick="dealReply(\''+cid+'\')">→</button></div>';
+      const mb=box.querySelector('.msgs'); if(mb){ igHydrateMedia(mb); ckHydrateWaMedia(mb); mb.scrollTop=mb.scrollHeight; }
     }catch(e){ box.innerHTML='<span style="color:var(--red)">Не удалось загрузить (нужен доступ к чатам)</span>'; }
+  }
+  async function dealSendFile(file, cid){
+    if(!file) return;
+    if(file.size>25*1024*1024){ alert('Файл больше 25 МБ.'); return; }
+    const pp=String(cid).split('|'); const acc=pp[0]||'', cust=pp[1]||'';
+    const box=document.querySelector('#dl-chat .msgs');
+    const label=waMediaType(file.type)==='audio'?'🎤 голосовое':(waMediaType(file.type)==='image'?'📷 фото':(waMediaType(file.type)==='video'?'🎬 видео':'📎 '+esc(file.name||'файл')));
+    if(box){ box.insertAdjacentHTML('beforeend','<div class="bubble out" id="dlf-tmp">'+label+' <span style="opacity:.6;font-size:11px">⏳ отправка…</span></div>'); box.scrollTop=box.scrollHeight; }
+    try{
+      const b64=await fileToB64(file);
+      const r=await apiFetch(ckBase(cid)+'/media',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:acc,customer_id:cust,type:waMediaType(file.type),mime:file.type,filename:file.name||'file',data_b64:b64})},ONEC_BASE);
+      const d=await r.json();
+      if(d.ok){ const dd=getDeal(curDealId); if(dd){ logActivity(dd.client_id,dd.id,'сообщение',label+' (отправлено)'); crmPersist(); } setTimeout(loadDealChat,1300); }
+      else { const t=document.getElementById('dlf-tmp'); if(t){ t.innerHTML=label+' ⚠️ не доставлено'; t.style.background='var(--red)'; } alert('⚠️ '+sendErrText(d.error||'не удалось отправить')); }
+    }catch(e){ const t=document.getElementById('dlf-tmp'); if(t){ t.innerHTML=label+' ⚠️'; t.style.background='var(--red)'; } }
   }
   async function dealReply(chatId){
     const inp=document.getElementById('dl-reply'); const txt=inp.value.trim(); if(!txt) return; inp.value='';
