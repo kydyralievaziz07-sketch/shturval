@@ -2986,13 +2986,16 @@ def build_inventory():
     no_cost_units = 0  # штук без закупочной цены (себестоимость по ним неизвестна)
     for x in goods:
         qty = _num(x.get("QUANTITY"))
-        if qty <= 0:
-            continue  # отрицательные/нулевые остатки не входят в стоимость склада (как в 1С)
         price = _num(x.get("PRICE"))
         cost = _price_by_type(x, "Закупочная")
-        total_units += qty
+        # Стоимость склада считаем С УЧЁТОМ отрицательных остатков (пересорт): по факту в 1С
+        # минусы уменьшают оценку, иначе склад завышается (плюсы где-то тоже завышены).
+        # Наличие, категории и «на исходе» — только по плюсовым остаткам.
         retail_value += qty * price
         cost_value += qty * cost
+        if qty <= 0:
+            continue
+        total_units += qty
         if cost == 0:
             no_cost_units += qty
         in_stock += 1
