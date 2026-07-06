@@ -314,6 +314,9 @@
   .fchip.drop{outline:2px dashed var(--accent);background:var(--panel2)}
   .fchip .fc-n{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .fchip .fc-c{font-size:17px;font-weight:700;color:var(--accent)}
+  .fchip.reject{background:rgba(220,80,80,.08);border-color:rgba(220,80,80,.35)}
+  .fchip.reject .fc-c{color:#e06666}
+  .fchip.reject.active{border-color:#e06666;background:rgba(220,80,80,.16)}
   .cockpit{display:grid;grid-template-columns:340px 1fr;gap:12px;height:calc(100vh - 200px);min-height:460px}
   .ck-chats{border:1px solid var(--line);border-radius:12px;overflow-y:auto;background:var(--panel);min-height:0}
   .ck-convo{border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;background:var(--bg);min-height:0;overflow:hidden}
@@ -564,7 +567,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.16.0<br>ABC-анализ теперь по категориям (этаж → категория), как в отчёте по продажам</div>
+      Штурвал v4.17.0<br>Стадия «Отказано» в сделках + удаление заказов без переписки</div>
   </aside>
 
   <!-- MAIN -->
@@ -3827,7 +3830,7 @@
   function newLeadsCount(){ return COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка'); }).length; }
   function renderFunnel(){
     const fb=document.getElementById('funnelbar'); if(!fb) return;
-    fb.innerHTML=CRM_STATUSES.map(st=>{ const n=(st==='Новая заявка')?newLeadsCount():CRM.deals.filter(d=>d.status===st).length; return '<div class="fchip'+(st===ckView?' active':'')+'" data-status="'+esc(st)+'"><div class="fc-n">'+esc(st)+'</div><div class="fc-c">'+n+'</div></div>'; }).join('');
+    fb.innerHTML=CRM_STATUSES.concat(['Отказ']).map(st=>{ const n=(st==='Новая заявка')?newLeadsCount():CRM.deals.filter(d=>d.status===st).length; const lbl=(st==='Отказ')?'Отказано':st; const rj=(st==='Отказ'); return '<div class="fchip'+(st===ckView?' active':'')+(rj?' reject':'')+'" data-status="'+esc(st)+'"><div class="fc-n">'+esc(lbl)+'</div><div class="fc-c">'+n+'</div></div>'; }).join('');
     fb.querySelectorAll('.fchip').forEach(ch=>{
       ch.addEventListener('click',()=>setView(ch.dataset.status));
       ch.addEventListener('dragover',e=>{ e.preventDefault(); ch.classList.add('drop'); });
@@ -4056,7 +4059,25 @@
   }
   function openItem(it){
     if(it.chatId){ openConvo({id:it.chatId,name:it.name}); }
-    else { ckCurId=null; ckCurName=it.name; ckHead(); const b=document.getElementById('ck-msgs'); if(b) b.innerHTML='<div style="color:var(--muted);padding:10px">У этой сделки нет привязанной переписки в Instagram или WhatsApp — обычно это заказ, заведённый вручную. Нажми на имя сверху, чтобы открыть карточку заказа.</div>'; }
+    else { ckCurId=null; ckCurName=it.name; ckHead(); const b=document.getElementById('ck-msgs'); if(b) b.innerHTML='<div style="color:var(--muted);padding:14px;line-height:1.5">У этой сделки нет привязанной переписки в Instagram или WhatsApp.<br><br>Так бывает, когда заказ <b>заведён вручную</b> или <b>перенесён из amoCRM</b> — живого чата под ним нет, поэтому и отвечать тут некому.<br><br>Нажми на имя сверху, чтобы открыть карточку заказа, либо удали лишнее:</div><div style="display:flex;gap:8px;flex-wrap:wrap;padding:0 14px"><button class="btn ghost" onclick="ckDeleteOrphan()">🗑 Удалить этот заказ</button><button class="btn ghost" style="color:#e06666;border-color:rgba(220,80,80,.4)" onclick="ckDeleteAllOrphans()">🧹 Убрать все без переписки</button></div>'; }
+  }
+  function ckDeleteOrphan(){
+    const d=findDealByName(ckCurName); if(!d){ alert('Заказ не найден'); return; }
+    if(!confirm('Удалить заказ «'+(ckCurName||'')+'»? Переписки под ним нет.')) return;
+    CRM.deals=CRM.deals.filter(x=>x.id!==d.id); CRM.tasks=CRM.tasks.filter(x=>x.deal_id!==d.id);
+    crmPersist(); const b=document.getElementById('ck-msgs'); if(b) b.innerHTML='<div style="color:var(--muted);padding:14px">Заказ удалён.</div>';
+    renderFunnel(); renderLeft(); renderBoard&&renderBoard();
+  }
+  function ckDeleteAllOrphans(){
+    // «сирота» = у сделки нет ни одного живого чата Instagram/WhatsApp с таким же именем
+    const hasChat=new Set(COCKPIT_CHATS.map(c=>(c.name||'').trim().toLowerCase()));
+    const orphans=CRM.deals.filter(d=>{ const cl=getClient(d.client_id); const nm=(cl&&cl.name||'').trim().toLowerCase(); return nm && !hasChat.has(nm); });
+    if(!orphans.length){ alert('Заказов без переписки не найдено.'); return; }
+    if(!confirm('Найдено заказов без переписки: '+orphans.length+'.\nУдалить их все? (Отменить нельзя)')) return;
+    const ids=new Set(orphans.map(d=>d.id));
+    CRM.deals=CRM.deals.filter(d=>!ids.has(d.id)); CRM.tasks=CRM.tasks.filter(t=>!ids.has(t.deal_id));
+    crmPersist(); const b=document.getElementById('ck-msgs'); if(b) b.innerHTML='<div style="color:var(--muted);padding:14px">Удалено заказов без переписки: '+orphans.length+'.</div>';
+    renderFunnel(); renderLeft(); renderBoard&&renderBoard();
   }
   function findClient(name){ return name?(_cByName.get(name.toLowerCase())||null):null; }
   function findDealByName(name){ const c=findClient(name); return c?(_dByClient.get(c.id)||null):null; }
@@ -6754,7 +6775,7 @@
       (dlAcc?'<div style="font-size:12px;color:var(--accent);margin-top:8px">📷 пишет на аккаунт <b>@'+esc(dlAcc)+'</b></div>':'')+
       '<div class="row" style="margin-top:8px"><div><label>Клиент</label><input value="'+esc(c.name)+'" placeholder="Имя клиента" oninput="updClient(\'name\',this.value)"></div>'+
       '<div><label>Телефон</label><input value="'+esc(c.phone||'')+'" placeholder="+996…" oninput="updClient(\'phone\',this.value)"></div></div>'+
-      '<div class="row"><div><label>Статус</label><select onchange="updStatus(this.value)">'+CRM_STATUSES.map(s=>'<option '+(s===d.status?'selected':'')+'>'+esc(s)+'</option>').join('')+'</select></div>'+
+      '<div class="row"><div><label>Статус</label><select onchange="updStatus(this.value)">'+CRM_STATUSES.map(s=>'<option '+(s===d.status?'selected':'')+'>'+esc(s)+'</option>').join('')+'<option value="Отказ"'+(d.status==='Отказ'?' selected':'')+'>Отказано</option></select></div>'+
       '<div><label>Ответственный</label><input value="'+esc(d.owner||'')+'" oninput="updDeal(\'owner\',this.value)"></div></div>'+
       (d.handled_by?'<div style="margin-top:10px;font-size:13px;color:#4a9d5b;background:rgba(74,157,91,.1);border:1px solid rgba(74,157,91,.3);border-radius:8px;padding:7px 10px">✅ Обработал клиента: <b>'+esc(d.handled_by)+'</b>'+(d.handled_at?' <span style="color:var(--muted);font-weight:400">· '+fmtDT(d.handled_at)+'</span>':'')+'</div>':'')+
       '<label style="margin-top:12px">📝 Комментарий</label><textarea placeholder="Заметки по заказу…" oninput="updDeal(\'comment\',this.value)" style="width:100%;min-height:56px;resize:vertical;box-sizing:border-box">'+esc(d.comment||'')+'</textarea>'+
