@@ -603,7 +603,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.21.0<br>Телефон: чат раскрывается на весь экран (как WhatsApp), кнопка «←» назад, все кнопки — маленькие иконки</div>
+      Штурвал v4.22.0<br>Рассылка теперь и в WhatsApp: переключатель Instagram/WhatsApp; «спящим» — по одобренному шаблону</div>
   </aside>
 
   <!-- MAIN -->
@@ -1485,10 +1485,15 @@
 
   <!-- ОКНО: Рассылка -->
   <div class="modal-bg" id="bcbg"><div class="modal" style="width:480px">
-    <h3>📣 Рассылка в Instagram</h3>
-    <div class="note" style="margin:6px 0 12px">⚠️ Instagram разрешает писать первым только тем, кто писал вам <b>за последние 24 часа</b>. Остальным сообщение не уйдёт. Не злоупотребляйте — за спам Instagram может ограничить аккаунт.</div>
+    <h3 id="bc-title">📣 Рассылка</h3>
+    <div class="thsel" style="display:flex;gap:8px;margin:8px 0 10px">
+      <button class="btn ghost" id="bc-ch-ig" onclick="bcSetChannel('ig')">📷 Instagram</button>
+      <button class="btn ghost" id="bc-ch-wa" onclick="bcSetChannel('wa')">🟢 WhatsApp</button>
+    </div>
+    <div class="note" id="bc-hint" style="margin:6px 0 12px"></div>
     <label>С какого аккаунта</label>
     <select id="bc-account" onchange="bcRefreshCount()"></select>
+    <div id="bc-tpl-row" style="display:none;margin-top:10px"><label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin:0"><input type="checkbox" id="bc-tpl" onchange="bcRefreshCount()" style="width:auto"> Слать и «спящим» (кто писал давно) — по одобренному шаблону Meta</label></div>
     <label>Текст сообщения</label>
     <textarea id="bc-text" placeholder="Например: 🔥 Только сегодня скидка 20% на всё! Успейте заказать." style="width:100%;min-height:90px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--text);font-family:inherit;font-size:14px;resize:vertical"></textarea>
     <div id="bc-count" style="font-size:13px;color:var(--muted);margin-top:10px">Считаю получателей…</div>
@@ -2697,54 +2702,89 @@
     });
     return {nc,nd};
   }
-  // ===== Рассылка в Instagram (только тем, кто писал за 24ч) =====
-  function openBroadcast(){
+  // ===== Рассылка: Instagram (24ч) или WhatsApp (24ч текстом / шаблон вне окна) =====
+  let bcChannel='ig';
+  function bcSetChannel(ch){
+    bcChannel=ch;
+    document.getElementById('bc-ch-ig').classList.toggle('active',ch==='ig');
+    document.getElementById('bc-ch-wa').classList.toggle('active',ch==='wa');
+    document.getElementById('bc-title').textContent = ch==='wa'?'📣 Рассылка в WhatsApp':'📣 Рассылка в Instagram';
+    document.getElementById('bc-tpl-row').style.display = ch==='wa'?'':'none';
+    document.getElementById('bc-hint').innerHTML = ch==='wa'
+      ? '⚠️ WhatsApp разрешает писать свободным текстом только тем, кто писал вам <b>за 24 часа</b>. «Спящим» (галочка ниже) уходит только <b>одобренный шаблон Meta</b> — его текст фиксированный, ваш текст в этом режиме не отправляется. За спам номер могут заблокировать.'
+      : '⚠️ Instagram разрешает писать первым только тем, кто писал вам <b>за 24 часа</b>. Остальным не уйдёт. За спам Instagram может ограничить аккаунт.';
     const sel=document.getElementById('bc-account');
-    const accs=[...new Set((COCKPIT_CHATS||[]).map(c=>c.account).filter(Boolean))];
-    sel.innerHTML='<option value="all">Все аккаунты</option>'+accs.map(a=>'<option value="'+esc(a)+'">📷 '+esc(a)+'</option>').join('');
-    document.getElementById('bc-text').value='';
-    document.getElementById('bcbg').classList.add('open');
+    const accs=[...new Set((COCKPIT_CHATS||[]).filter(c=>(c.channel||'ig')===ch).map(c=>c.account).filter(Boolean))];
+    const ico=ch==='wa'?'🟢':'📷';
+    sel.innerHTML='<option value="all">Все аккаунты</option>'+accs.map(a=>'<option value="'+esc(a)+'">'+ico+' '+esc(a)+'</option>').join('');
+    const tpl=document.getElementById('bc-tpl'); if(tpl) tpl.checked=false;
+    const lim=document.getElementById('bc-limit'); if(lim) lim.value='';
     bcRefreshCount();
   }
+  function openBroadcast(ch){
+    document.getElementById('bc-text').value='';
+    document.getElementById('bcbg').classList.add('open');
+    bcSetChannel(ch||'ig');
+  }
   function closeBc(){ document.getElementById('bcbg').classList.remove('open'); }
+  function bcIsTemplate(){ const t=document.getElementById('bc-tpl'); return bcChannel==='wa' && t && t.checked; }
   function bcEligibleList(){
     const acc=document.getElementById('bc-account').value||'all';
     const cutoff=Date.now()/1000-86400;
-    return (COCKPIT_CHATS||[]).filter(c=>(c.ts||0)>=cutoff && (acc==='all'||c.account===acc))
+    return (COCKPIT_CHATS||[]).filter(c=>(c.channel||'ig')===bcChannel && (c.ts||0)>=cutoff && (acc==='all'||c.account===acc))
+      .sort((a,b)=>(b.ts||0)-(a.ts||0));
+  }
+  function bcAllList(){
+    const acc=document.getElementById('bc-account').value||'all';
+    return (COCKPIT_CHATS||[]).filter(c=>(c.channel||'ig')===bcChannel && (acc==='all'||c.account===acc))
       .sort((a,b)=>(b.ts||0)-(a.ts||0));
   }
   function bcToggleList(){
     const box=document.getElementById('bc-list');
     if(box.style.display!=='none'){ box.style.display='none'; return; }
-    const list=bcEligibleList();
-    box.innerHTML=list.length?list.map(c=>'<div style="padding:8px 12px;border-bottom:1px solid var(--line);font-size:13px;display:flex;justify-content:space-between;gap:8px"><span>'+esc(c.name||c.customer_id)+'</span><span style="color:var(--muted);font-size:11px">📷 '+esc(c.account||'')+'</span></div>').join(''):'<div style="padding:12px;color:var(--muted);font-size:13px">Нет клиентов в окне 24 часа.</div>';
+    const list=bcIsTemplate()?bcAllList():bcEligibleList();
+    const ico=bcChannel==='wa'?'🟢':'📷';
+    box.innerHTML=list.length?list.map(c=>'<div style="padding:8px 12px;border-bottom:1px solid var(--line);font-size:13px;display:flex;justify-content:space-between;gap:8px"><span>'+esc(c.name||c.customer_id||'')+'</span><span style="color:var(--muted);font-size:11px">'+ico+' '+esc(c.account||'')+'</span></div>').join(''):'<div style="padding:12px;color:var(--muted);font-size:13px">Некому отправлять.</div>';
     box.style.display='';
   }
   async function bcRefreshCount(){
     const acc=document.getElementById('bc-account').value||'all';
-    const box=document.getElementById('bc-count'); box.textContent='Считаю получателей…';
-    const lim=document.getElementById('bc-limit'); const localN=bcEligibleList().length;
-    if(lim && !lim.value) lim.value=localN;            // по умолчанию — всем
-    const lb=document.getElementById('bc-list'); if(lb&&lb.style.display!=='none') bcToggleList(), bcToggleList();
+    const box=document.getElementById('bc-count'); if(box) box.textContent='Считаю получателей…';
+    const tpl=bcIsTemplate();
+    const ta=document.getElementById('bc-text'); if(ta){ ta.disabled=tpl; ta.style.opacity=tpl?'.5':'1'; }
+    const localN=(tpl?bcAllList():bcEligibleList()).length;
+    const lim=document.getElementById('bc-limit'); if(lim && !lim.value) lim.value=localN;
+    const lb=document.getElementById('bc-list'); if(lb&&lb.style.display!=='none'){ bcToggleList(); bcToggleList(); }
+    const base=(bcChannel==='wa')?'/api/wa/broadcast':'/api/ig/broadcast';
     try{
-      const r=await apiFetch('/api/ig/broadcast?account='+encodeURIComponent(acc)+'&_='+Date.now(),{},ONEC_BASE);
+      const r=await apiFetch(base+'?account='+encodeURIComponent(acc)+'&_='+Date.now(),{},ONEC_BASE);
       const d=await r.json();
-      box.innerHTML='👥 В окне 24 часа: <b style="color:var(--text)">'+(d.eligible||localN)+'</b> клиентов. Можешь ограничить число ниже.';
-      if(lim && (!lim.value||+lim.value>(d.eligible||localN))) lim.value=(d.eligible||localN);
-    }catch(_){ box.innerHTML='👥 В окне 24 часа: <b style="color:var(--text)">'+localN+'</b> клиентов (по данным переписки).'; }
+      const n=tpl?(d.total!=null?d.total:localN):(d.eligible!=null?d.eligible:localN);
+      if(box) box.innerHTML=(tpl?'📋 Шаблон уйдёт всем известным контактам: ':'👥 В окне 24 часа: ')+'<b style="color:var(--text)">'+n+'</b> клиентов.';
+      if(lim && (!lim.value||+lim.value>n)) lim.value=n;
+    }catch(_){ if(box) box.innerHTML='👥 Получателей: <b style="color:var(--text)">'+localN+'</b> (по данным переписки).'; }
   }
   async function bcSend(){
     const acc=document.getElementById('bc-account').value||'all';
     const text=(document.getElementById('bc-text').value||'').trim();
-    if(!text){ alert('Впиши текст рассылки'); return; }
+    const tpl=bcIsTemplate();
+    if(!tpl && !text){ alert('Впиши текст рассылки'); return; }
     const limV=parseInt(document.getElementById('bc-limit').value||'0',10);
     const limit=(limV>0)?limV:9999;
-    if(!confirm('Отправить сообщение '+(limV>0?('максимум '+limV):'всем')+' клиентам, писавшим за 24 часа?\n\n«'+text.slice(0,120)+(text.length>120?'…':'')+'»')) return;
+    const chName=bcChannel==='wa'?'WhatsApp':'Instagram';
+    const who=tpl?'всем известным контактам (по шаблону)':((limV>0?('максимум '+limV+' клиентам'):'всем клиентам')+', писавшим за 24 часа');
+    if(!confirm('Отправить в '+chName+' '+who+'?'+(tpl?'':('\n\n«'+text.slice(0,120)+(text.length>120?'…':'')+'»')))) return;
     const btn=document.getElementById('bc-send-btn'); btn.disabled=true; btn.textContent='⏳ Отправляю…';
+    const base=(bcChannel==='wa')?'/api/wa/broadcast':'/api/ig/broadcast';
+    const payload={text:text,account:acc,limit:limit};
+    if(tpl) payload.template='bizmart_reengage_ru';
     try{
-      const r=await apiFetch('/api/ig/broadcast',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text,account:acc,limit:limit})},ONEC_BASE);
+      const r=await apiFetch(base,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)},ONEC_BASE);
       const d=await r.json(); if(d.error) throw new Error(d.error);
-      alert('Готово! Отправлено: '+(d.sent||0)+(d.failed?(' · не доставлено: '+d.failed+' (вне 24-часового окна)'):'')+'.');
+      let msg='Готово! Отправлено: '+(d.sent||0);
+      if(d.failed) msg+=' · не доставлено: '+d.failed;
+      if(d.errors && Object.keys(d.errors).length){ msg+='\n\nПочему не доставлено:\n'+Object.entries(d.errors).map(function(e){return '• '+e[0]+' ×'+e[1];}).join('\n'); }
+      alert(msg);
       closeBc();
     }catch(e){ alert('Не удалось отправить: '+(e.message||e)); }
     finally{ btn.disabled=false; btn.textContent='Отправить рассылку'; }
