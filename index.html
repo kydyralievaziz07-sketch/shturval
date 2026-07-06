@@ -541,6 +541,28 @@
     .thsel button{min-height:40px;padding:9px 14px;font-size:14px}
   }
 
+  /* Кнопки-иконки в чате + «назад» */
+  .btn-ico{display:none}
+  .ck-back{display:none}
+  @media(max-width:760px){
+    /* Пульт «Сделки»: открытый чат разворачивается на весь экран, как в WhatsApp */
+    body.ck-open #tab-deals .toolbar,
+    body.ck-open #tab-deals #crm-stats,
+    body.ck-open #tab-deals #crm-dash,
+    body.ck-open #tab-deals .deals-pre,
+    body.ck-open #tab-deals #funnelbar,
+    body.ck-open #tab-deals .ck-chats{display:none!important}
+    body.ck-open #tab-deals .cockpit{height:auto;gap:0}
+    body.ck-open #tab-deals .ck-convo{height:calc(100vh - 118px);height:calc(100dvh - 118px)}
+    body.ck-open .ck-back{display:inline-flex;align-items:center;justify-content:center;padding:6px 12px;font-size:18px;min-height:40px;flex:0 0 auto;border-radius:10px}
+    /* Компактная строка ответа — маленькие кнопки-иконки в один ряд */
+    .ck-convo .replybox{flex-wrap:nowrap;gap:6px;padding:8px 10px;padding-bottom:max(8px,env(safe-area-inset-bottom));align-items:center}
+    .ck-convo .replybox input{flex:1 1 auto;min-width:0;padding:10px 12px;font-size:16px!important}
+    .ck-convo .replybox .btn{flex:0 0 auto;min-height:40px;padding:8px 11px;font-size:19px;border-radius:12px}
+    .ck-convo .replybox .btn-lbl{display:none}
+    .ck-convo .replybox .btn-ico{display:inline}
+  }
+
   /* Очень маленькие экраны ≤400px */
   @media(max-width:400px){
     .tn-logo{display:none}
@@ -581,7 +603,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.20.0<br>Телефон: кнопки под чатом переносятся вниз (все видны), поле ввода во всю ширину + отступ под панель</div>
+      Штурвал v4.21.0<br>Телефон: чат раскрывается на весь экран (как WhatsApp), кнопка «←» назад, все кнопки — маленькие иконки</div>
   </aside>
 
   <!-- MAIN -->
@@ -786,9 +808,9 @@
         <span id="crm-stats" style="font-size:12px;color:var(--muted)"></span>
       </div>
       <div id="crm-dash" style="margin-bottom:14px"></div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">🧲 Воронка — перетащи клиента из списка чатов на нужную стадию</div>
+      <div class="deals-pre" style="font-size:12px;color:var(--muted);margin-bottom:6px">🧲 Воронка — перетащи клиента из списка чатов на нужную стадию</div>
       <div class="funnelbar" id="funnelbar"></div>
-      <div style="margin:8px 0"><input id="ck-search" placeholder="🔎 Поиск клиента по нику или имени…" oninput="ckDoSearch(this.value)" style="width:100%;box-sizing:border-box;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 12px;color:var(--text);font-family:inherit;font-size:14px"></div>
+      <div class="deals-pre" style="margin:8px 0"><input id="ck-search" placeholder="🔎 Поиск клиента по нику или имени…" oninput="ckDoSearch(this.value)" style="width:100%;box-sizing:border-box;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 12px;color:var(--text);font-family:inherit;font-size:14px"></div>
       <div class="cockpit">
         <div class="ck-chats" id="cockpit-chats"></div>
         <div class="ck-convo">
@@ -796,7 +818,7 @@
           <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 4px 4px"><span id="ck-upd" style="font-size:11px;color:var(--muted)"></span><button class="btn ghost" style="padding:2px 10px;font-size:12px" onclick="if(ckCurId)loadConvoMsgs(ckCurId,false)" title="Обновить переписку вручную">↻ обновить</button></div>
           <div class="msgs" id="ck-msgs"></div>
           <div id="ck-warn" style="display:none;font-size:12px;padding:6px 10px;margin:0 4px;border-radius:8px"></div>
-          <div class="replybox"><input id="ck-reply" placeholder="Ответить клиенту…" onkeydown="if(event.key==='Enter')ckSend()"><input type="file" id="ck-file" style="display:none" onchange="if(this.files[0]){ckSendFile(this.files[0]);this.value='';}"><button class="btn ghost" title="Прикрепить фото, видео или файл" onclick="document.getElementById('ck-file').click()">📎</button><button class="btn ghost" onclick="openTpl('ck-reply')" title="Шаблоны ответов">📋</button><button class="btn ghost" onclick="openBotFix()" title="Отметить, что бот ответил неправильно">⚠️ Бот ошибся</button><button class="btn ghost" id="ck-mic" title="Записать голосовое" onclick="igToggleVoice('ck')">🎤</button><button class="btn" onclick="ckSend()">Отправить</button></div>
+          <div class="replybox"><input id="ck-reply" placeholder="Ответить клиенту…" onkeydown="if(event.key==='Enter')ckSend()"><input type="file" id="ck-file" style="display:none" onchange="if(this.files[0]){ckSendFile(this.files[0]);this.value='';}"><button class="btn ghost" title="Прикрепить фото, видео или файл" onclick="document.getElementById('ck-file').click()">📎</button><button class="btn ghost" onclick="openTpl('ck-reply')" title="Шаблоны ответов">📋</button><button class="btn ghost" onclick="openBotFix()" title="Отметить, что бот ответил неправильно">⚠️<span class="btn-lbl"> Бот ошибся</span></button><button class="btn ghost" id="ck-mic" title="Записать голосовое" onclick="igToggleVoice('ck')">🎤</button><button class="btn" onclick="ckSend()"><span class="btn-ico">➤</span><span class="btn-lbl">Отправить</span></button></div>
         </div>
       </div>
     </section>
@@ -1705,6 +1727,7 @@
     document.querySelectorAll('main section').forEach(s=>s.classList.add('hide'));
     const sec=document.getElementById('tab-'+tab); if(sec) sec.classList.remove('hide');
     document.body.classList.toggle('tab-wa', tab==='wainbox');   // WhatsApp на всю высоту, без скролла страницы
+    document.body.classList.remove('ck-open');   // уходя со «Сделок» — снять полноэкранный чат
     document.body.classList.toggle('wa-open', tab==='wainbox' && !!waCur);  // мобильный: переписка только если выбран чат
     if(titles[tab]){ const pt=document.getElementById('page-title'),ps=document.getElementById('page-sub'); if(pt)pt.textContent=titles[tab][0]; if(ps)ps.textContent=titles[tab][1]; }
     renderTopNav(); renderSubmenu();
@@ -3977,7 +4000,7 @@
       ch.addEventListener('drop',e=>{ e.preventDefault(); ch.classList.remove('drop'); dropChatToStage(ch.dataset.status); });
     });
   }
-  function setView(stage){ ckView=stage; ckSearch=''; const s=document.getElementById('ck-search'); if(s) s.value=''; renderFunnel(); renderLeft(); }
+  function setView(stage){ ckView=stage; ckSearch=''; const s=document.getElementById('ck-search'); if(s) s.value=''; document.body.classList.remove('ck-open'); renderFunnel(); renderLeft(); }
   let dealsAutoTimer=null;
   function startDealsAuto(){
     if(dealsAutoTimer) return;
@@ -4200,7 +4223,7 @@
   }
   function openItem(it){
     if(it.chatId){ openConvo({id:it.chatId,name:it.name}); }
-    else { ckCurId=null; ckCurName=it.name; ckHead(); const b=document.getElementById('ck-msgs'); if(b) b.innerHTML='<div style="color:var(--muted);padding:14px;line-height:1.5">У этой сделки нет привязанной переписки в Instagram или WhatsApp.<br><br>Так бывает, когда заказ <b>заведён вручную</b> или <b>перенесён из amoCRM</b> — живого чата под ним нет, поэтому и отвечать тут некому.<br><br>Нажми на имя сверху, чтобы открыть карточку заказа, либо удали лишнее:</div><div style="display:flex;gap:8px;flex-wrap:wrap;padding:0 14px"><button class="btn ghost" onclick="ckDeleteOrphan()">🗑 Удалить этот заказ</button><button class="btn ghost" style="color:#e06666;border-color:rgba(220,80,80,.4)" onclick="ckDeleteAllOrphans()">🧹 Убрать все без переписки</button></div>'; }
+    else { ckCurId=null; ckCurName=it.name; ckHead(); document.body.classList.add('ck-open'); const b=document.getElementById('ck-msgs'); if(b) b.innerHTML='<div style="color:var(--muted);padding:14px;line-height:1.5">У этой сделки нет привязанной переписки в Instagram или WhatsApp.<br><br>Так бывает, когда заказ <b>заведён вручную</b> или <b>перенесён из amoCRM</b> — живого чата под ним нет, поэтому и отвечать тут некому.<br><br>Нажми на имя сверху, чтобы открыть карточку заказа, либо удали лишнее:</div><div style="display:flex;gap:8px;flex-wrap:wrap;padding:0 14px"><button class="btn ghost" onclick="ckDeleteOrphan()">🗑 Удалить этот заказ</button><button class="btn ghost" style="color:#e06666;border-color:rgba(220,80,80,.4)" onclick="ckDeleteAllOrphans()">🧹 Убрать все без переписки</button></div>'; }
   }
   function ckDeleteOrphan(){
     const d=findDealByName(ckCurName); if(!d){ alert('Заказ не найден'); return; }
@@ -4876,10 +4899,11 @@
       if(waTick%4===0) loadWaInbox();             // список — раз в ~12с
     }, 3000);
   }
+  function ckCloseConvo(){ document.body.classList.remove('ck-open'); ckCurId=null; ckCurName=''; const h=document.getElementById('ck-head'); if(h) h.innerHTML='\u2190 Выберите клиента в списке слева'; const m=document.getElementById('ck-msgs'); if(m) m.innerHTML=''; renderLeft(); }
   function ckHead(){
     const head=document.getElementById('ck-head'); if(!head) return; const deal=findDealByName(ckCurName);
     const curChat=COCKPIT_CHATS.find(x=>x.id===ckCurId); const acc=curChat?curChat.account:''; const isWa=curChat&&curChat.channel==='wa';
-    head.innerHTML='<span style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+    head.innerHTML='<button class="btn ghost ck-back" onclick="ckCloseConvo()" title="Назад к списку">\u2190</button><span style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
         '<span style="cursor:pointer" onclick="openDealForClient()" title="Открыть карточку заказа">📋 <b>'+esc(ckCurName||'—')+'</b>'+(deal?' · <span style="color:var(--muted)">'+esc(deal.status)+'</span>':'')+'</span>'+
         (acc?'<span style="font-size:12px;color:'+(isWa?'#25d366':'var(--accent)')+'">'+(isWa?'🟢 WhatsApp':'📷')+' пишет на '+(isWa?esc(acc):'@'+esc(acc))+'</span>':'')+
         (isWa?'':igBtnHTML(ckCurName))+
@@ -5008,7 +5032,7 @@
     }, 4000);
   }
   async function openConvo(c){
-    ckCurId=c.id; ckCurName=c.name; renderLeft(); ckHead();
+    ckCurId=c.id; ckCurName=c.name; renderLeft(); ckHead(); document.body.classList.add('ck-open');
     const box=document.getElementById('ck-msgs'); if(box) box.dataset.sig='';
     await loadConvoMsgs(c.id, false);
     startConvoAuto();
