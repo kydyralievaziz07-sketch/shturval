@@ -564,7 +564,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.7.0<br>WhatsApp: кнопка «Написать по шаблону» для клиентов вне 24 часов (шаблон переобращения); ники старых лидов дозаполнены</div>
+      Штурвал v4.8.0<br>Кнопка 📎 «прикрепить фото/видео/файл» в основном чате кокпита (Instagram и WhatsApp)</div>
   </aside>
 
   <!-- MAIN -->
@@ -779,7 +779,7 @@
           <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 4px 4px"><span id="ck-upd" style="font-size:11px;color:var(--muted)"></span><button class="btn ghost" style="padding:2px 10px;font-size:12px" onclick="if(ckCurId)loadConvoMsgs(ckCurId,false)" title="Обновить переписку вручную">↻ обновить</button></div>
           <div class="msgs" id="ck-msgs"></div>
           <div id="ck-warn" style="display:none;font-size:12px;padding:6px 10px;margin:0 4px;border-radius:8px"></div>
-          <div class="replybox"><input id="ck-reply" placeholder="Ответить клиенту…" onkeydown="if(event.key==='Enter')ckSend()"><button class="btn ghost" onclick="openTpl('ck-reply')" title="Шаблоны ответов">📋</button><button class="btn ghost" onclick="openBotFix()" title="Отметить, что бот ответил неправильно">⚠️ Бот ошибся</button><button class="btn ghost" id="ck-mic" title="Записать голосовое" onclick="igToggleVoice('ck')">🎤</button><button class="btn" onclick="ckSend()">Отправить</button></div>
+          <div class="replybox"><input id="ck-reply" placeholder="Ответить клиенту…" onkeydown="if(event.key==='Enter')ckSend()"><input type="file" id="ck-file" style="display:none" onchange="if(this.files[0]){ckSendFile(this.files[0]);this.value='';}"><button class="btn ghost" title="Прикрепить фото, видео или файл" onclick="document.getElementById('ck-file').click()">📎</button><button class="btn ghost" onclick="openTpl('ck-reply')" title="Шаблоны ответов">📋</button><button class="btn ghost" onclick="openBotFix()" title="Отметить, что бот ответил неправильно">⚠️ Бот ошибся</button><button class="btn ghost" id="ck-mic" title="Записать голосовое" onclick="igToggleVoice('ck')">🎤</button><button class="btn" onclick="ckSend()">Отправить</button></div>
         </div>
       </div>
     </section>
@@ -4901,6 +4901,22 @@
   }
   // Отправка с окном отмены: 6 секунд можно нажать «отменить» — сообщение уйдёт только после.
   let ckPendingSend=null;
+  async function ckSendFile(file){
+    if(!file) return;
+    if(!ckCurId){ alert('Сначала выбери чат клиента слева.'); return; }
+    if(file.size>25*1024*1024){ alert('Файл больше 25 МБ.'); return; }
+    const cid=ckCurId; const pp=String(cid).split('|'); const acc=pp[0]||'', cust=pp[1]||'';
+    const box=document.getElementById('ck-msgs');
+    const label=waMediaType(file.type)==='audio'?'🎤 голосовое':(waMediaType(file.type)==='image'?'📷 фото':(waMediaType(file.type)==='video'?'🎬 видео':'📎 '+esc(file.name||'файл')));
+    if(box){ box.insertAdjacentHTML('beforeend','<div class="bubble out" id="ckf-tmp">'+label+' <span style="opacity:.6;font-size:11px">⏳ отправка…</span></div>'); box.scrollTop=box.scrollHeight; }
+    try{
+      const b64=await fileToB64(file);
+      const r=await apiFetch(ckBase(cid)+'/media',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:acc,customer_id:cust,type:waMediaType(file.type),mime:file.type,filename:file.name||'file',data_b64:b64})},ONEC_BASE);
+      const d=await r.json();
+      if(d.ok){ const dl=findDealByName(ckCurName); if(dl){ logActivity(dl.client_id,dl.id,'сообщение',label+' (отправлено)'); crmPersist(); } setTimeout(function(){ loadConvoMsgs(ckCurId,true); },1400); }
+      else { const t=document.getElementById('ckf-tmp'); if(t){ t.innerHTML=label+' ⚠️ не доставлено'; t.style.background='var(--red)'; } alert('⚠️ '+sendErrText(d.error||'не удалось отправить')); }
+    }catch(e){ const t=document.getElementById('ckf-tmp'); if(t){ t.innerHTML=label+' ⚠️'; t.style.background='var(--red)'; } }
+  }
   async function ckSend(){
     const inp=document.getElementById('ck-reply'); const t=inp.value.trim(); if(!t) return;
     if(!ckCurId){ alert('Сначала выбери чат в списке слева.'); return; }
