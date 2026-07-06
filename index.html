@@ -564,7 +564,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.13.0<br>Анализ рекламы как у таргетолога: ключевые метрики с оценкой (CTR/частота), воронка показы→клики→переписки, графики динамики (CTR/CPM/частота/цена результата), разбивки по аудитории/плейсментам/регионам/устройствам/часам и экспертные выводы</div>
+      Штурвал v4.14.0<br>Бот подхватывает диалог через 5 минут молчания менеджера (пауза теперь в минутах, настраивается)</div>
   </aside>
 
   <!-- MAIN -->
@@ -4102,7 +4102,7 @@
             +['claude-haiku-4-5-20251001','claude-sonnet-4-6','claude-opus-4-8'].map(m=>'<option value="'+m+'"'+(_igbot.model===m?' selected':'')+'>'+m+'</option>').join('')
             +(['claude-haiku-4-5-20251001','claude-sonnet-4-6','claude-opus-4-8'].indexOf(_igbot.model)<0?'<option value="'+esc(_igbot.model)+'" selected>'+esc(_igbot.model)+'</option>':'')
           +'</select></div>'
-          +'<div><div style="font-size:12px;color:var(--muted);margin-bottom:4px">Пауза после ответа человека (часов)</div><input id="igbot-hh" type="number" min="1" max="72" value="'+(_igbot.handoff_hours||6)+'" style="'+SS+'"></div>'
+          +'<div><div style="font-size:12px;color:var(--muted);margin-bottom:4px">Пауза после ответа менеджера (минут) — через столько минут молчания менеджера бот снова отвечает клиенту. 0 = бот отвечает всегда.</div><input id="igbot-hm" type="number" min="0" max="1440" value="'+(_igbot.handoff_min!=null?_igbot.handoff_min:5)+'" style="'+SS+'"></div>'
         +'</div>'
         +'<div style="border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px">'
           +'<label style="display:flex;gap:10px;align-items:center;font-size:14px;margin-bottom:8px"><input type="checkbox" id="igbot-wafb" '+((_igbot.wa_fallback!==false)?'checked':'')+' style="width:17px;height:17px"> <b>🟢 WhatsApp: отвечать, только если человек не ответил</b></label>'
@@ -4165,7 +4165,7 @@
       prompt:(document.getElementById('igbot-prompt').value||'').trim(),
       teach:(teachEl?teachEl.value:(_igbot.teach||'')).trim(),
       model:document.getElementById('igbot-model').value,
-      handoff_hours:Number(document.getElementById('igbot-hh').value)||6,
+      handoff_min:Number(document.getElementById('igbot-hm').value||5),
       wa_fallback:document.getElementById('igbot-wafb').checked,
       wa_fallback_min:Number(document.getElementById('igbot-wafbmin').value)||60,
       learn_every_days:Number(document.getElementById('igbot-learnevery').value)||0};

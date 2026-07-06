@@ -1701,6 +1701,7 @@ def _igbot_get():
     return {"enabled": bool(s.get("enabled")), "prompt": s.get("prompt") or IGBOT_DEFAULT_PROMPT,
             "model": s.get("model") or CFG.get("ANTHROPIC_MODEL"),
             "handoff_hours": _hhours(s.get("handoff_hours")),
+            "handoff_min": _hhours(s.get("handoff_min"), 5),
             "kb": s.get("kb") or "",
             "teach": s.get("teach") or "",
             "sources": s.get("sources") or [],
@@ -1713,13 +1714,14 @@ def _igbot_get():
 
 def _igbot_set(patch):
     cur = _igbot_get()
-    for k in ("enabled", "prompt", "model", "handoff_hours", "kb", "teach", "sources",
+    for k in ("enabled", "prompt", "model", "handoff_hours", "handoff_min", "kb", "teach", "sources",
               "learn_every_days", "learn_last", "learn_next", "lang",
               "wa_fallback", "wa_fallback_min"):
         if k in patch:
             cur[k] = patch[k]
     cur["enabled"] = bool(cur["enabled"])
     cur["handoff_hours"] = _hhours(cur.get("handoff_hours"))
+    cur["handoff_min"] = _hhours(cur.get("handoff_min"), 5)
     cur["wa_fallback"] = bool(cur.get("wa_fallback"))
     cur["wa_fallback_min"] = max(5, int(_num(cur.get("wa_fallback_min")) or 60))
     cur["learn_every_days"] = int(_num(cur.get("learn_every_days")) or 0)
@@ -1924,8 +1926,8 @@ def igbot_handle(sender, recipient, text):
         # передача человеку ПО ВРЕМЕНИ: бот молчит, только если ЖИВОЙ оператор отвечал НЕДАВНО
         # (в пределах handoff_hours). Если человек давно не отвечал, а клиент написал снова —
         # бот опять ведёт диалог (раньше он замолкал НАВСЕГДА после единственного ответа менеджера).
-        hh = _hhours(s.get("handoff_hours"))
-        cutoff = (time.time() - hh * 3600) * 1000
+        hm = _hhours(s.get("handoff_min"), 5)
+        cutoff = (time.time() - hm * 60) * 1000
         for r in hist:
             if (r.get("direction") == "out" and (r.get("raw") or {}).get("by") == "human"
                     and int(_num(r.get("ts")) or 0) >= cutoff):
@@ -2655,8 +2657,8 @@ def wabot_handle(sender, phone_id, text=None, fallback=False):
         else:
             # Мгновенный режим: бот молчит, только если ЖИВОЙ менеджер отвечал НЕДАВНО
             # (в пределах handoff_hours). Если человек давно не отвечал — бот снова ведёт диалог.
-            hh = _hhours(s.get("handoff_hours"))
-            cutoff = (time.time() - hh * 3600) * 1000
+            hm = _hhours(s.get("handoff_min"), 5)
+            cutoff = (time.time() - hm * 60) * 1000
             for r in hist:
                 if (r.get("direction") == "out" and (r.get("raw") or {}).get("by") == "human"
                         and int(_num(r.get("ts")) or 0) >= cutoff):
