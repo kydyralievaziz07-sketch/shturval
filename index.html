@@ -1174,8 +1174,8 @@
         <div style="margin-top:14px">
           <label style="font-size:12px;color:var(--muted)">Новый пароль</label>
           <div class="row" style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap">
-            <input type="password" id="set-pw1" placeholder="новый пароль" style="flex:1;min-width:160px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--text)">
-            <input type="password" id="set-pw2" placeholder="повторите" style="flex:1;min-width:160px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--text)">
+            <input type="password" id="set-pw1" placeholder="новый пароль" autocomplete="new-password" style="flex:1;min-width:160px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--text)">
+            <input type="password" id="set-pw2" placeholder="повторите" autocomplete="new-password" style="flex:1;min-width:160px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--text)">
             <button class="btn" onclick="changePassword()">Сменить пароль</button>
           </div>
         </div>
@@ -6694,6 +6694,24 @@
 
   // Закрытие окон по клику мимо (на тёмный фон) и по Esc — удобнее, особенно на телефоне
   document.addEventListener('click',e=>{ if(e.target&&e.target.classList&&e.target.classList.contains('modal-bg')) e.target.classList.remove('open'); });
+  // iOS: выключаем автозаполнение паролей во всех модалах — иначе iOS предлагает «вставить пароль»
+  // в обычных текстовых полях (имена, цены, комментарии и т.п.)
+  (function(){
+    var _offAC=function(root){
+      (root||document).querySelectorAll('.modal input:not([type="password"]),.modal select,.modal textarea').forEach(function(el){
+        if(!el.getAttribute('autocomplete')) el.setAttribute('autocomplete','off');
+      });
+    };
+    // при загрузке
+    _offAC();
+    // при открытии любого модала (MutationObserver)
+    new MutationObserver(function(muts){
+      muts.forEach(function(m){
+        m.addedNodes.forEach(function(n){ if(n.nodeType===1) _offAC(n); });
+        if(m.type==='attributes' && m.target.classList && m.target.classList.contains('open')) _offAC(m.target);
+      });
+    }).observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['class']});
+  })();
   document.addEventListener('keydown',e=>{
     if(e.key!=='Escape') return;
     let closed=false;
