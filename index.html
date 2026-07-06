@@ -603,7 +603,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.23.0<br>Авто-синхронизация воронки: обновления других сотрудников видны без перезагрузки</div>
+      Штурвал v4.23.0<br>Рассылка WhatsApp: выбор периода спящих — 1 месяц / 2 месяца / своё число дней</div>
   </aside>
 
   <!-- MAIN -->
@@ -1494,6 +1494,16 @@
     <label>С какого аккаунта</label>
     <select id="bc-account" onchange="bcRefreshCount()"></select>
     <div id="bc-tpl-row" style="display:none;margin-top:10px"><label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin:0"><input type="checkbox" id="bc-tpl" onchange="bcRefreshCount()" style="width:auto"> Слать и «спящим» (кто писал давно) — по одобренному шаблону Meta</label></div>
+    <div id="bc-period-row" style="display:none;margin-top:12px">
+      <label style="font-size:13px;color:var(--muted)">Кому из спящих — кто давно не писал:</label>
+      <div class="thsel" style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+        <button class="btn ghost active" id="bc-d-0" onclick="bcSetDays(0)">Всем</button>
+        <button class="btn ghost" id="bc-d-30" onclick="bcSetDays(30)">1 месяц+</button>
+        <button class="btn ghost" id="bc-d-60" onclick="bcSetDays(60)">2 месяца+</button>
+        <button class="btn ghost" id="bc-d-x" onclick="bcSetDays(-1)">Своё…</button>
+      </div>
+      <div id="bc-days-wrap" style="display:none;align-items:center;gap:8px;margin-top:8px"><input type="number" id="bc-days" min="1" value="90" onchange="bcDaysInput()" style="width:90px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--text);font-size:14px"><span style="font-size:13px;color:var(--muted)">дней и больше не писали</span></div>
+    </div>
     <label>Текст сообщения</label>
     <textarea id="bc-text" placeholder="Например: 🔥 Только сегодня скидка 20% на всё! Успейте заказать." style="width:100%;min-height:90px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--text);font-family:inherit;font-size:14px;resize:vertical"></textarea>
     <div id="bc-count" style="font-size:13px;color:var(--muted);margin-top:10px">Считаю получателей…</div>
@@ -2704,6 +2714,7 @@
   }
   // ===== Рассылка: Instagram (24ч) или WhatsApp (24ч текстом / шаблон вне окна) =====
   let bcChannel='ig';
+  let bcDays=0;
   function bcSetChannel(ch){
     bcChannel=ch;
     document.getElementById('bc-ch-ig').classList.toggle('active',ch==='ig');
@@ -2719,8 +2730,18 @@
     sel.innerHTML='<option value="all">Все аккаунты</option>'+accs.map(a=>'<option value="'+esc(a)+'">'+ico+' '+esc(a)+'</option>').join('');
     const tpl=document.getElementById('bc-tpl'); if(tpl) tpl.checked=false;
     const lim=document.getElementById('bc-limit'); if(lim) lim.value='';
+    bcResetDays();
     bcRefreshCount();
   }
+  function bcResetDays(){ bcDays=0; ['0','30','60','x'].forEach(function(k){ var el=document.getElementById('bc-d-'+k); if(el) el.classList.toggle('active',k==='0'); }); var w=document.getElementById('bc-days-wrap'); if(w) w.style.display='none'; }
+  function bcSetDays(d){
+    ['0','30','60','x'].forEach(function(k){ var el=document.getElementById('bc-d-'+k); if(el) el.classList.remove('active'); });
+    var w=document.getElementById('bc-days-wrap');
+    if(d===-1){ document.getElementById('bc-d-x').classList.add('active'); if(w) w.style.display='flex'; bcDays=Math.max(1,parseInt(document.getElementById('bc-days').value||'90',10)); }
+    else { document.getElementById('bc-d-'+d).classList.add('active'); if(w) w.style.display='none'; bcDays=d; }
+    bcRefreshCount();
+  }
+  function bcDaysInput(){ bcDays=Math.max(1,parseInt(document.getElementById('bc-days').value||'1',10)); bcRefreshCount(); }
   function openBroadcast(ch){
     document.getElementById('bc-text').value='';
     document.getElementById('bcbg').classList.add('open');
@@ -2736,8 +2757,13 @@
   }
   function bcAllList(){
     const acc=document.getElementById('bc-account').value||'all';
-    return (COCKPIT_CHATS||[]).filter(c=>(c.channel||'ig')===bcChannel && (acc==='all'||c.account===acc))
-      .sort((a,b)=>(b.ts||0)-(a.ts||0));
+    const now=Date.now()/1000;
+    return (COCKPIT_CHATS||[]).filter(function(c){
+      if((c.channel||'ig')!==bcChannel) return false;
+      if(!(acc==='all'||c.account===acc)) return false;
+      if(bcDays>0 && (c.ts||0) > now - bcDays*86400) return false;
+      return true;
+    }).sort((a,b)=>(b.ts||0)-(a.ts||0));
   }
   function bcToggleList(){
     const box=document.getElementById('bc-list');
@@ -2751,16 +2777,21 @@
     const acc=document.getElementById('bc-account').value||'all';
     const box=document.getElementById('bc-count'); if(box) box.textContent='Считаю получателей…';
     const tpl=bcIsTemplate();
+    const pr=document.getElementById('bc-period-row'); if(pr) pr.style.display=tpl?'':'none';
     const ta=document.getElementById('bc-text'); if(ta){ ta.disabled=tpl; ta.style.opacity=tpl?'.5':'1'; }
     const localN=(tpl?bcAllList():bcEligibleList()).length;
     const lim=document.getElementById('bc-limit'); if(lim && !lim.value) lim.value=localN;
     const lb=document.getElementById('bc-list'); if(lb&&lb.style.display!=='none'){ bcToggleList(); bcToggleList(); }
     const base=(bcChannel==='wa')?'/api/wa/broadcast':'/api/ig/broadcast';
+    const daysQ=(bcChannel==='wa'&&tpl&&bcDays>0)?('&days='+bcDays):'';
     try{
-      const r=await apiFetch(base+'?account='+encodeURIComponent(acc)+'&_='+Date.now(),{},ONEC_BASE);
+      const r=await apiFetch(base+'?account='+encodeURIComponent(acc)+daysQ+'&_='+Date.now(),{},ONEC_BASE);
       const d=await r.json();
-      const n=tpl?(d.total!=null?d.total:localN):(d.eligible!=null?d.eligible:localN);
-      if(box) box.innerHTML=(tpl?'📋 Шаблон уйдёт всем известным контактам: ':'👥 В окне 24 часа: ')+'<b style="color:var(--text)">'+n+'</b> клиентов.';
+      let n;
+      if(tpl) n=(bcDays>0&&d.sleeping!=null)?d.sleeping:(d.total!=null?d.total:localN);
+      else n=(d.eligible!=null?d.eligible:localN);
+      const lbl=tpl?(bcDays>0?('📋 Не писали '+bcDays+'+ дней: '):'📋 Шаблон уйдёт всем контактам: '):'👥 В окне 24 часа: ';
+      if(box) box.innerHTML=lbl+'<b style="color:var(--text)">'+n+'</b> клиентов.';
       if(lim && (!lim.value||+lim.value>n)) lim.value=n;
     }catch(_){ if(box) box.innerHTML='👥 Получателей: <b style="color:var(--text)">'+localN+'</b> (по данным переписки).'; }
   }
@@ -2772,12 +2803,12 @@
     const limV=parseInt(document.getElementById('bc-limit').value||'0',10);
     const limit=(limV>0)?limV:9999;
     const chName=bcChannel==='wa'?'WhatsApp':'Instagram';
-    const who=tpl?'всем известным контактам (по шаблону)':((limV>0?('максимум '+limV+' клиентам'):'всем клиентам')+', писавшим за 24 часа');
+    const who=tpl?(bcDays>0?('спящим клиентам (не писали '+bcDays+'+ дней), по шаблону'):'всем известным контактам (по шаблону)'):((limV>0?('максимум '+limV+' клиентам'):'всем клиентам')+', писавшим за 24 часа');
     if(!confirm('Отправить в '+chName+' '+who+'?'+(tpl?'':('\n\n«'+text.slice(0,120)+(text.length>120?'…':'')+'»')))) return;
     const btn=document.getElementById('bc-send-btn'); btn.disabled=true; btn.textContent='⏳ Отправляю…';
     const base=(bcChannel==='wa')?'/api/wa/broadcast':'/api/ig/broadcast';
     const payload={text:text,account:acc,limit:limit};
-    if(tpl) payload.template='bizmart_reengage_ru';
+    if(tpl){ payload.template='bizmart_reengage_ru'; if(bcDays>0) payload.days=bcDays; }
     try{
       const r=await apiFetch(base,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)},ONEC_BASE);
       const d=await r.json(); if(d.error) throw new Error(d.error);

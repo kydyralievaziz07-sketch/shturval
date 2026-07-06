@@ -2612,27 +2612,37 @@ def _wa_eligible_targets(account=None, max_age_hours=24):
         out.append(c)
     return out
 
-def _wa_all_targets(account=None):
-    """Все известные WhatsApp-контакты (для рассылки по одобренному шаблону — можно вне окна)."""
+def _wa_all_targets(account=None, min_silent_days=0):
+    """Все известные WhatsApp-контакты (для рассылки по одобренному шаблону — можно вне окна).
+    min_silent_days>0 → только те, кто НЕ писал дольше указанного числа дней («спящие»)."""
+    thresh = (time.time() - min_silent_days * 86400) if min_silent_days else None
     out = []
     for c in wa_conversations():
         if account and account not in ("all", "") and c.get("account") != account:
             continue
+        if thresh is not None:
+            ts = c.get("last_ts") or 0
+            ts_sec = ts / 1000.0 if ts > 1e12 else ts
+            if ts_sec > thresh:          # писали свежее порога → не «спящий», пропускаем
+                continue
         out.append(c)
     return out
 
-def wa_broadcast_count(account=None):
+def wa_broadcast_count(account=None, min_silent_days=0):
     win = _wa_eligible_targets(account); allc = _wa_all_targets(account)
+    sleeping = _wa_all_targets(account, min_silent_days) if min_silent_days else allc
     per = {}
     for c in win:
         per[c["account"]] = per.get(c["account"], 0) + 1
-    return {"eligible": len(win), "total": len(allc), "per_account": per}
+    return {"eligible": len(win), "total": len(allc), "sleeping": len(sleeping),
+            "per_account": per}
 
-def wa_broadcast(text, account=None, limit=500, template="", lang="ru"):
+def wa_broadcast(text, account=None, limit=500, template="", lang="ru", min_silent_days=0):
     """template="" → свободный текст только тем, кто в окне 24ч.
-    template="имя_шаблона" → одобренный Meta шаблон, уходит и «спящим» вне окна."""
+    template="имя_шаблона" → одобренный Meta шаблон, уходит и «спящим» вне окна.
+    min_silent_days>0 (только для шаблона) → лишь тем, кто молчит дольше N дней."""
     if template:
-        targets = _wa_all_targets(account)[:limit]
+        targets = _wa_all_targets(account, min_silent_days)[:limit]
     else:
         targets = _wa_eligible_targets(account)[:limit]
     sent = 0; failed = 0; errs = {}
@@ -5599,10 +5609,14 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 limit = 500
             limit = max(1, min(limit, 500))
+            try:
+                days = int(body.get("days") or 0)
+            except Exception:
+                days = 0
             if not text and not template:
                 return self._send(400, {"error": "Введите текст рассылки"})
             try:
-                return self._send(200, wa_broadcast(text, account, limit=limit, template=template))
+                return self._send(200, wa_broadcast(text, account, limit=limit, template=template, min_silent_days=max(0, days)))
             except Exception as e:
                 return self._send(500, {"error": "Рассылка не удалась: %s" % e})
         if self.path.startswith("/api/ads/"):
@@ -6324,7 +6338,11 @@ class Handler(BaseHTTPRequestHandler):
             p = _parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
             account = (p.get("account") or ["all"])[0]
             try:
-                return self._send(200, wa_broadcast_count(account))
+                days = int((p.get("days") or ["0"])[0])
+            except Exception:
+                days = 0
+            try:
+                return self._send(200, wa_broadcast_count(account, max(0, days)))
             except Exception as e:
                 return self._send(200, {"eligible": 0, "total": 0, "error": str(e)})
         if self.path.startswith("/api/ig/accounts"):
