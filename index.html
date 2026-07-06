@@ -564,7 +564,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.15.0<br>Выплаты поставщикам больше не попадают в расходы — учитываются только в модуле «Поставщики»</div>
+      Штурвал v4.16.0<br>ABC-анализ теперь по категориям (этаж → категория), как в отчёте по продажам</div>
   </aside>
 
   <!-- MAIN -->
@@ -1013,7 +1013,7 @@
       </div>
       <div class="grid2b">
         <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-            <h3 style="margin:0">🅰️ ABC-анализ <span style="font-size:12px;color:var(--muted);font-weight:400">— по чистой прибыли (30 дн.)</span></h3>
+            <h3 style="margin:0">🅰️ ABC-анализ <span style="font-size:12px;color:var(--muted);font-weight:400">— по категориям, чистая прибыль (30 дн.)</span></h3>
             <button class="btn ghost" style="font-size:12px;padding:5px 10px;white-space:nowrap" onclick="openAbcFull()" title="Развернуть на весь экран">⛶ Развернуть</button>
           </div>
           <div id="an-abc"><span style="color:var(--muted);font-size:13px">Загрузка…</span></div></div>
@@ -2424,24 +2424,29 @@
   }
   function anAbc(){
     const box=document.getElementById('an-abc'); if(!box) return;
-    const d=window._assortData;
-    if(!d||!(d.groups||[]).length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Считаю по чистой прибыли из чеков 1С…</span>'; return; }
-    const cats=(d.groups||[]).slice().filter(c=>c.profit>0).sort((a,b)=>b.profit-a.profit);
-    const total=cats.reduce((s,c)=>s+c.profit,0); let acc=0;
-    const g={A:{cats:0,count:0,val:0},B:{cats:0,count:0,val:0},C:{cats:0,count:0,val:0}};
-    cats.forEach(c=>{ const grp=acc/total<0.7?'A':acc/total<0.9?'B':'C'; acc+=c.profit; g[grp].cats++; g[grp].count+=(c.count||0); g[grp].val+=c.profit; });
-    const row=(b,name,desc,o)=>'<tr><td><span class="badge '+b+'">'+name+'</span></td><td style="font-size:12px;color:var(--muted)">'+desc+'</td><td>'+o.cats+'</td><td>'+o.count.toLocaleString('ru-RU')+'</td><td>'+(total?Math.round(o.val/total*100):0)+'%</td></tr>';
-    box.innerHTML='<table><thead><tr><th>Группа</th><th>Что это</th><th>Групп</th><th>Позиций</th><th>Доля прибыли</th></tr></thead><tbody>'+
+    const rows=abcRows();
+    if(!rows.length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Считаю по чистой прибыли из чеков 1С…</span>'; return; }
+    const total=rows.reduce((s,c)=>s+c.value,0)||1;
+    const g={A:{cats:0,val:0},B:{cats:0,val:0},C:{cats:0,val:0}};
+    rows.forEach(r=>{ g[r.grp].cats++; g[r.grp].val+=r.value; });
+    const row=(b,name,desc,o)=>'<tr><td><span class="badge '+b+'">'+name+'</span></td><td style="font-size:12px;color:var(--muted)">'+desc+'</td><td>'+o.cats+'</td><td>'+Math.round(o.val/total*100)+'%</td></tr>';
+    box.innerHTML='<table><thead><tr><th>Группа</th><th>Что это</th><th>Категорий</th><th>Доля прибыли</th></tr></thead><tbody>'+
       row('b-a','A — хиты','дают ~70% прибыли',g.A)+
       row('b-b','B — середняки','следующие ~20%',g.B)+
       row('b-c','C — балласт','мало прибыли',g.C)+
-      '</tbody></table><div class="note" style="margin-top:12px">💡 Группы класса <b>C</b> почти не приносят прибыли — кандидаты на сокращение. Подробно «что оставить в каждой группе» — во вкладке <b>🎯 Ассортимент</b>.</div>';
+      '</tbody></table><div class="note" style="margin-top:12px">💡 Категории класса <b>C</b> почти не приносят прибыли — кандидаты на сокращение. Разбивка по этажам и категориям — кнопка <b>⛶ Развернуть</b> и вкладка <b>📋 Отчёт по продажам</b>.</div>';
   }
   function abcRows(){
-    const d=window._assortData; const cats=((d&&d.groups)||[]).slice().filter(c=>c.profit>0).sort((a,b)=>b.profit-a.profit);
-    const total=cats.reduce((s,c)=>s+c.profit,0)||1; let acc=0;
-    return cats.map(c=>{ const cum=acc/total; const grp=cum<0.7?'A':cum<0.9?'B':'C'; acc+=c.profit;
-      return {name:c.group,value:c.profit,count:c.count||0,keep:c.keep_n||0,keepShare:c.keep_profit_share||0,share:c.profit/total*100,cum:acc/total*100,grp}; });
+    // ABC по КАТЕГОРИЯМ в разрезе «этаж → категория» — те же категории, что в отчёте по продажам.
+    const d=window._assortData; const floors=(d&&d.floors)||[];
+    const cats=[];
+    floors.forEach(f=>(f.cats||[]).forEach(c=>{ if((c.profit||0)>0)
+      cats.push({floor:f.floor,name:c.name,value:c.profit,revenue:c.revenue||0,qty:c.qty||0,margin:c.margin||0}); }));
+    cats.sort((a,b)=>b.value-a.value);
+    const total=cats.reduce((s,c)=>s+c.value,0)||1; let acc=0;
+    return cats.map(c=>{ const cum=acc/total; const grp=cum<0.7?'A':cum<0.9?'B':'C'; acc+=c.value;
+      return {floor:c.floor,name:c.name,value:c.value,revenue:c.revenue,qty:c.qty,margin:c.margin,
+              share:c.value/total*100,cum:acc/total*100,grp}; });
   }
   function openAbcFull(){
     const rows=abcRows(); const box=document.getElementById('abcfull-body');
@@ -2450,11 +2455,11 @@
       const badge=g=>g==='A'?'b-a':g==='B'?'b-b':'b-c';
       const total=rows.reduce((s,r)=>s+r.value,0)||1; const g={A:{n:0,v:0},B:{n:0,v:0},C:{n:0,v:0}};
       rows.forEach(r=>{ g[r.grp].n++; g[r.grp].v+=r.value; });
-      const summary='<div class="note" style="margin-bottom:14px">🅰️ ABC по <b>чистой прибыли</b> за 30 дней. Склад не учитывается. «Оставить» — сколько позиций держат почти всю прибыль группы.</div>'+
+      const summary='<div class="note" style="margin-bottom:14px">🅰️ ABC по <b>чистой прибыли</b> за 30 дней, по категориям в разрезе <b>этаж → категория</b> (как в отчёте по продажам). Склад не учитывается.</div>'+
         '<div class="kpis" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">'+
-        ['A','B','C'].map(k=>'<div class="card kpi"><div class="label"><span class="badge '+badge(k)+'">'+k+'</span> · '+g[k].n+' групп</div><div class="value" style="font-size:18px">'+Math.round(g[k].v/total*100)+'% прибыли</div></div>').join('')+'</div>';
-      box.innerHTML=summary+'<table><thead><tr><th>#</th><th>Гр.</th><th>Группа</th><th style="text-align:right">Чистая прибыль</th><th style="text-align:right">Позиций</th><th style="text-align:right">Оставить</th><th style="text-align:right">Доля</th><th style="text-align:right">Накопл.</th></tr></thead><tbody>'+
-        rows.map((r,i)=>'<tr><td style="color:var(--muted)">'+(i+1)+'</td><td><span class="badge '+badge(r.grp)+'">'+r.grp+'</span></td><td>'+esc(r.name)+'</td><td style="text-align:right"><span class="money" data-som="'+Math.round(r.value)+'">'+fmt(Math.round(r.value))+'</span></td><td style="text-align:right">'+r.count.toLocaleString('ru-RU')+'</td><td style="text-align:right">топ-'+r.keep+' = '+r.keepShare+'%</td><td style="text-align:right">'+r.share.toFixed(1)+'%</td><td style="text-align:right;color:var(--muted)">'+r.cum.toFixed(0)+'%</td></tr>').join('')+'</tbody></table>';
+        ['A','B','C'].map(k=>'<div class="card kpi"><div class="label"><span class="badge '+badge(k)+'">'+k+'</span> · '+g[k].n+' категорий</div><div class="value" style="font-size:18px">'+Math.round(g[k].v/total*100)+'% прибыли</div></div>').join('')+'</div>';
+      box.innerHTML=summary+'<table><thead><tr><th>#</th><th>Гр.</th><th>Этаж</th><th>Категория</th><th style="text-align:right">Чистая прибыль</th><th style="text-align:right">Продано</th><th style="text-align:right">Выручка</th><th style="text-align:right">Маржа</th><th style="text-align:right">Доля</th><th style="text-align:right">Накопл.</th></tr></thead><tbody>'+
+        rows.map((r,i)=>'<tr><td style="color:var(--muted)">'+(i+1)+'</td><td><span class="badge '+badge(r.grp)+'">'+r.grp+'</span></td><td>'+esc(r.floor)+'</td><td>'+esc(r.name)+'</td><td style="text-align:right"><span class="money" data-som="'+Math.round(r.value)+'">'+fmt(Math.round(r.value))+'</span></td><td style="text-align:right">'+(r.qty||0).toLocaleString('ru-RU')+'</td><td style="text-align:right">'+fmt(Math.round(r.revenue))+'</td><td style="text-align:right">'+(r.margin||0)+'%</td><td style="text-align:right">'+r.share.toFixed(1)+'%</td><td style="text-align:right;color:var(--muted)">'+r.cum.toFixed(0)+'%</td></tr>').join('')+'</tbody></table>';
       renderMoney();
     }
     document.getElementById('abcfullbg').classList.add('open');
