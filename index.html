@@ -332,7 +332,7 @@
   .ck-chats{border:1px solid var(--line);border-radius:12px;overflow-y:auto;background:var(--panel);min-height:0}
   .ck-convo{border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;background:var(--bg);min-height:0;overflow:hidden}
   .ck-head{padding:12px 14px;border-bottom:1px solid var(--line);background:var(--panel);display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:14px}
-  @media(max-width:760px){.cockpit{grid-template-columns:1fr;height:auto}.ck-chats{max-height:240px}.ck-convo{height:60vh}}
+  @media(max-width:760px){.cockpit{grid-template-columns:1fr;height:auto}.ck-chats{max-height:240px}.ck-convo{height:72vh}}
   /* сворачивающееся меню: узкая полоса, при наведении раскрывается (правая часть сдвигается) */
   @media(min-width:761px){
     .sidebar{width:66px;overflow:hidden;white-space:nowrap;transition:width .22s ease}
@@ -494,10 +494,13 @@
     /* Пузыри сообщений */
     .bubble{max-width:88%;font-size:14px;padding:10px 14px;line-height:1.5}
 
-    /* Поле ввода сообщения */
-    .replybox{padding:10px 12px;gap:8px}
-    .replybox input{font-size:16px!important;padding:13px 16px;border-radius:14px}
+    /* Поле ввода сообщения — кнопки переносятся на след. строку, чтобы все были видны */
+    .replybox{padding:10px 12px;gap:8px;flex-wrap:wrap}
+    .replybox input{font-size:16px!important;padding:13px 16px;border-radius:14px;flex:1 1 100%;order:-1}
+    .replybox .btn{flex:0 0 auto;padding:11px 14px}
     .chat input{font-size:16px!important;padding:12px 14px}
+    /* нижний отступ под системную панель телефона, чтобы поле не пряталось */
+    .ck-convo .replybox{padding-bottom:max(12px,env(safe-area-inset-bottom))}
 
     /* Уведомления — весь экран */
     .drawer{width:100%;border-radius:22px 22px 0 0;top:auto;height:88vh}
@@ -578,7 +581,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.19.0<br>Отчёт по продажам: период (день/неделя/месяц/квартал/год), разворот вглубь по категориям, диаграммы; сезонность по месяцам в Финансах
+      Штурвал v4.20.0<br>Телефон: кнопки под чатом переносятся вниз (все видны), поле ввода во всю ширину + отступ под панель</div>
   </aside>
 
   <!-- MAIN -->
