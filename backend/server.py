@@ -1896,9 +1896,14 @@ def igbot_handle(sender, recipient, text):
         if not s["enabled"] or not (CFG.get("ANTHROPIC_API_KEY") and supa_on()):
             return
         hist = _igbot_history(recipient, sender, 40)
-        # передача человеку: если в диалоге есть хоть один ответ ОПЕРАТОРА — бот молчит
+        # передача человеку ПО ВРЕМЕНИ: бот молчит, только если ЖИВОЙ оператор отвечал НЕДАВНО
+        # (в пределах handoff_hours). Если человек давно не отвечал, а клиент написал снова —
+        # бот опять ведёт диалог (раньше он замолкал НАВСЕГДА после единственного ответа менеджера).
+        hh = int(_num(s.get("handoff_hours")) or 6)
+        cutoff = (time.time() - hh * 3600) * 1000
         for r in hist:
-            if r.get("direction") == "out" and (r.get("raw") or {}).get("by") == "human":
+            if (r.get("direction") == "out" and (r.get("raw") or {}).get("by") == "human"
+                    and int(_num(r.get("ts")) or 0) >= cutoff):
                 _igbot_bump("handoffs")
                 return
         reply = _igbot_generate(hist, s)
