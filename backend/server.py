@@ -227,6 +227,7 @@ SECTION_OF = [
     ("/api/ig/broadcast", "chats"), ("/api/ig/bot", "chats"), ("/api/ig/media", "chats"),
     ("/api/wa/conversations", "chats"), ("/api/wa/thread", "chats"),
     ("/api/wa/reply", "chats"), ("/api/wa/botreply", "chats"), ("/api/wa/accounts", "chats"),
+    ("/api/wa/template", "chats"),
     ("/api/wa/media", "chats"), ("/api/wa/profile", "chats"), ("/api/wa/read", "chats"),
     ("/api/assistant", "ai"),
     ("/api/ads", "ads"),
@@ -2540,6 +2541,35 @@ def wa_reply(account_id, customer_id, text, by="human"):
                "raw": {"by": by, "type": "text"}})
     except Exception:
         pass
+
+def wa_send_template(to, template_name, from_phone_id=None, lang="ru"):
+    """Отправить ШАБЛОННОЕ сообщение — можно писать клиенту ВНЕ окна 24 часов (после его
+    ответа снова открывается обычное окно). Шаблон должен быть одобрен Meta."""
+    phone_id = str(from_phone_id or CFG.get("WA_PHONE_ID", "") or "")
+    token = wa_token_for(phone_id) if phone_id else CFG.get("WA_TOKEN", "")
+    if not (token and phone_id):
+        raise RuntimeError("WhatsApp не подключён (нет токена или номера).")
+    url = WA_GRAPH + "/" + _q(phone_id) + "/messages"
+    body = json.dumps({"messaging_product": "whatsapp", "to": str(to), "type": "template",
+                       "template": {"name": template_name, "language": {"code": lang}}}).encode()
+    req = urllib.request.Request(url, data=body, method="POST",
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": "Bearer " + token, "User-Agent": "Shturval/1.0"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read().decode() or "{}")
+
+def wa_reply_template(account_id, customer_id, template_name, lang="ru", by="human", preview=""):
+    """Отправить клиенту шаблон и сохранить в историю (чтобы показать в чате)."""
+    resp = wa_send_template(customer_id, template_name, account_id, lang)
+    try:
+        _supa("POST", "wa_inbox", "",
+              {"company_id": COMPANY_ID, "sender_id": str(account_id),
+               "recipient_id": str(customer_id), "text": preview or ("📋 шаблон: " + template_name),
+               "mid": _wamid_of(resp), "ts": int(time.time() * 1000), "direction": "out",
+               "status": "sent", "raw": {"by": by, "type": "template"}})
+    except Exception:
+        pass
+    return resp
 
 # ====== ИИ-БОТ WhatsApp — тот же «Акылай», что и в Instagram (общие настройки и правила) ======
 def _wabot_history(phone_id, customer, n=40):
@@ -5165,6 +5195,23 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "нужны account_id, customer_id и text"})
             try:
                 wa_reply(acc, cust, text)
+            except Exception as e:
+                return self._send(200, {"ok": False, "error": "WhatsApp: " + str(e)})
+            return self._send(200, {"ok": True})
+        if self.path.startswith("/api/wa/template"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            acc = str(body.get("account_id") or ""); cust = str(body.get("customer_id") or "")
+            tpl = (body.get("template") or "bizmart_reengage_ru").strip()
+            lang = (body.get("lang") or "ru").strip()
+            preview = (body.get("preview") or "").strip()
+            if not acc or not cust:
+                return self._send(400, {"error": "нужны account_id и customer_id"})
+            try:
+                wa_reply_template(acc, cust, tpl, lang, preview=preview)
             except Exception as e:
                 return self._send(200, {"ok": False, "error": "WhatsApp: " + str(e)})
             return self._send(200, {"ok": True})

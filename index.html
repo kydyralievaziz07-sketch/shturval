@@ -430,7 +430,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.6.0<br>В сделках видно и можно отправлять фото/видео/файлы (Instagram и WhatsApp); бот отвечает вернувшимся клиентам</div>
+      Штурвал v4.7.0<br>WhatsApp: кнопка «Написать по шаблону» для клиентов вне 24 часов (шаблон переобращения); ники старых лидов дозаполнены</div>
   </aside>
 
   <!-- MAIN -->
@@ -4714,6 +4714,16 @@
   }
   // Проверка 24-часового окна Instagram ДО отправки
   let ckWindowOpen=true;
+  async function ckSendTemplate(){
+    const c=COCKPIT_CHATS.find(x=>x.id===ckCurId); if(!c){ alert('Открой диалог клиента.'); return; }
+    if(!confirm('Отправить клиенту приветственный шаблон, чтобы снова открыть переписку?\n\nWhatsApp разрешает писать вне 24 часов только готовым шаблоном. Как клиент ответит — дальше пишешь обычным текстом.')) return;
+    try{
+      const r=await apiFetch('/api/wa/template',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:c.account_id,customer_id:c.customer_id,template:'bizmart_reengage_ru',lang:'ru',preview:'📋 Отправлен шаблон-приветствие (ждём ответ клиента)'})},ONEC_BASE);
+      const d=await r.json();
+      if(d.ok){ alert('✅ Шаблон отправлен! Когда клиент ответит — снова можно писать обычным текстом.'); setTimeout(function(){ loadConvoMsgs(ckCurId,true); },1500); }
+      else { const e=String(d.error||''); alert('⚠️ Не отправлено: '+e+((/not|approve|template|paused|найд/i).test(e)?'\n\nСкорее всего, шаблон ещё на проверке у Meta — обычно одобряют за несколько минут-часов. Попробуй позже.':'')); }
+    }catch(e){ alert('Не удалось отправить.'); }
+  }
   function ckWindowCheck(msgs){
     const w=document.getElementById('ck-warn'); if(!w) return;
     const cc=COCKPIT_CHATS.find(x=>x.id===ckCurId); const isWa=cc&&cc.channel==='wa';
@@ -4734,6 +4744,7 @@
       const days=Math.floor(h/24);
       w.style.display='block'; w.style.background='rgba(255,107,107,.15)'; w.style.color='#ff8f8f';
       w.innerHTML='🔴 <b>Окно закрыто.</b> Клиент писал '+(days>=1?days+' дн. назад':Math.round(h)+' ч назад')+'. '+NET+' даёт отвечать только '+LIMTXT+' после сообщения клиента — ответ <b>не уйдёт</b>, пока он не напишет снова.';
+      if(isWa) w.innerHTML+=' <button class="btn" style="margin-top:8px;padding:5px 11px;font-size:12px" onclick="ckSendTemplate()">📋 Написать по шаблону</button>';
     } else if(h>LIMIT-4){
       ckWindowOpen=true;
       const left=Math.max(1,Math.round(LIMIT-h));
