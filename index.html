@@ -91,6 +91,12 @@
   .period button{background:none;border:none;color:var(--muted);padding:8px 14px;font-size:13px;
     cursor:pointer;font-family:inherit}
   .period button.active{background:var(--accent);color:#fff;font-weight:600}
+  /* Разворачиваемое дерево отчёта по продажам */
+  details.rtree>summary::-webkit-details-marker{display:none}
+  details.rtree>summary{outline:none}
+  details.rtree>summary:hover{background:rgba(127,127,127,.06)}
+  .rcaret{transition:transform .12s ease}
+  details.rtree[open]>summary .rcaret{transform:rotate(90deg)}
   .bell{position:relative;cursor:pointer;font-size:18px;background:var(--panel);border:1px solid var(--line);
     width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;
     color:var(--text);font-family:inherit;padding:0}
@@ -187,8 +193,13 @@
   /* INBOX / чаты */
   .inbox{display:grid;grid-template-columns:300px 1fr;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;height:72vh}
   .chatlist{border-right:1px solid var(--line);overflow-y:auto;background:var(--panel);min-height:0}
-  .chatitem{padding:12px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+  .chatitem{padding:12px 14px;border-bottom:1px solid var(--line);cursor:pointer;display:flex;align-items:center;gap:8px}
   .chatitem:hover,.chatitem.active{background:var(--panel2)}
+  .ci-body{flex:1;min-width:0}
+  .ci-grip{flex:0 0 auto;width:40px;align-self:stretch;margin:-12px -14px -12px 0;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:20px;line-height:1;cursor:grab;border-left:1px solid var(--line);touch-action:none;user-select:none;-webkit-user-select:none}
+  .ci-grip:hover{color:var(--accent);background:var(--panel2)}
+  .ci-grip:active,.ci-grip.dragging{cursor:grabbing;color:var(--accent);background:var(--panel2)}
+  .drag-ghost{position:fixed;z-index:99999;pointer-events:none;transform:translate(-50%,-50%);background:var(--accent);color:#fff;padding:7px 13px;border-radius:20px;font-size:13px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.45);max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.96}
   .ci-name{font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px}
   .ci-unread{background:var(--accent);color:#fff;font-size:11px;border-radius:20px;padding:0 6px}
   .ci-last{color:var(--muted);font-size:12px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -567,7 +578,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.17.0<br>Стадия «Отказано» в сделках + удаление заказов без переписки</div>
+      Штурвал v4.18.0<br>Перетаскивание сделок на телефоне: справа от имени зона-ручка ⠿</div>
   </aside>
 
   <!-- MAIN -->
@@ -934,13 +945,22 @@
     <!-- ОТЧЁТ ПО ПРОДАЖАМ -->
     <section id="tab-report" class="hide">
       <div id="report-status" class="note" style="margin-bottom:14px">⏳ Собираю отчёт по продажам из чеков 1С…</div>
+      <div class="period" id="reportperiod" style="margin-bottom:12px;flex-wrap:wrap">
+        <button data-rd="1" onclick="setReportPeriod(1)">1 день</button>
+        <button data-rd="7" onclick="setReportPeriod(7)">Неделя</button>
+        <button class="active" data-rd="30" onclick="setReportPeriod(30)">Месяц</button>
+        <button data-rd="90" onclick="setReportPeriod(90)">Квартал</button>
+        <button data-rd="365" onclick="setReportPeriod(365)">Год</button>
+      </div>
       <div id="report-kpis" class="kpis" style="margin-bottom:14px"></div>
+      <div id="report-charts" class="grid2" style="margin-bottom:14px"></div>
       <div style="display:flex;gap:8px;align-items:center;margin:6px 0 14px;flex-wrap:wrap">
-        <input id="report-search" type="search" placeholder="🔍 Поиск категории…" oninput="renderReport()" style="flex:1;min-width:200px;background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:7px 10px;font-size:13px">
+        <input id="report-search" type="search" placeholder="🔍 Поиск категории или товара…" oninput="renderReport()" style="flex:1;min-width:200px;background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:7px 10px;font-size:13px">
         <button class="btn ghost" style="font-size:12px;padding:6px 12px" onclick="exportReport()">⬇️ В Excel</button>
       </div>
+      <div class="note" style="margin-bottom:10px;font-size:12px">🔽 Нажимай на строку, чтобы <b>развернуть</b>: этаж → категория → подкатегория → товары внутри.</div>
       <div id="report-body"><span style="color:var(--muted);font-size:13px">—</span></div>
-      <div class="note" style="margin-top:14px">📊 Продажи по этажам и категориям из чеков 1С за период. Выручка — что пробили на кассе; прибыль — за вычетом себестоимости товара. Категории отсортированы по выручке.</div>
+      <div class="note" style="margin-top:14px">📊 Продажи по этажам и категориям из чеков 1С за выбранный период. Выручка — что пробили на кассе; прибыль — за вычетом себестоимости товара. Всё отсортировано по выручке.</div>
     </section>
 
     <!-- CLIENTS -->
@@ -1052,6 +1072,11 @@
           <h3>📂 Расходы по категориям <span id="fin-cats-period" style="font-size:12px;color:var(--muted);font-weight:400">— за месяц</span></h3>
           <div id="fin-exp-cats"><span style="color:var(--muted);font-size:13px">—</span></div>
         </div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin:22px 0 8px">📅 Сезонность — по месяцам (наберётся со временем, история копится с 18.06.2026)</div>
+      <div class="grid2" id="fin-charts">
+        <div class="card"><h3 style="margin:0 0 10px">📊 Выручка · прибыль · расходы по месяцам</h3><div id="fin-chart-bars"><span style="color:var(--muted);font-size:13px">—</span></div></div>
+        <div class="card"><h3 style="margin:0 0 10px">🥧 Доля выручки по месяцам</h3><div id="fin-chart-donut"><span style="color:var(--muted);font-size:13px">—</span></div></div>
       </div>
       <div style="font-size:12px;color:var(--muted);margin:20px 0 8px">📦 Склад сейчас (из 1С) — сколько денег «лежит» в товаре</div>
       <div class="kpis" id="fin-stock"></div>
@@ -2495,6 +2520,48 @@
     if(cats.length){ box.innerHTML+='<div style="font-size:12px;color:var(--muted);margin:14px 0 8px">Расходы по статьям:</div><table><tbody>'+
       cats.map(c=>'<tr><td>'+esc(c.category||c.name||'—')+'</td><td style="text-align:right"><span class="money" data-som="'+c.amount+'">'+fmt(c.amount)+'</span></td></tr>').join('')+'</tbody></table>'; }
   }
+  // ===== Мини-диаграммы (SVG, без внешних библиотек, работают офлайн) =====
+  const CHART_COLORS=['#4f8cff','#39d98a','#ffb84d','#ff6b6b','#a56bff','#22c1c3','#f45b9b','#8bd450','#f7b32b','#5b8def','#e07be0','#3ad1c4','#ff9f43','#54a0ff'];
+  // Круговая (кольцевая) диаграмма: data=[{label,value,color?}]
+  function svgDonut(data,opts){
+    opts=opts||{}; data=(data||[]).filter(d=>(+d.value)>0);
+    const size=opts.size||190, r=size/2, ir=r*0.58;
+    const tot=data.reduce((s,d)=>s+(+d.value),0)||1; let ang=-Math.PI/2, paths='';
+    if(data.length===1){ // один сектор = полное кольцо
+      paths='<circle cx="'+r+'" cy="'+r+'" r="'+((r+ir)/2)+'" fill="none" stroke="'+(data[0].color||CHART_COLORS[0])+'" stroke-width="'+(r-ir)+'"><title>'+esc(data[0].label)+': '+fmt(Math.round(data[0].value))+'</title></circle>';
+    } else data.forEach((d,i)=>{
+      const frac=(+d.value)/tot, a2=ang+frac*2*Math.PI, large=frac>0.5?1:0;
+      const x1=r+r*Math.cos(ang),y1=r+r*Math.sin(ang),x2=r+r*Math.cos(a2),y2=r+r*Math.sin(a2);
+      const xi2=r+ir*Math.cos(a2),yi2=r+ir*Math.sin(a2),xi1=r+ir*Math.cos(ang),yi1=r+ir*Math.sin(ang);
+      const col=d.color||CHART_COLORS[i%CHART_COLORS.length];
+      if(frac>0.0001) paths+='<path d="M'+x1+' '+y1+' A'+r+' '+r+' 0 '+large+' 1 '+x2+' '+y2+' L'+xi2+' '+yi2+' A'+ir+' '+ir+' 0 '+large+' 0 '+xi1+' '+yi1+' Z" fill="'+col+'"><title>'+esc(d.label)+': '+fmt(Math.round(d.value))+' ('+Math.round(frac*100)+'%)</title></path>';
+      ang=a2;
+    });
+    const legend=data.map((d,i)=>'<div style="display:flex;align-items:center;gap:6px;font-size:12px;margin:3px 0"><span style="width:11px;height:11px;border-radius:2px;background:'+(d.color||CHART_COLORS[i%CHART_COLORS.length])+';flex:none"></span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(d.label)+'</span><b style="white-space:nowrap">'+Math.round((+d.value)/tot*100)+'%</b></div>').join('');
+    return '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap"><svg viewBox="0 0 '+size+' '+size+'" width="'+size+'" height="'+size+'" style="flex:none">'+paths+'<text x="'+r+'" y="'+(r-2)+'" text-anchor="middle" fill="var(--muted)" font-size="11">'+esc(opts.centerLabel||'Всего')+'</text><text x="'+r+'" y="'+(r+15)+'" text-anchor="middle" fill="var(--text)" font-size="13" font-weight="700">'+fmt(Math.round(tot))+'</text></svg><div style="flex:1;min-width:150px">'+legend+'</div></div>';
+  }
+  // Столбиковая диаграмма («свечи»): items=[{label,values:[{v,color?,name?}]}], legend=[{name,color}]
+  function svgBars(items,opts){
+    opts=opts||{}; items=items||[]; const h=opts.h||210, padB=34, padL=8, padT=12;
+    const n=items.length||1, groupW=Math.max(30,Math.min(90,Math.floor((opts.w||560)/n)));
+    const w=Math.max(opts.w||560, n*groupW), maxv=Math.max(1,...items.flatMap(it=>it.values.map(v=>Math.abs(+v.v||0)))), plotH=h-padB-padT;
+    let bars='';
+    // базовая линия
+    bars+='<line x1="'+padL+'" y1="'+(padT+plotH)+'" x2="'+(w-2)+'" y2="'+(padT+plotH)+'" stroke="var(--line,#2a3550)" stroke-width="1"/>';
+    items.forEach((it,gi)=>{
+      const gx=padL+gi*groupW, m=it.values.length, bw=Math.max(6,Math.floor((groupW-10)/m));
+      it.values.forEach((v,vi)=>{
+        const val=(+v.v||0), bh=Math.round(Math.abs(val)/maxv*plotH), x=gx+5+vi*bw, y=padT+plotH-bh;
+        bars+='<rect x="'+x+'" y="'+y+'" width="'+(bw-2)+'" height="'+Math.max(1,bh)+'" rx="2" fill="'+(v.color||CHART_COLORS[vi%CHART_COLORS.length])+'"><title>'+esc(v.name||'')+' · '+esc(it.label)+': '+fmt(Math.round(val))+'</title></rect>';
+      });
+      bars+='<text x="'+(gx+groupW/2)+'" y="'+(h-padB+16)+'" text-anchor="middle" fill="var(--muted)" font-size="11">'+esc(it.label)+'</text>';
+    });
+    const legend=(opts.legend||[]).map((l,i)=>'<span style="display:inline-flex;align-items:center;gap:5px;font-size:12px;margin-right:14px"><span style="width:11px;height:11px;border-radius:2px;background:'+(l.color||CHART_COLORS[i%CHART_COLORS.length])+'"></span>'+esc(l.name)+'</span>').join('');
+    return '<div style="overflow-x:auto"><svg viewBox="0 0 '+w+' '+h+'" width="100%" height="'+h+'" preserveAspectRatio="xMinYMid meet" style="min-width:'+Math.min(w,520)+'px;max-width:100%">'+bars+'</svg></div>'+(legend?'<div style="margin-top:8px">'+legend+'</div>':'');
+  }
+  // Месяц YYYY-MM -> «июл 2026»
+  const MONTHS_RU=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+  function monthLabel(ym){ const p=(ym||'').split('-'); if(p.length<2) return ym||''; return (MONTHS_RU[(+p[1])-1]||p[1])+' '+p[0]; }
   // ===== Выгрузка в Excel (CSV с BOM — открывается в Excel с кириллицей) =====
   function csvCell(v){ v=(v==null?'':String(v)); if(/[";\n\r]/.test(v)) v='"'+v.replace(/"/g,'""')+'"'; return v; }
   function downloadCSV(name,rows){
@@ -2707,7 +2774,24 @@
     renderMoney();
   }
   async function loadExpenses(){
-    try{ const r=await apiFetch('/api/expenses',{},ONEC_BASE); _expData=await r.json(); renderFinMoney(); renderExpensesList(); }catch(e){}
+    try{ const r=await apiFetch('/api/expenses',{},ONEC_BASE); _expData=await r.json(); renderFinMoney(); renderExpensesList(); renderFinCharts(); }catch(e){}
+  }
+  // Диаграммы по месяцам (сезонность): столбики выручка/прибыль/расходы + доля выручки
+  function renderFinCharts(){
+    const barsEl=document.getElementById('fin-chart-bars'), donutEl=document.getElementById('fin-chart-donut');
+    if(!barsEl&&!donutEl) return;
+    const mm=((_expData&&_expData.by_month)||[]).slice().filter(m=>m.month);
+    if(!mm.length){ const msg='<span style="color:var(--muted);font-size:13px">Пока мало данных — появятся, когда накопятся продажи и расходы за месяцы.</span>'; if(barsEl)barsEl.innerHTML=msg; if(donutEl)donutEl.innerHTML=''; return; }
+    const last=mm.slice(-12);   // последние 12 месяцев
+    if(barsEl){
+      const items=last.map(m=>({label:monthLabel(m.month),values:[
+        {v:m.sales,color:'#4f8cff',name:'Выручка'},{v:m.profit,color:'#39d98a',name:'Прибыль с товара'},{v:m.expense,color:'#ffb84d',name:'Расходы'}]}));
+      barsEl.innerHTML=svgBars(items,{legend:[{name:'Выручка',color:'#4f8cff'},{name:'Прибыль с товара',color:'#39d98a'},{name:'Расходы',color:'#ffb84d'}]});
+    }
+    if(donutEl){
+      const donut=last.filter(m=>m.sales>0).map((m,i)=>({label:monthLabel(m.month),value:m.sales,color:CHART_COLORS[i%CHART_COLORS.length]}));
+      donutEl.innerHTML=donut.length?svgDonut(donut,{centerLabel:'Выручка'}):'<span style="color:var(--muted);font-size:13px">Нет выручки за месяцы.</span>';
+    }
   }
   function renderFinance(){
     if(window._invData&&!window._invData.error) drawFinance(window._invData);
@@ -3056,7 +3140,8 @@
         kpiCard('Средняя маржа',(d.avg_margin||0)+'%');
       renderAssort();
       if(document.getElementById('an-abc')) anAbc();   // обновить ABC во вкладке «Аналитика»
-      if(document.getElementById('report-body')) renderReport();   // обновить «Отчёт по продажам»
+      // месяц отчёта = тот же снимок; переиспользуем без отдельного запроса
+      if(typeof _reportData!=='undefined'){ _reportData[30]=d; if(reportDays===30 && document.getElementById('report-body')) renderReport(); }
     }catch(e){
       if(st){ st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d';
         if(attempt<6){ st.innerHTML='⏳ <b>Сервер 1С просыпается…</b> жду (попытка '+attempt+'/6)…'; clearTimeout(_assortTimer); _assortTimer=setTimeout(()=>loadAssort(attempt+1),12000); }
@@ -3146,66 +3231,117 @@
     downloadCSV('bizmart-ассортимент-прибыль.csv',rows);
   }
   // ===== ОТЧЁТ ПО ПРОДАЖАМ (этаж → категория → выручка + прибыль) =====
-  function loadReport(){
-    if(window._assortData) renderReport();
-    else loadAssort();            // отчёт берёт те же данные, что и анализ ассортимента
+  // ===== Отчёт по продажам: период + разворачиваемое дерево + диаграммы =====
+  let reportDays=30; const _reportData={}; let _reportTimer=null;
+  function periodWord(days){ return days===1?' за день':days===7?' за неделю':days===30?' за месяц':days===90?' за квартал':days===365?' за год':''; }
+  function setReportPeriod(days){
+    reportDays=days;
+    const bar=document.getElementById('reportperiod');
+    if(bar) Array.prototype.forEach.call(bar.querySelectorAll('button'),b=>b.classList.toggle('active',+b.getAttribute('data-rd')===days));
+    renderReport();     // покажем что уже есть (кэш или сообщение)
+    loadReport();
+  }
+  async function loadReport(attempt){
+    attempt=attempt||1; const days=reportDays;
+    const st=document.getElementById('report-status');
+    // месяц уже посчитан для анализа ассортимента — переиспользуем без повторного запроса
+    if(days===30 && !_reportData[30] && window._assortData && (window._assortData.tree||window._assortData.floors)) _reportData[30]=window._assortData;
+    if(_reportData[days] && reportDays===days) renderReport();
+    if(!ONEC_BASE){ if(st){ st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d'; st.innerHTML='🟠 1С в облаке подключается отдельным шагом.'; } return; }
+    try{
+      const r=await apiFetch('/api/assortment?days='+days,{},ONEC_BASE); if(!r.ok) throw 0;
+      const d=await r.json();
+      if(d.computing){
+        if(!_reportData[days] && reportDays===days && st){ st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d';
+          st.innerHTML='⏳ <b>Считаю отчёт'+periodWord(days)+'…</b> тяжёлый расчёт из 1С — день за днём'+(days>=90?' (за большой период это до пары минут)':'')+'. Жду, обновлю сам (попытка '+attempt+'/8)…'; }
+        if(reportDays===days && attempt<8){ clearTimeout(_reportTimer); _reportTimer=setTimeout(()=>loadReport(attempt+1),12000); }
+        return;
+      }
+      if(d.error && !((d.floors&&d.floors.length)||(d.tree&&d.tree.length))){ if(!_reportData[days]&&reportDays===days&&st){ st.style.borderColor='#ff6b6b'; st.innerHTML='⚠️ '+esc(d.error); } return; }
+      _reportData[days]=d;
+      if(reportDays===days) renderReport();
+    }catch(e){
+      if(!_reportData[days] && reportDays===days && st){ st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d';
+        if(attempt<6){ st.innerHTML='⏳ <b>Сервер 1С просыпается…</b> жду (попытка '+attempt+'/6)…'; clearTimeout(_reportTimer); _reportTimer=setTimeout(()=>loadReport(attempt+1),12000); }
+        else st.innerHTML='⚠️ Не удалось загрузить отчёт. Обнови позже.'; }
+    }
+  }
+  function floorsToTree(floors){   // запасной вариант, если старый снимок без дерева
+    return (floors||[]).map(f=>({name:f.floor,revenue:f.revenue,profit:f.profit,qty:f.qty,margin:f.margin,
+      children:(f.cats||[]).map(c=>({name:c.name,revenue:c.revenue,profit:c.profit,qty:c.qty,margin:c.margin,children:[],items:[]})),items:[]}));
+  }
+  function reportCharts(tree){
+    const top=(tree||[]).slice().filter(f=>f.revenue>0).sort((a,b)=>b.revenue-a.revenue);
+    if(!top.length) return '';
+    const donut=top.slice(0,8).map((f,i)=>({label:f.name,value:f.revenue,color:CHART_COLORS[i%CHART_COLORS.length]}));
+    const restR=top.slice(8).reduce((s,f)=>s+f.revenue,0); if(restR>0) donut.push({label:'Прочее',value:restR,color:'#8a94a6'});
+    const bars=top.slice(0,8).map(f=>({label:(f.name||'').length>9?f.name.slice(0,8)+'…':f.name,values:[{v:f.revenue,color:'#4f8cff',name:'Выручка'},{v:f.profit,color:'#39d98a',name:'Прибыль'}]}));
+    return '<div class="card"><h3 style="margin:0 0 10px">🥧 Доля выручки по этажам</h3>'+svgDonut(donut,{centerLabel:'Выручка'})+'</div>'+
+           '<div class="card"><h3 style="margin:0 0 10px">📊 Выручка и прибыль по этажам</h3>'+svgBars(bars,{legend:[{name:'Выручка',color:'#4f8cff'},{name:'Прибыль',color:'#39d98a'}]})+'</div>';
+  }
+  function reportItemsTable(items,depth){
+    const pad=8+depth*12;
+    return '<div style="overflow:auto;padding:2px 8px 10px '+pad+'px"><table style="width:100%;border-collapse:collapse;font-size:12px">'+
+      '<tr style="text-align:left;color:var(--muted)"><th style="padding:3px 6px">Товар (топ по прибыли)</th><th style="padding:3px 6px;text-align:right">Продано</th><th style="padding:3px 6px;text-align:right">Выручка</th><th style="padding:3px 6px;text-align:right">Прибыль</th><th style="padding:3px 6px;text-align:right">Маржа</th></tr>'+
+      items.map(i=>'<tr style="border-top:1px solid var(--line)"><td style="padding:3px 6px">'+esc(i.name)+'</td><td style="padding:3px 6px;text-align:right">'+(i.qty||0).toLocaleString('ru-RU')+'</td><td style="padding:3px 6px;text-align:right">'+fmt(i.revenue)+'</td><td style="padding:3px 6px;text-align:right;font-weight:600">'+fmt(i.profit)+'</td><td style="padding:3px 6px;text-align:right">'+(i.margin||0)+'%</td></tr>').join('')+
+      '</table></div>';
+  }
+  function reportTreeHtml(nodes,depth){
+    return (nodes||[]).map(n=>{
+      const hasKids=(n.children&&n.children.length), hasItems=(n.items&&n.items.length), openable=hasKids||hasItems;
+      const pad=8+depth*14;
+      const caret=openable?'<span class="rcaret" style="display:inline-block;width:13px;color:var(--muted)">▸</span>':'<span style="display:inline-block;width:13px"></span>';
+      const head='<summary style="cursor:'+(openable?'pointer':'default')+';list-style:none;display:flex;justify-content:space-between;gap:10px;align-items:baseline;padding:7px 8px 7px '+pad+'px;border-top:1px solid var(--line)">'+
+        '<span style="font-weight:'+(depth===0?700:depth===1?600:400)+'">'+caret+esc(n.name)+'</span>'+
+        '<span style="font-size:12px;color:var(--muted);white-space:nowrap">'+fmt(n.revenue)+' сом · приб. <span style="color:var(--text)">'+fmt(n.profit)+'</span> · '+(n.margin||0)+'%</span></summary>';
+      let inner='';
+      if(hasKids) inner+=reportTreeHtml(n.children,depth+1);
+      if(hasItems) inner+=reportItemsTable(n.items,depth+1);
+      return openable?('<details class="rtree"'+(depth===0&&nodes.length<=3?' open':'')+'>'+head+inner+'</details>'):('<div class="rtree">'+head+'</div>');
+    }).join('');
+  }
+  function reportSearch(tree,q){
+    const cats=[], prods=[];
+    (function walk(nodes,path){ (nodes||[]).forEach(n=>{ const np=path?path+' › '+n.name:n.name;
+      if((n.name||'').toLowerCase().indexOf(q)>=0) cats.push({path:np,n:n});
+      (n.items||[]).forEach(i=>{ if((i.name||'').toLowerCase().indexOf(q)>=0) prods.push({path:np,i:i}); });
+      if(n.children) walk(n.children,np);
+    }); })(tree,'');
+    let html='';
+    if(cats.length) html+='<div class="card" style="margin-bottom:14px"><h3 style="margin:0 0 8px">📂 Категории ('+cats.length+')</h3><div style="overflow:auto"><table style="width:100%;font-size:13px;border-collapse:collapse"><tr style="text-align:left;color:var(--muted)"><th style="padding:5px 8px">Путь</th><th style="padding:5px 8px;text-align:right">Выручка</th><th style="padding:5px 8px;text-align:right">Прибыль</th><th style="padding:5px 8px;text-align:right">Маржа</th></tr>'+cats.slice(0,120).map(c=>'<tr style="border-top:1px solid var(--line)"><td style="padding:5px 8px">'+esc(c.path)+'</td><td style="padding:5px 8px;text-align:right">'+fmt(c.n.revenue)+'</td><td style="padding:5px 8px;text-align:right">'+fmt(c.n.profit)+'</td><td style="padding:5px 8px;text-align:right">'+(c.n.margin||0)+'%</td></tr>').join('')+'</table></div></div>';
+    if(prods.length) html+='<div class="card"><h3 style="margin:0 0 8px">🛒 Товары ('+prods.length+')</h3><div style="overflow:auto"><table style="width:100%;font-size:13px;border-collapse:collapse"><tr style="text-align:left;color:var(--muted)"><th style="padding:5px 8px">Товар</th><th style="padding:5px 8px">Категория</th><th style="padding:5px 8px;text-align:right">Продано</th><th style="padding:5px 8px;text-align:right">Выручка</th><th style="padding:5px 8px;text-align:right">Прибыль</th></tr>'+prods.slice(0,200).map(p=>'<tr style="border-top:1px solid var(--line)"><td style="padding:5px 8px">'+esc(p.i.name)+'</td><td style="padding:5px 8px;color:var(--muted)">'+esc(p.path)+'</td><td style="padding:5px 8px;text-align:right">'+(p.i.qty||0).toLocaleString('ru-RU')+'</td><td style="padding:5px 8px;text-align:right">'+fmt(p.i.revenue)+'</td><td style="padding:5px 8px;text-align:right;font-weight:600">'+fmt(p.i.profit)+'</td></tr>').join('')+'</table></div></div>';
+    return html||'<div class="card"><span style="color:var(--muted);font-size:13px">Ничего не найдено. (Товары ищутся среди топ-15 по прибыли в каждой категории.)</span></div>';
   }
   function renderReport(){
-    const d=window._assortData;
+    const d=_reportData[reportDays];
     const st=document.getElementById('report-status');
     const box=document.getElementById('report-body'); if(!box) return;
-    if(!d){ return; }
+    const kp=document.getElementById('report-kpis'); const ch=document.getElementById('report-charts');
+    if(!d){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Готовлю отчёт'+periodWord(reportDays)+'… обнови через минуту.</span>'; if(ch) ch.innerHTML=''; if(kp) kp.innerHTML=''; return; }
     if(st){ st.style.borderStyle='solid'; st.style.borderColor=d.stale?'#ffb84d':'#39d98a';
       st.innerHTML=(d.stale?'🟠 <b>Последний расчёт</b> (1С долго не отвечала) · ':'🟢 <b>Отчёт по продажам</b> · ')+
         'период '+esc(d.from||'')+' … '+esc(d.to||'')+' ('+(d.period_days||0)+' дн.) · обновлено '+esc(d.updated||''); }
-    const floors=d.floors;
-    if(!floors){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Отчёт готовится — сервер пересчитает его в ближайшее время. Обнови страницу через минуту.</span>'; return; }
     const km=(label,som)=>'<div class="card kpi"><div class="label">'+label+'</div><div class="value"><span class="money" data-som="'+(som||0)+'">'+fmt(som||0)+'</span></div></div>';
-    const kp=document.getElementById('report-kpis');
-    if(kp) kp.innerHTML=
-      kpiCard('Период','за '+(d.period_days||0)+' дн.')+
-      km('Выручка',d.total_revenue)+
-      km('Чистая прибыль',d.total_profit)+
-      kpiCard('Средняя маржа',(d.avg_margin||0)+'%');
+    if(kp) kp.innerHTML=kpiCard('Период',(periodWord(reportDays).trim()||((d.period_days||0)+' дн.')))+km('Выручка',d.total_revenue)+km('Чистая прибыль',d.total_profit)+kpiCard('Средняя маржа',(d.avg_margin||0)+'%');
+    const tree=(d.tree&&d.tree.length)?d.tree:floorsToTree(d.floors||[]);
+    if(ch) ch.innerHTML=reportCharts(tree);
     const qEl=document.getElementById('report-search'); const q=(qEl?qEl.value:'').trim().toLowerCase();
-    let html='';
-    floors.forEach(f=>{
-      let cats=(f.cats||[]);
-      if(q) cats=cats.filter(c=>((c.name||'')+' '+(f.floor||'')).toLowerCase().indexOf(q)>=0);
-      if(!cats.length) return;
-      html+='<div class="card" style="margin-bottom:16px">'+
-        '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">'+
-          '<h3 style="margin:0">'+esc(f.floor)+'</h3>'+
-          '<div style="font-size:13px;color:var(--muted)">Выручка: <b style="color:var(--text)">'+fmt(f.revenue)+' сом</b> · прибыль <b style="color:var(--text)">'+fmt(f.profit)+'</b> · маржа '+(f.margin||0)+'%</div>'+
-        '</div>'+
-        '<div style="overflow:auto;margin-top:10px"><table style="width:100%;border-collapse:collapse;font-size:13px">'+
-          '<tr style="text-align:left;color:var(--muted);font-weight:500">'+
-            '<th style="padding:6px 8px">Категория</th>'+
-            '<th style="padding:6px 8px;text-align:right">Продано</th>'+
-            '<th style="padding:6px 8px;text-align:right">Выручка</th>'+
-            '<th style="padding:6px 8px;text-align:right">Чистая прибыль</th>'+
-            '<th style="padding:6px 8px;text-align:right">Маржа</th></tr>'+
-          cats.map(c=>'<tr style="border-top:1px solid var(--line)">'+
-            '<td style="padding:6px 8px">'+esc(c.name)+'</td>'+
-            '<td style="padding:6px 8px;text-align:right">'+(c.qty||0).toLocaleString('ru-RU')+'</td>'+
-            '<td style="padding:6px 8px;text-align:right">'+fmt(c.revenue)+'</td>'+
-            '<td style="padding:6px 8px;text-align:right;font-weight:600">'+fmt(c.profit)+'</td>'+
-            '<td style="padding:6px 8px;text-align:right">'+(c.margin||0)+'%</td></tr>').join('')+
-        '</table></div></div>';
-    });
-    box.innerHTML=html||'<div class="card"><span style="color:var(--muted);font-size:13px">Ничего не найдено.</span></div>';
+    if(q){ box.innerHTML=reportSearch(tree,q); renderMoney(); return; }
+    box.innerHTML=tree.length?reportTreeHtml(tree,0):'<div class="card"><span style="color:var(--muted);font-size:13px">Нет данных за период.</span></div>';
     renderMoney();
   }
   function exportReport(){
-    const d=window._assortData; if(!d||!(d.floors||[]).length){ alert('Отчёт ещё не загрузился.'); return; }
-    const rows=[['BIZMART — отчёт по продажам (этаж → категория)'],
+    const d=_reportData[reportDays]; if(!d||!((d.tree&&d.tree.length)||(d.floors&&d.floors.length))){ alert('Отчёт ещё не загрузился.'); return; }
+    const tree=(d.tree&&d.tree.length)?d.tree:floorsToTree(d.floors||[]);
+    const rows=[['BIZMART — отчёт по продажам (этаж → категория → …)'],
       ['Период',(d.from||'')+' … '+(d.to||''),(d.period_days||0)+' дн.'],
-      ['Выручка',d.total_revenue,'Чистая прибыль',d.total_profit,'Маржа',(d.avg_margin||0)+'%'],
-      [],
-      ['Этаж','Категория','Продано шт','Выручка','Чистая прибыль','Маржа %']];
-    (d.floors||[]).forEach(f=>{ (f.cats||[]).forEach(c=>{
-      rows.push([f.floor,c.name,c.qty,c.revenue,c.profit,c.margin]);
-    }); });
+      ['Выручка',d.total_revenue,'Чистая прибыль',d.total_profit,'Маржа',(d.avg_margin||0)+'%'],[],
+      ['Уровень / путь','Продано шт','Выручка','Чистая прибыль','Маржа %']];
+    (function walk(nodes,path){ (nodes||[]).forEach(n=>{ const np=path?path+' › '+n.name:n.name;
+      rows.push([np,n.qty,n.revenue,n.profit,n.margin]);
+      if(n.children) walk(n.children,np);
+      (n.items||[]).forEach(i=>rows.push([np+' › '+i.name,i.qty,i.revenue,i.profit,i.margin]));
+    }); })(tree,'');
     downloadCSV('bizmart-отчёт-продажи.csv',rows);
   }
   function onSalesDate(){ const sel=document.getElementById('sales-date'); salesDate=(sel&&sel.value!=='today')?sel.value:''; loadSales(); }
@@ -4049,12 +4185,14 @@
     }
     box.innerHTML=items.map((it,i)=>{
       const hd=findDealByName(it.name); const hb=(hd&&hd.handled_by)?'<div class="ci-last" style="color:#4a9d5b;font-size:11px">✅ обработал: '+esc(hd.handled_by)+'</div>':'';
-      return '<div class="chatitem'+(it.chatId&&it.chatId===ckCurId?' active':'')+'" draggable="true" data-i="'+i+'"><div class="ci-name">'+(it.unread?'<span title="Клиент написал — без ответа" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2f80ed;margin-right:6px;vertical-align:middle"></span>':'')+esc(it.name)+chanBadge(it.channel)+'</div><div class="ci-last">'+esc(it.sub)+'</div>'+hb+'</div>';
+      return '<div class="chatitem'+(it.chatId&&it.chatId===ckCurId?' active':'')+'" draggable="true" data-i="'+i+'"><div class="ci-body"><div class="ci-name">'+(it.unread?'<span title="Клиент написал — без ответа" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2f80ed;margin-right:6px;vertical-align:middle"></span>':'')+esc(it.name)+chanBadge(it.channel)+'</div><div class="ci-last">'+esc(it.sub)+'</div>'+hb+'</div><div class="ci-grip" title="Перетащить в другую стадию">⠿</div></div>';
     }).join('');
     if(moreCount){ box.innerHTML+='<div style="padding:12px;color:var(--muted);font-size:12px;text-align:center">…и ещё '+moreCount+'. Воспользуйся поиском, чтобы найти нужного клиента.</div>'; }
     box.querySelectorAll('.chatitem').forEach(el=>{ const it=items[+el.dataset.i];
       el.addEventListener('click',()=>openItem(it));
       el.addEventListener('dragstart',e=>{ dragChat={name:it.name,id:it.chatId}; e.dataTransfer.effectAllowed='move'; });
+      const grip=el.querySelector('.ci-grip');
+      if(grip){ grip.addEventListener('click',e=>e.stopPropagation()); attachTouchDrag(grip,it); }
     });
   }
   function openItem(it){
@@ -6733,6 +6871,20 @@
     }
     return '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px">'+wd+cells+'</div>'+
       '<div style="display:flex;gap:16px;margin-top:12px;font-size:12px;color:var(--muted)"><span>🟩 пришёл</span><span>🟥 не пришёл</span><span>⬜ не отмечен</span></div>';
+  }
+  let _touchGhost=null;
+  function attachTouchDrag(grip,it){
+    let active=false;
+    const start=e=>{ if(e.touches&&e.touches.length!==1) return; active=true; dragChat={name:it.name,id:it.chatId}; grip.classList.add('dragging');
+      const t=(e.touches?e.touches[0]:e); _touchGhost=document.createElement('div'); _touchGhost.className='drag-ghost'; _touchGhost.textContent=it.name; document.body.appendChild(_touchGhost); moveG(t.clientX,t.clientY); e.preventDefault(); };
+    const move=e=>{ if(!active) return; const t=(e.touches?e.touches[0]:e); moveG(t.clientX,t.clientY); hi(t.clientX,t.clientY); e.preventDefault(); };
+    const end=e=>{ if(!active) return; active=false; grip.classList.remove('dragging'); const t=(e.changedTouches?e.changedTouches[0]:e); let chip=null; if(t){ const el=document.elementFromPoint(t.clientX,t.clientY); chip=el&&el.closest?el.closest('.fchip'):null; } document.querySelectorAll('.fchip.drop').forEach(x=>x.classList.remove('drop')); if(_touchGhost){ _touchGhost.remove(); _touchGhost=null; } if(chip&&chip.dataset.status){ dropChatToStage(chip.dataset.status); } else { dragChat=null; } e.preventDefault(); };
+    grip.addEventListener('touchstart',start,{passive:false});
+    grip.addEventListener('touchmove',move,{passive:false});
+    grip.addEventListener('touchend',end,{passive:false});
+    grip.addEventListener('touchcancel',end,{passive:false});
+    function moveG(x,y){ if(_touchGhost){ _touchGhost.style.left=x+'px'; _touchGhost.style.top=y+'px'; } }
+    function hi(x,y){ const el=document.elementFromPoint(x,y); const chip=el&&el.closest?el.closest('.fchip'):null; document.querySelectorAll('.fchip').forEach(c=>c.classList.toggle('drop',c===chip)); }
   }
   function dropChatToStage(status){
     if(!dragChat) return; const nm=dragChat.name; dragChat=null;
