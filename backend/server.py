@@ -3335,7 +3335,21 @@ def backfill_sales(days=30, overwrite=False):
 ASSORT_TTL = 6 * 3600
 ASSORT_DAYS = 30
 ASSORT_TOPN = 10
-_assort = {"data": None, "t": 0.0, "next": 0.0, "refreshing": False}
+# Разрешённые периоды отчёта по продажам (быстрые кнопки): день/неделя/месяц/квартал/год.
+ASSORT_PERIODS = (1, 7, 30, 90, 365)
+# Снимок держим ОТДЕЛЬНО по каждому периоду (у каждого свой кэш и троттлинг).
+_assort_cache = {}   # days -> {"data":..., "t":..., "next":..., "refreshing":False}
+def _assort_state(days):
+    st = _assort_cache.get(days)
+    if st is None:
+        st = {"data": None, "t": 0.0, "next": 0.0, "refreshing": False}
+        _assort_cache[days] = st
+    return st
+def _assort_kvkey(days):
+    # 30 дней — исторический ключ (совместимость с уже сохранённым снимком и ABC/Ассортиментом).
+    return "assortment_v1" if days == ASSORT_DAYS else "assortment_v1_d%d" % days
+# Обратная совместимость: `_assort` ссылается на состояние периода по умолчанию (30 дней).
+_assort = _assort_state(ASSORT_DAYS)
 
 def _cat_top_resolver():
     """Карта category_id → ВЕРХНЯЯ группа (прямой ребёнок корня «Товары»).
@@ -3382,6 +3396,29 @@ def _cat_floor_sub_resolver():
         return (None, None)
     return resolve
 
+def _cat_path_resolver():
+    """Возвращает функцию cid -> список названий категорий от ЭТАЖА (верх) до самой
+    категории товара включительно. Для разворачиваемого дерева отчёта
+    (этаж → категория → подкатегория → …). Например: ['1-этаж','Косметика','Уход']."""
+    data = yaros_get("/categories")
+    nodes = {}
+    for c in data.get("categories", []):
+        nodes[c.get("ID")] = {"title": (c.get("TITLE") or "").strip(),
+                              "parent": c.get("PARENT_ID") or ""}
+    def path(cid):
+        seen = set(); chain = []
+        while cid and cid in nodes and cid not in seen:
+            seen.add(cid)
+            if nodes[cid]["title"] == "Товары":
+                break
+            chain.append(nodes[cid]["title"] or "—")
+            par = nodes[cid]["parent"]
+            if not par or par not in nodes or nodes.get(par, {}).get("title") == "Товары":
+                break
+            cid = par
+        return list(reversed(chain))
+    return path
+
 def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
     """Аггрегирует прибыль по каждому товару из чеков за последние `days` дней,
     раскладывает по верхним группам 1С и берёт топ-`top_n` по чистой прибыли в каждой.
@@ -3403,15 +3440,26 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
                        for i in range(1, days)]
     agg = {}
     days_ok = 0; days_fail = 0
-    for d in dates:
-        f, t0 = _day_bounds(d)
+    # Тянем дни ПАРАЛЛЕЛЬНО: 1С отдаёт чеки по одному дню (широкий диапазон = HTTP 406),
+    # поэтому для квартала/года без потоков было бы слишком долго. Не душим сервер — 8 потоков.
+    import concurrent.futures
+    def _pull(dd):
+        f, t0 = _day_bounds(dd)
         try:
-            data = yaros_get("/receipts/v2?from=%d&to=%d" % (f, t0))
+            return yaros_get("/receipts/v2?from=%d&to=%d" % (f, t0)).get("receipts", [])
         except Exception:
+            return None
+    workers = 8 if days > 14 else 4
+    fetched = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+        for recs in ex.map(_pull, dates):
+            fetched.append(recs)
+    for recs in fetched:
+        if recs is None:
             days_fail += 1
             continue
         days_ok += 1
-        for x in data.get("receipts", []):
+        for x in recs:
             items = x.get("items", [])
             rtot = _num(x.get("receiptTotal"))
             # Выручку позиции считаем по ФАКТИЧЕСКОЙ сумме чека, разложенной пропорционально
@@ -3499,6 +3547,34 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
                        "margin": round(fm["revenue"] and fm["profit"] / fm["revenue"] * 100),
                        "cats": cats})
     floors.sort(key=lambda f: -f["revenue"])
+    # РАЗВОРАЧИВАЕМОЕ ДЕРЕВО: этаж → категория → подкатегория → … → товары (для отчёта).
+    cpath = _cat_path_resolver()
+    troot = {"children": {}, "items": [], "revenue": 0.0, "profit": 0.0, "qty": 0.0}
+    for nm, a in agg.items():
+        cid = name2cat.get(nm, "")
+        p = (cpath(cid) if cid else []) or ["— без категории —"]
+        node = troot
+        for seg in p:
+            ch = node["children"].get(seg)
+            if not ch:
+                ch = {"children": {}, "items": [], "revenue": 0.0, "profit": 0.0, "qty": 0.0}
+                node["children"][seg] = ch
+            node = ch
+            node["revenue"] += a["rev"]; node["profit"] += a["profit"]; node["qty"] += a["qty"]
+        node["items"].append({"name": nm, "rev": a["rev"], "profit": a["profit"], "qty": a["qty"]})
+    def _ser_node(name, n):
+        kids = [_ser_node(k, v) for k, v in n["children"].items()]
+        kids.sort(key=lambda x: -x["revenue"])
+        items = sorted(n["items"], key=lambda i: -i["profit"])[:15]
+        return {"name": name,
+                "revenue": round(n["revenue"]), "profit": round(n["profit"]), "qty": round(n["qty"]),
+                "margin": round(n["revenue"] and n["profit"] / n["revenue"] * 100),
+                "children": kids,
+                "items": [{"name": i["name"], "revenue": round(i["rev"]), "profit": round(i["profit"]),
+                           "qty": round(i["qty"]),
+                           "margin": round(i["rev"] and i["profit"] / i["rev"] * 100)} for i in items]}
+    tree = [_ser_node(k, v) for k, v in troot["children"].items()]
+    tree.sort(key=lambda x: -x["revenue"])
     res = {
         "period_days": days, "top_n": top_n,
         "from": dates[-1], "to": today,
@@ -3508,49 +3584,59 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
         "groups": out_groups,
         "all_products": all_products,
         "floors": floors,
+        "tree": tree,
         "generated_ts": int(time.time()),
         "updated": time.strftime("%d.%m.%Y %H:%M"),
     }
     return res
 
 def _assort_refresh(days=ASSORT_DAYS, force=False):
-    """Пересчитывает снимок ассортимента (тяжело — ≈30 запросов к 1С). Сам себя
-    троттлит: не чаще раза в ASSORT_TTL. При сбое — повтор через 30 мин."""
-    if _assort["refreshing"]:
+    """Пересчитывает снимок ассортимента за период `days` (тяжело — по 1 запросу к 1С
+    на каждый день, параллельно). У каждого периода свой кэш и троттлинг: не чаще раза
+    в ASSORT_TTL. При сбое — повтор через 30 мин."""
+    st = _assort_state(days)
+    if st["refreshing"]:
         return
-    if not force and time.time() < _assort.get("next", 0):
+    if not force and time.time() < st.get("next", 0):
         return
-    _assort["refreshing"] = True
+    st["refreshing"] = True
     try:
         r = build_assortment(days)
-        _assort["data"] = r
-        _assort["t"] = time.time()
-        _assort["next"] = time.time() + ASSORT_TTL
-        kv_save("assortment_v1", r)
+        st["data"] = r
+        st["t"] = time.time()
+        st["next"] = time.time() + ASSORT_TTL
+        kv_save(_assort_kvkey(days), r)
     except Exception:
-        _assort["next"] = time.time() + 1800
+        st["next"] = time.time() + 1800
     finally:
-        _assort["refreshing"] = False
+        st["refreshing"] = False
 
-def get_assortment():
-    """Мгновенно отдаёт снимок анализа ассортимента из памяти/базы. Если устарел —
-    пересчитывает ФОНОМ, не задерживая ответ. Самый первый раз (снимка нигде нет) —
-    запускает расчёт в фоне и просит обновить через минуту."""
-    d = _assort["data"]
+def get_assortment(days=ASSORT_DAYS):
+    """Мгновенно отдаёт снимок анализа/отчёта за период `days` из памяти/базы. Если
+    устарел — пересчитывает ФОНОМ, не задерживая ответ. Самый первый раз (снимка нигде
+    нет) — запускает расчёт в фоне и просит обновить через минуту."""
+    try:
+        days = int(days)
+    except Exception:
+        days = ASSORT_DAYS
+    if days not in ASSORT_PERIODS:
+        days = ASSORT_DAYS
+    st = _assort_state(days)
+    d = st["data"]
     if d is None:
-        d = kv_load("assortment_v1")
+        d = kv_load(_assort_kvkey(days))
         if d:
-            _assort["data"] = d
-            _assort["t"] = d.get("generated_ts", 0)
+            st["data"] = d
+            st["t"] = d.get("generated_ts", 0)
             # снимок из базы — фоновый рефреш сам решит по next (сейчас 0 → обновит)
     if d is None:
-        # снимка нет нигде — считаем в фоне, чтобы не держать запрос ~40 сек
-        if not _assort["refreshing"]:
-            threading.Thread(target=_assort_refresh, kwargs={"force": True}, daemon=True).start()
-        return {"computing": True, "groups": [],
-                "error": "Идёт первичный расчёт анализа — обновите страницу через минуту."}
-    if time.time() >= _assort.get("next", 0) and not _assort["refreshing"]:
-        threading.Thread(target=_assort_refresh, daemon=True).start()
+        # снимка нет нигде — считаем в фоне, чтобы не держать запрос (год = сотни запросов к 1С)
+        if not st["refreshing"]:
+            threading.Thread(target=_assort_refresh, kwargs={"days": days, "force": True}, daemon=True).start()
+        return {"computing": True, "period_days": days, "groups": [], "floors": [], "tree": [],
+                "error": "Идёт расчёт за выбранный период — обновите страницу через минуту."}
+    if time.time() >= st.get("next", 0) and not st["refreshing"]:
+        threading.Thread(target=_assort_refresh, kwargs={"days": days}, daemon=True).start()
     out = dict(d)
     age = time.time() - (d.get("generated_ts") or 0)
     if age > ASSORT_TTL * 2:      # снимок заметно устарел (1С долго не отвечала)
@@ -4392,7 +4478,32 @@ def expenses_view():
     for p in ("today", "week", "month"):
         periods[p] = {"sales": ss[p]["sales"], "profit": ss[p]["profit"],
                       "expense": e[p], "net": round(ss[p]["profit"] - e[p])}
-    return {"expenses": rows[:200], "by_category": by_cat, "periods": periods, "total_count": len(rows)}
+    # ПО МЕСЯЦАМ — для анализа сезонности (выручка/прибыль/расходы/чистая по каждому месяцу).
+    mrev = {}
+    if supa_on():
+        try:
+            sd = _supa("GET", "sales_daily",
+                       "?company_id=eq.%s&select=date,sales,profit&order=date.asc" % _q(COMPANY_ID))
+            for r in (sd or []):
+                mm = (r.get("date") or "")[:7]
+                if not mm:
+                    continue
+                m = mrev.setdefault(mm, {"sales": 0.0, "profit": 0.0})
+                m["sales"] += _num(r.get("sales")); m["profit"] += _num(r.get("profit"))
+        except Exception:
+            pass
+    mexp = {}
+    for r in rows:
+        mm = (r.get("date", "") or "")[:7]
+        if mm:
+            mexp[mm] = mexp.get(mm, 0.0) + _num(r.get("amount"))
+    by_month = []
+    for mm in sorted(set(list(mrev.keys()) + list(mexp.keys()))):
+        sv = mrev.get(mm, {"sales": 0.0, "profit": 0.0}); ev = mexp.get(mm, 0.0)
+        by_month.append({"month": mm, "sales": round(sv["sales"]), "profit": round(sv["profit"]),
+                         "expense": round(ev), "net": round(sv["profit"] - ev)})
+    return {"expenses": rows[:200], "by_category": by_cat, "periods": periods,
+            "by_month": by_month, "total_count": len(rows)}
 
 
 # ====== РЫНОК: цены товаров на маркетплейсах (Wildberries) ======
@@ -6016,8 +6127,13 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send(200, {"error": "Нет связи с 1С: " + str(e)})
         if self.path.startswith("/api/assortment"):
+            from urllib.parse import urlparse, parse_qs
             try:
-                return self._send(200, get_assortment())
+                days = int(parse_qs(urlparse(self.path).query).get("days", ["30"])[0])
+            except ValueError:
+                days = 30
+            try:
+                return self._send(200, get_assortment(days))
             except Exception as e:
                 return self._send(200, {"error": "Нет связи с 1С: " + str(e), "groups": []})
         if self.path.startswith("/api/sales-history"):
