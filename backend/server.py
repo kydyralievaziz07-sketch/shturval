@@ -1864,18 +1864,32 @@ def _igbot_generate(history, settings):
     req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, headers={
         "x-api-key": key, "anthropic-version": "2023-06-01",
         "content-type": "application/json", "User-Agent": "Shturval/1.0"})
-    try:
-        with urllib.request.urlopen(req, timeout=40) as r:
-            resp = json.loads(r.read().decode("utf-8"))
-        return "".join(b.get("text", "") for b in resp.get("content", []) if b.get("type") == "text").strip()
-    except urllib.error.HTTPError as e:
-        try: detail = e.read().decode()[:200]
-        except Exception: detail = str(e)
-        _igbot_log_error("Ответ Claude", "HTTP %s: %s" % (e.code, detail))
-        return None
-    except Exception as e:
-        _igbot_log_error("Ответ Claude", str(e))
-        return None
+    # Повторяем при ВРЕМЕННЫХ ошибках Claude (перегрузка 529, лимит 429, 500/502/503) —
+    # иначе бот молча роняет сообщение клиента и больше не отвечает. Запрос идёт в фоне,
+    # поэтому небольшая задержка на повторы не мешает вебхуку.
+    last_err = None
+    for attempt in range(4):
+        try:
+            req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, headers={
+                "x-api-key": key, "anthropic-version": "2023-06-01",
+                "content-type": "application/json", "User-Agent": "Shturval/1.0"})
+            with urllib.request.urlopen(req, timeout=40) as r:
+                resp = json.loads(r.read().decode("utf-8"))
+            return "".join(b.get("text", "") for b in resp.get("content", []) if b.get("type") == "text").strip()
+        except urllib.error.HTTPError as e:
+            try: detail = e.read().decode()[:200]
+            except Exception: detail = str(e)
+            last_err = "HTTP %s: %s" % (e.code, detail)
+            if e.code in (429, 500, 502, 503, 529) and attempt < 3:
+                time.sleep(1.5 * (attempt + 1)); continue
+            break
+        except Exception as e:
+            last_err = str(e)
+            if attempt < 3:
+                time.sleep(1.5 * (attempt + 1)); continue
+            break
+    _igbot_log_error("Ответ Claude", last_err or "нет ответа")
+    return None
 
 _bot_sent = {}   # (customer, text) -> ts: что бот отправлял (чтобы отличить эхо бота от ответа человека)
 def _igbot_mark_sent(customer, text):
