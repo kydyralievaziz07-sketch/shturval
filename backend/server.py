@@ -4830,50 +4830,114 @@ def ads_report(period=None, since=None, until=None):
     return {"configured": True, "rows": rows, "totals": t, "days": days, "currency": cur,
             "periods": ADS_PERIODS, "period": (period or "maximum")}
 
+def _ads_tips(tot, series, place, ag, hours):
+    """Экспертные выводы как у таргетолога: частота/CTR/цена результата/тренд CPM/время."""
+    tips = []
+    freq = tot.get("freq", 0); ctr = tot.get("ctr", 0)
+    if freq >= 4:
+        tips.append("🔴 Частота %s — один человек видит рекламу слишком часто. Аудитория выгорает: обнови креатив или расширь аудиторию." % freq)
+    elif freq >= 2.5:
+        tips.append("🟠 Частота %s — подходит к выгоранию. Скоро понадобится новый креатив/аудитория." % freq)
+    if ctr and ctr < 0.8:
+        tips.append("🔴 CTR %s%% — низкий. Обычно причина в креативе/оффере или неточной аудитории." % ctr)
+    elif ctr >= 1.5:
+        tips.append("🟢 CTR %s%% — хороший, объявление цепляет." % ctr)
+    convp = [r for r in place if r["conv"] >= 3]
+    if convp:
+        best = min(convp, key=lambda r: r["cpconv"]); worst = max(convp, key=lambda r: r["cpconv"])
+        tips.append("📍 Дешевле всего переписки на плейсменте <b>%s</b> (%s за переписку)." % (best["seg"], best["cpconv"]))
+        if worst["seg"] != best["seg"] and best["cpconv"] and worst["cpconv"] >= best["cpconv"] * 1.5:
+            tips.append("📍 Дорогой плейсмент — <b>%s</b> (%s за переписку). Стоит подумать, отключать ли его." % (worst["seg"], worst["cpconv"]))
+    aud = [r for r in ag if r["conv"] >= 3]
+    if aud:
+        b = min(aud, key=lambda r: r["cpconv"])
+        tips.append("👥 Самые дешёвые заявки от аудитории <b>%s</b> (%s за переписку)." % (b["seg"], b["cpconv"]))
+    if len(series) >= 6:
+        h = len(series) // 2
+        a = [x["cpm"] for x in series[:h] if x["cpm"]]; b = [x["cpm"] for x in series[h:] if x["cpm"]]
+        if a and b:
+            am = sum(a) / len(a); bm = sum(b) / len(b)
+            if bm >= am * 1.25:
+                tips.append("📈 Цена показов (CPM) растёт (%s → %s) — аукцион дорожает или аудитория выгорает." % (round(am, 2), round(bm, 2)))
+    hh = [x for x in hours if x["conv"] >= 2]
+    if hh:
+        bh = max(hh, key=lambda r: r["conv"])
+        tips.append("🕒 Больше всего переписок около <b>%s</b> — можно усилить показ в это время." % bh["seg"])
+    if not tips:
+        tips.append("Пока мало данных для выводов — дай кампании поработать, и здесь появится подробный разбор.")
+    return tips
+
 def ads_analysis(campaign=None, period=None, since=None, until=None):
-    """Анализ аудитории: разбивки по полу/возрасту, платформе, плейсменту + авто-выводы.
+    """Профессиональный анализ рекламы (как у таргетолога): итоговые метрики, воронка,
+    динамика по дням (CTR/CPM/частота/цена результата), разбивки по аудитории, плейсментам,
+    площадкам, регионам, устройствам, времени суток + экспертные выводы.
     campaign — id конкретной кампании (пусто = весь аккаунт); period/since/until — диапазон."""
     if not ads_on():
         return {"configured": False}
     dr = _ads_date_params(period, since, until)
     campaign = (str(campaign).strip() if campaign else "")
     base = (campaign + "/insights") if campaign else (_act() + "/insights")
-    def bd(breakdowns):
+    cur = ""
+    try:
+        cur = _ads_req("GET", _act(), {"fields": "currency"}).get("currency", "")
+    except Exception:
+        pass
+    FIELDS = "spend,impressions,reach,frequency,clicks,inline_link_clicks,actions"
+    def bd(breakdowns=None, extra=None, limit=200):
+        pr = {"fields": FIELDS, "limit": limit}; pr.update(dr)
+        if breakdowns:
+            pr["breakdowns"] = breakdowns
+        if extra:
+            pr.update(extra)
         try:
-            pr = {"fields": "spend,impressions,clicks,reach", "breakdowns": breakdowns, "limit": 100}
-            pr.update(dr)
-            d = _ads_req("GET", base, pr)
-            return d.get("data") or []
+            return _ads_req("GET", base, pr, timeout=30).get("data") or []
         except Exception:
             return []
-    def pack(rows, keyf):
-        out = []
-        for r in rows:
-            out.append({"seg": keyf(r), "spend": round(_num(r.get("spend"))),
-                        "impr": int(_num(r.get("impressions"))), "clicks": int(_num(r.get("clicks"))),
-                        "reach": int(_num(r.get("reach")))})
-        out.sort(key=lambda x: -x["clicks"])
-        return out
+    def seg(r, label):
+        spend = _num(r.get("spend")); impr = _num(r.get("impressions"))
+        clicks = int(_num(r.get("clicks"))); reach = int(_num(r.get("reach")))
+        lc = int(_num(r.get("inline_link_clicks"))); conv = _ins_conv(r)
+        return {"seg": label, "spend": round(spend, 2), "impr": int(impr), "reach": reach,
+                "clicks": clicks, "link_clicks": lc, "conv": conv,
+                "ctr": round(clicks / impr * 100, 2) if impr else 0,
+                "cpc": round(spend / clicks, 2) if clicks else 0,
+                "cpm": round(spend / impr * 1000, 2) if impr else 0,
+                "cpconv": round(spend / conv, 2) if conv else 0}
+    def packbd(breakdowns, keyf, topn=12):
+        rows = [seg(r, keyf(r)) for r in bd(breakdowns)]
+        rows = [r for r in rows if r["seg"] and r["seg"] != "?"]
+        rows.sort(key=lambda x: -x["spend"])
+        return rows[:topn]
     gen = {"male": "Мужчины", "female": "Женщины", "unknown": "Не указан"}
-    ag = pack(bd("age,gender"), lambda r: (r.get("age", "?") + " · " + gen.get(r.get("gender"), r.get("gender", "?"))))
-    plat = pack(bd("publisher_platform"), lambda r: r.get("publisher_platform", "?"))
-    place = pack(bd("publisher_platform,platform_position"),
-                 lambda r: (r.get("publisher_platform", "?") + " · " + r.get("platform_position", "?")))
-    tips = []
-    if ag and ag[0]["clicks"]:
-        tips.append("👥 Больше всего откликов от: <b>%s</b> (%d кликов)." % (ag[0]["seg"], ag[0]["clicks"]))
-    if plat and plat[0]["clicks"]:
-        tips.append("📱 Лучшая площадка: <b>%s</b>." % plat[0]["seg"])
-    if place and place[0]["clicks"]:
-        tips.append("📍 Лучший плейсмент: <b>%s</b>." % place[0]["seg"])
-    if not tips:
-        tips.append("Пока мало данных для выводов — запусти кампанию, и здесь появится анализ аудитории.")
-    # Список кампаний для выбора (от новых к старым).
+    trow = bd() or [{}]
+    tot = seg(trow[0], "Итого")
+    tot["freq"] = round(_num(trow[0].get("frequency")), 2)
+    tot["ctr_link"] = round(tot["link_clicks"] / tot["impr"] * 100, 2) if tot["impr"] else 0
+    series = []
+    for r in bd(extra={"time_increment": "1"}, limit=180):
+        s = seg(r, r.get("date_start", ""))
+        series.append({"date": r.get("date_start"), "spend": s["spend"], "clicks": s["clicks"],
+                       "impr": s["impr"], "conv": s["conv"], "ctr": s["ctr"], "cpm": s["cpm"],
+                       "freq": round(_num(r.get("frequency")), 2), "cpconv": s["cpconv"]})
+    ag = packbd("age,gender", lambda r: (r.get("age", "?") + " · " + gen.get(r.get("gender"), r.get("gender", "?"))))
+    plat = packbd("publisher_platform", lambda r: r.get("publisher_platform", "?"))
+    place = packbd("publisher_platform,platform_position",
+                   lambda r: (r.get("publisher_platform", "?") + " · " + r.get("platform_position", "?")))
+    region = packbd("region", lambda r: r.get("region", "?"), topn=8)
+    device = packbd("impression_device", lambda r: r.get("impression_device", "?"))
+    hours = packbd("hourly_stats_aggregated_by_advertiser_time_zone",
+                   lambda r: (r.get("hourly_stats_aggregated_by_advertiser_time_zone", "?") or "?")[:5], topn=24)
+    hours.sort(key=lambda x: x["seg"])
+    funnel = {"impr": tot["impr"], "clicks": tot["clicks"], "conv": tot["conv"],
+              "ctr": tot["ctr"], "cr": round(tot["conv"] / tot["clicks"] * 100, 2) if tot["clicks"] else 0}
+    tips = _ads_tips(tot, series, place, ag, hours)
     cidx = _ads_campaign_index()
     camps = [{"id": cid, "name": v["name"]} for cid, v in
              sorted(cidx.items(), key=lambda kv: kv[1].get("created") or "", reverse=True)]
-    return {"configured": True, "age_gender": ag[:12], "platform": plat, "placement": place[:12],
-            "tips": tips, "campaigns": camps, "campaign": campaign,
+    return {"configured": True, "totals": tot, "funnel": funnel, "series": series,
+            "age_gender": ag, "platform": plat, "placement": place, "region": region,
+            "device": device, "hours": hours, "tips": tips, "currency": cur,
+            "campaigns": camps, "campaign": campaign,
             "periods": ADS_PERIODS, "period": (period or "maximum")}
 
 def ads_create(p):

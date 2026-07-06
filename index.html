@@ -564,7 +564,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.12.0<br>Выручка в «Ассортименте» и «Отчёте по продажам» считается по фактической сумме чеков — сходится с кассой</div>
+      Штурвал v4.13.0<br>Анализ рекламы как у таргетолога: ключевые метрики с оценкой (CTR/частота), воронка показы→клики→переписки, графики динамики (CTR/CPM/частота/цена результата), разбивки по аудитории/плейсментам/регионам/устройствам/часам и экспертные выводы</div>
   </aside>
 
   <!-- MAIN -->
@@ -5827,25 +5827,125 @@
     return '<div class="card" style="padding:12px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">'
       +'<div>'+camp+'</div><div>'+adsPeriodSelect(_adsAn,'adsAnSetPeriod','adsAnSetDates','adsandt')+'</div></div>';
   }
+  const _N=n=>Number(n||0).toLocaleString('ru-RU');
+  const _money=(n,c)=>_N(Math.round((Number(n)||0)*100)/100)+(c?(' '+c):'');
+  // мини-график (спарклайн) по массиву значений
+  function _adsSpark(vals,color){
+    vals=(vals||[]).map(v=>Number(v)||0);
+    if(vals.length<2) return '<div style="color:var(--muted);font-size:12px;padding:14px 0">мало точек для графика</div>';
+    const mn=Math.min.apply(null,vals),mx=Math.max.apply(null,vals),rng=(mx-mn)||1,n=vals.length;
+    const pts=vals.map((v,i)=>(i/(n-1)*100).toFixed(1)+','+(30-(v-mn)/rng*27-1.5).toFixed(1)).join(' ');
+    return '<svg viewBox="0 0 100 30" preserveAspectRatio="none" style="width:100%;height:44px;display:block">'
+      +'<polyline points="'+pts+'" fill="none" stroke="'+color+'" stroke-width="1.6" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></svg>';
+  }
+  // карточка тренда: заголовок, текущее значение со стрелкой, спарклайн
+  function _adsTrend(title,series,key,color,fmt){
+    const vals=(series||[]).map(x=>Number(x[key]||0));
+    const last=vals.length?vals[vals.length-1]:0,first=vals.length?vals[0]:0;
+    const up=last>first,dn=last<first;
+    const arr=up?'<span style="color:#ff6b6b">↑</span>':(dn?'<span style="color:#39d98a">↓</span>':'→');
+    return '<div class="card" style="padding:12px"><div style="font-size:12px;color:var(--muted)">'+title+'</div>'
+      +'<div style="font-size:18px;font-weight:700;margin:2px 0 4px">'+fmt(last)+' '+arr+'</div>'+_adsSpark(vals,color)+'</div>';
+  }
+  function _adsKpi(icon,label,val,color){
+    return '<div class="card" style="padding:12px"><div style="font-size:12px;color:var(--muted)">'+icon+' '+label+'</div>'
+      +'<div style="font-size:20px;font-weight:700;margin-top:3px;color:'+(color||'inherit')+'">'+val+'</div></div>';
+  }
+  // цвет по норме: CTR (больше лучше), частота (меньше лучше)
+  function _benchCtr(v){ v=Number(v)||0; return v>=1.5?'#39d98a':(v>=0.8?'#ffb84d':'#ff6b6b'); }
+  function _benchFreq(v){ v=Number(v)||0; return v<=2?'#39d98a':(v<=3?'#ffb84d':'#ff6b6b'); }
+  // воронка: Показы → Клики → Переписки
+  function _adsFunnel(f){
+    if(!f) return '';
+    const impr=Number(f.impr||0),clicks=Number(f.clicks||0),conv=Number(f.conv||0);
+    const row=(lbl,val,sub,w,col)=>'<div style="margin:6px 0">'
+      +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px"><span>'+lbl+'</span><span style="color:var(--muted)">'+sub+'</span></div>'
+      +'<div style="background:var(--line,#222);border-radius:6px;height:26px;overflow:hidden"><div style="height:26px;width:'+Math.max(4,w)+'%;background:'+col+';border-radius:6px;display:flex;align-items:center;padding-left:8px;font-size:12px;font-weight:600;color:#0a0e14">'+_N(val)+'</div></div></div>';
+    const wClicks=impr?Math.max(4,clicks/impr*100):0, wConv=impr?Math.max(3,conv/impr*100):0;
+    return '<div class="card"><h3>🔻 Воронка</h3>'
+      +row('Показы',impr,'100%',100,'#5aa9ff')
+      +row('Клики',clicks,'CTR '+(f.ctr||0)+'%',wClicks,'#39d98a')
+      +row('Переписки',conv,'из кликов '+(f.cr||0)+'%',wConv,'#c98cff')
+      +'<div style="font-size:12px;color:var(--muted);margin-top:6px">Из показа в клик — '+(f.ctr||0)+'%, из клика в переписку — '+(f.cr||0)+'%.</div></div>';
+  }
+  // таблица-разбивка с полоской доли расхода и метриками таргетолога
+  function _adsBd(title,rows,cur,hint){
+    if(!(rows||[]).length) return '';
+    const tot=rows.reduce((s,r)=>s+Number(r.spend||0),0)||1;
+    const body=rows.map(r=>{
+      const share=Number(r.spend||0)/tot*100;
+      const bar='<div style="background:var(--line,#222);border-radius:4px;height:14px;min-width:60px"><div style="background:#2b6cff;height:14px;border-radius:4px;width:'+share.toFixed(0)+'%"></div></div>';
+      return '<tr style="border-top:1px solid var(--line,#222)"><td style="padding:7px 6px">'+esc(r.seg)+'</td>'
+        +'<td style="min-width:90px">'+bar+'<span style="font-size:11px;color:var(--muted)">'+share.toFixed(0)+'%</span></td>'
+        +'<td>'+_money(r.spend,cur)+'</td><td style="color:'+_benchCtr(r.ctr)+'">'+r.ctr+'%</td>'
+        +'<td>'+_money(r.cpm,cur)+'</td><td>'+_N(r.clicks)+'</td>'
+        +'<td style="font-weight:600;color:#39d98a">'+_N(r.conv)+'</td>'
+        +'<td>'+(r.cpconv?_money(r.cpconv,cur):'—')+'</td></tr>';
+    }).join('');
+    return '<div class="card"><h3>'+title+'</h3>'+(hint?'<div style="font-size:12px;color:var(--muted);margin-bottom:6px">'+hint+'</div>':'')
+      +'<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
+      +'<tr style="color:var(--muted);text-align:left"><th style="padding:6px">Сегмент</th><th>Доля расхода</th><th>Расход</th><th>CTR</th><th>CPM</th><th>Клики</th><th>💬</th><th>Цена 💬</th></tr>'
+      +body+'</table></div></div>';
+  }
+  // почасовой график переписок (когда показывать рекламу)
+  function _adsHours(hours,cur){
+    if(!(hours||[]).length) return '';
+    const mx=Math.max.apply(null,hours.map(h=>Number(h.conv||0)).concat([1]));
+    const bars=hours.map(h=>{
+      const v=Number(h.conv||0);
+      return '<div title="'+esc(h.seg)+': '+_N(v)+' переписок, расход '+_money(h.spend,cur)+'" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:2px">'
+        +'<div style="width:100%;background:#c98cff;border-radius:3px 3px 0 0;height:'+Math.max(2,Math.round(v/mx*100))+'px"></div>'
+        +'<div style="font-size:9px;color:var(--muted)">'+esc((h.seg||'').slice(0,2))+'</div></div>';
+    }).join('');
+    return '<div class="card"><h3>🕒 Когда пишут (по часам)</h3><div style="font-size:12px;color:var(--muted);margin-bottom:8px">Высота столбика — число начатых переписок в этот час. Помогает понять, когда усиливать показ.</div>'
+      +'<div style="display:flex;align-items:flex-end;gap:2px;height:120px">'+bars+'</div></div>';
+  }
   async function loadAdsAnalysis(){
     const el=document.getElementById('adsanalysis-body'); if(!el) return;
     if(!ONEC_BASE){ el.innerHTML='<div class="card">🟠 Нужен подключённый сервер.</div>'; return; }
-    el.innerHTML=adsAnControls()+'<div class="card"><span style="color:var(--muted)">⏳ Анализирую…</span></div>';
+    el.innerHTML=adsAnControls()+'<div class="card"><span style="color:var(--muted)">⏳ Анализирую… (собираю разбивки Meta, это пара секунд)</span></div>';
     try{
       const q='campaign='+encodeURIComponent(_adsAn.campaign||'')+'&'+adsPeriodQuery(_adsAn);
       const r=await apiFetch('/api/ads/analysis?'+q,{},ONEC_BASE); const d=await r.json();
-      if(!d.configured){ el.innerHTML='<div class="card">🟠 Сначала подключи рекламный кабинет.</div>'; return; }
-      if(Array.isArray(d.campaigns)) _adsAn.camps=d.campaigns;   // обновляем список для селектора
-      const N=n=>Number(n||0).toLocaleString('ru-RU');
-      const tbl=(title,rows)=>{
-        if(!(rows||[]).length) return '';
-        return '<div class="card"><h3>'+title+'</h3><div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
-          +'<tr style="color:var(--muted);text-align:left"><th style="padding:6px">Сегмент</th><th>Клики</th><th>Показы</th><th>Охват</th><th>Потрачено</th></tr>'
-          +rows.map(x=>'<tr style="border-top:1px solid var(--line,#222)"><td style="padding:7px 6px">'+esc(x.seg)+'</td><td>'+N(x.clicks)+'</td><td>'+N(x.impr)+'</td><td>'+N(x.reach)+'</td><td>'+N(x.spend)+'</td></tr>').join('')
-          +'</table></div></div>';
-      };
-      let html=adsAnControls()+'<div class="card"><h3>💡 Выводы</h3><div style="font-size:14px;line-height:1.8">'+(d.tips||[]).map(t=>'• '+t).join('<br>')+'</div></div>';
-      html+=tbl('👥 Пол и возраст',d.age_gender)+tbl('📱 Площадки',d.platform)+tbl('📍 Плейсменты',d.placement);
+      if(!d.configured){ el.innerHTML=adsAnControls()+'<div class="card">🟠 Сначала подключи рекламный кабинет.</div>'; return; }
+      if(Array.isArray(d.campaigns)) _adsAn.camps=d.campaigns;
+      const cur=d.currency||'', t=d.totals||{}, s=d.series||[];
+      let html=adsAnControls();
+      // выводы
+      html+='<div class="card" style="border-left:3px solid #2b6cff"><h3>💡 Выводы эксперта</h3><div style="font-size:14px;line-height:1.9">'+(d.tips||[]).map(x=>'• '+x).join('<br>')+'</div></div>';
+      // KPI
+      html+='<div class="kpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">'
+        +_adsKpi('💸','Потрачено',_money(t.spend,cur))
+        +_adsKpi('👁','Охват',_N(t.reach))
+        +_adsKpi('📊','Показы',_N(t.impr))
+        +_adsKpi('🔁','Частота',(t.freq||0),_benchFreq(t.freq))
+        +_adsKpi('🖱','CTR',(t.ctr||0)+'%',_benchCtr(t.ctr))
+        +_adsKpi('💵','CPC',_money(t.cpc,cur))
+        +_adsKpi('📈','CPM',_money(t.cpm,cur))
+        +_adsKpi('💬','Переписки',_N(t.conv))
+        +_adsKpi('🎯','Цена переписки',t.cpconv?_money(t.cpconv,cur):'—')
+        +'</div>';
+      // воронка
+      html+=_adsFunnel(d.funnel);
+      // тренды
+      if(s.length>=2){
+        html+='<div class="card"><h3>📉 Динамика по дням</h3><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'
+          +_adsTrend('Расход',s,'spend','#5aa9ff',v=>_money(v,cur))
+          +_adsTrend('Переписки',s,'conv','#c98cff',v=>_N(v))
+          +_adsTrend('CTR %',s,'ctr','#39d98a',v=>v+'%')
+          +_adsTrend('CPM',s,'cpm','#ffb84d',v=>_money(v,cur))
+          +_adsTrend('Частота',s,'freq','#ff8f6b',v=>v)
+          +_adsTrend('Цена переписки',s,'cpconv','#e06bff',v=>v?_money(v,cur):'—')
+          +'</div></div>';
+      }
+      // разбивки
+      html+=_adsBd('👥 Пол и возраст',d.age_gender,cur,'Кому реклама заходит дешевле всего (смотри «Цена 💬»).')
+        +_adsBd('📍 Плейсменты',d.placement,cur,'Где переписки дешевле — туда стоит смещать бюджет.')
+        +_adsBd('📱 Площадки',d.platform,cur)
+        +_adsBd('🌍 Регионы',d.region,cur)
+        +_adsBd('📟 Устройства',d.device,cur);
+      // почасовой (Meta не отдаёт часы за «Всё время» — тогда подсказываем выбрать период)
+      html+=_adsHours(d.hours,cur)||'<div class="card"><h3>🕒 Когда пишут (по часам)</h3><div style="color:var(--muted);font-size:13px">Meta не отдаёт разбор по часам за «Всё время». Выбери конкретный период (например, 30 дней) — и появится график по часам.</div></div>';
       el.innerHTML=html;
     }catch(e){ el.innerHTML=adsAnControls()+'<div class="card">🔴 Не удалось загрузить анализ</div>'; }
   }
