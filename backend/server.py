@@ -5825,24 +5825,10 @@ class Handler(BaseHTTPRequestHandler):
                            "amount": round(_num(body.get("amount"))), "qty": _num(body.get("qty")),
                            "note": (body.get("note") or "").strip(), "date": day,
                            "receipt_url": receipt_url, "created_by": who})
-                    # ВЫПЛАТА долга поставщику → сразу расход «Погашение долгов поставщикам»
-                    if typ == "payment":
-                        try:
-                            _tid = _ins[0].get("id") if isinstance(_ins, list) and _ins else None
-                            _snm = ""
-                            _sr = _supa("GET", "suppliers",
-                                        "?id=eq.%s&company_id=eq.%s&select=name" % (sid, _q(COMPANY_ID)))
-                            if _sr:
-                                _snm = _sr[0].get("name", "")
-                            _supa("POST", "expenses", "",
-                                  {"company_id": COMPANY_ID,
-                                   "amount": round(_num(body.get("amount"))),
-                                   "category": "Погашение долгов поставщикам",
-                                   "note": _snm or (body.get("note") or "").strip(),
-                                   "date": day,
-                                   "src_txn": (str(_tid) if _tid is not None else None)})
-                        except Exception:
-                            pass
+                    # ВЫПЛАТА долга поставщику НЕ пишется в расходы:
+                    # деньги поставщикам — это погашение долга (движение по кредиторке),
+                    # а не операционный расход. Учёт ведётся только в модуле «Поставщики»
+                    # (таблица supplier_txns). В expenses такие суммы не дублируем.
                 elif action == "edit_supplier":      # исправить имя/телефон поставщика
                     sid = body.get("id")
                     name = (body.get("name") or "").strip()
@@ -5860,13 +5846,7 @@ class Handler(BaseHTTPRequestHandler):
                           "?id=eq.%s&company_id=eq.%s" % (tid, _q(COMPANY_ID)),
                           {"amount": _eamt,
                            "note": (body.get("note") or "").strip()})
-                    # если это была выплата — синхронизируем связанный расход
-                    try:
-                        _supa("PATCH", "expenses",
-                              "?company_id=eq.%s&src_txn=eq.%s" % (_q(COMPANY_ID), _q(str(tid))),
-                              {"amount": _eamt})
-                    except Exception:
-                        pass
+                    # выплаты поставщикам в expenses не пишутся — синхронизировать нечего
                 elif action in ("del_txn", "del_supplier"):
                     # удаление истории поставщиков отключено по решению владельца —
                     # записи защищены, удалять нельзя ни через интерфейс, ни напрямую
