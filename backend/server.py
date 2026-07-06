@@ -3410,15 +3410,23 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
             continue
         days_ok += 1
         for x in data.get("receipts", []):
-            sign = -1 if x.get("operationType") == "Возврат" else 1
-            for it in x.get("items", []):
+            items = x.get("items", [])
+            rtot = _num(x.get("receiptTotal"))
+            # Выручку позиции считаем по ФАКТИЧЕСКОЙ сумме чека, разложенной пропорционально
+            # (у части чеков Σ saleAmount ≠ сумме чека из-за обменов/скидок/бонусов, discount=0).
+            # Так итог сходится с кассой, а не завышается «прайсовыми» суммами.
+            isum = sum(_num(it.get("saleAmount")) for it in items)
+            factor = (rtot / isum) if isum else 0
+            sign = -1 if (x.get("operationType") == "Возврат" or rtot < 0) else 1
+            pfac = factor if (factor and abs(factor - 1) > 0.001) else sign
+            for it in items:
                 nm = (it.get("name") or "").strip()
                 if not nm:
                     continue
                 a = agg.setdefault(nm, {"qty": 0.0, "rev": 0.0, "profit": 0.0})
                 a["qty"] += sign * _num(it.get("qty"))
-                a["rev"] += sign * _num(it.get("saleAmount"))
-                a["profit"] += sign * _num(it.get("profit"))
+                a["rev"] += _num(it.get("saleAmount")) * factor
+                a["profit"] += _num(it.get("profit")) * pfac
     # раскладка по группам
     groups = {}
     for nm, a in agg.items():
