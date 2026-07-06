@@ -2,7 +2,10 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
 <title>Штурвал — пульт управления Бизмарт</title>
 <style>
   :root{
@@ -400,6 +403,137 @@
   .sim-out .o .ov{font-size:24px;font-weight:700}
   .sim-out .o .od{font-size:13px;margin-top:5px;font-weight:600}
   @media(max-width:760px){.sim-out{grid-template-columns:1fr}}
+
+  /* ============================================================
+     МОБИЛЬНАЯ ОПТИМИЗАЦИЯ
+     ============================================================ */
+  @media(max-width:760px){
+    /* iOS anti-zoom: все поля минимум 16px — иначе Safari зумирует при тапе */
+    input,select,textarea{font-size:16px!important}
+
+    /* Кнопки — минимум 44px высота для пальца */
+    .btn{min-height:44px;padding:11px 20px;font-size:14px;border-radius:11px}
+    .btn.ghost{min-height:44px}
+
+    /* Навигация — крупнее, удобнее тапать */
+    .nav a{padding:13px 16px;font-size:14px;min-height:44px;border-radius:12px}
+    .tn-mods a{padding:10px 14px;font-size:14px;min-height:44px}
+    .tn-set{min-height:44px;padding:10px 12px}
+
+    /* KPI-цифры крупнее */
+    .kpi .value{font-size:24px}
+    .kpi .label{font-size:14px}
+    .kpi .delta{font-size:13px}
+    .card.kpi{padding:16px}
+
+    /* Таблицы — читаемые */
+    table{font-size:13px}
+    th{padding:10px 8px;font-size:12px}
+    td{padding:13px 8px}
+
+    /* Карточки */
+    .card{padding:16px}
+    .card h3{font-size:16px;margin-bottom:12px}
+    .topbar h1{font-size:20px}
+    .topbar .sub{font-size:14px}
+
+    /* Модальные окна — снизу вверх */
+    .modal-bg{align-items:flex-end;padding:0}
+    .modal{
+      border-radius:22px 22px 0 0;
+      width:100%;max-width:100%;
+      max-height:92vh;
+      padding:24px 18px;
+      padding-bottom:max(24px,env(safe-area-inset-bottom));
+    }
+    .modal::before{
+      content:"";display:block;width:38px;height:4px;
+      background:var(--line);border-radius:4px;
+      margin:0 auto 18px;
+    }
+    .modal h3{font-size:17px}
+    .modal label{font-size:13px;margin:14px 0 5px}
+    .modal input,.modal select{font-size:16px!important;padding:14px;border-radius:12px}
+    .modal .row{flex-direction:column;gap:0}
+    .modal-foot{gap:10px;margin-top:20px}
+    .modal-foot .btn{flex:1;min-height:50px;font-size:15px}
+
+    /* WA modal тоже снизу */
+    .wa-modal{align-items:flex-end;padding:0}
+    .wa-modal-card{border-radius:22px 22px 0 0;width:100%;max-width:100%;max-height:92vh}
+    .wa-modal-card::before{
+      content:"";display:block;width:38px;height:4px;
+      background:var(--line);border-radius:4px;
+      margin:14px auto 0;
+    }
+
+    /* Поиск — полная ширина */
+    .search{font-size:16px!important;width:100%;padding:12px 14px}
+    .wa-search{font-size:16px!important;padding:12px 16px}
+    .toolbar{flex-direction:column;align-items:stretch;gap:8px}
+
+    /* Чаты — крупнее */
+    .chatitem{padding:14px 16px}
+    .ci-name{font-size:15px}
+    .ci-last{font-size:13px}
+
+    /* Пузыри сообщений */
+    .bubble{max-width:88%;font-size:14px;padding:10px 14px;line-height:1.5}
+
+    /* Поле ввода сообщения */
+    .replybox{padding:10px 12px;gap:8px}
+    .replybox input{font-size:16px!important;padding:13px 16px;border-radius:14px}
+    .chat input{font-size:16px!important;padding:12px 14px}
+
+    /* Уведомления — весь экран */
+    .drawer{width:100%;border-radius:22px 22px 0 0;top:auto;height:88vh}
+
+    /* Колокольчик и аватар */
+    .bell{width:44px;height:44px;font-size:20px}
+    .avatar{width:42px;height:42px;font-size:17px}
+
+    /* Переключатели */
+    .set-row{padding:16px 0}
+    .set-row .lbl{font-size:15px}
+    .switch{width:54px;height:30px}
+    .slider:before{width:24px;height:24px;top:3px}
+    .switch input:checked + .slider:before{transform:translateX(23px)}
+
+    /* Период-кнопки */
+    .period button{padding:10px 16px;font-size:14px;min-height:44px}
+
+    /* Логин */
+    .logincard{padding:28px 20px;border-radius:22px}
+    .logincard input{font-size:16px!important;padding:15px 16px;margin-bottom:14px;border-radius:13px}
+    .logincard .btn{min-height:52px;font-size:16px;border-radius:13px}
+    .logincard h2{font-size:19px}
+
+    /* Safe area iPhone */
+    .main{padding-bottom:max(16px,env(safe-area-inset-bottom))}
+    body.tab-wa .chatview .replybox{padding-bottom:max(12px,env(safe-area-inset-bottom))}
+
+    /* Фильтр-чипы */
+    .wa-chip{padding:8px 14px;font-size:13px;min-height:36px}
+    .fchip{padding:10px 8px}
+    .fchip .fc-c{font-size:20px}
+    .fchip .fc-n{font-size:12px}
+
+    /* Подсказки */
+    .note{font-size:14px;padding:14px 16px;line-height:1.6}
+    .badge{padding:4px 12px;font-size:13px}
+    .thsel button{min-height:40px;padding:9px 14px;font-size:14px}
+  }
+
+  /* Очень маленькие экраны ≤400px */
+  @media(max-width:400px){
+    .tn-logo{display:none}
+    .kpis{gap:8px}
+    .kpi .value{font-size:21px}
+    .main{padding:12px 10px}
+    .card{padding:14px}
+    .topbar h1{font-size:18px}
+    .modal{padding:20px 14px;padding-bottom:max(20px,env(safe-area-inset-bottom))}
+  }
 </style>
 </head>
 <body>
