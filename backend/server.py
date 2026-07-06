@@ -1924,7 +1924,7 @@ def igbot_handle(sender, recipient, text):
         # передача человеку ПО ВРЕМЕНИ: бот молчит, только если ЖИВОЙ оператор отвечал НЕДАВНО
         # (в пределах handoff_hours). Если человек давно не отвечал, а клиент написал снова —
         # бот опять ведёт диалог (раньше он замолкал НАВСЕГДА после единственного ответа менеджера).
-        hh = int(_num(s.get("handoff_hours")) or 6)
+        hh = _hhours(s.get("handoff_hours"))
         cutoff = (time.time() - hh * 3600) * 1000
         for r in hist:
             if (r.get("direction") == "out" and (r.get("raw") or {}).get("by") == "human"
@@ -2655,7 +2655,7 @@ def wabot_handle(sender, phone_id, text=None, fallback=False):
         else:
             # Мгновенный режим: бот молчит, только если ЖИВОЙ менеджер отвечал НЕДАВНО
             # (в пределах handoff_hours). Если человек давно не отвечал — бот снова ведёт диалог.
-            hh = int(_num(s.get("handoff_hours")) or 6)
+            hh = _hhours(s.get("handoff_hours"))
             cutoff = (time.time() - hh * 3600) * 1000
             for r in hist:
                 if (r.get("direction") == "out" and (r.get("raw") or {}).get("by") == "human"
