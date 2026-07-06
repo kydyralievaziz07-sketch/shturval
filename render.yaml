@@ -36,3 +36,14 @@ services:
         sync: false
       - key: WA_DISPLAY
         sync: false
+      # Реклама (Meta Marketing API). ОБЪЯВЛЕНЫ здесь (sync:false), чтобы деплой
+      # НЕ стирал их — значения задаются в панели Render. Особенно META_ADS_TOKEN,
+      # который иначе пропадал при передеплоях и реклама «отключалась».
+      - key: META_ADS_TOKEN
+        sync: false
+      - key: META_AD_ACCOUNT
+        sync: false
+      - key: META_PAGE_ID
+        sync: false
+      - key: META_IG_ID
+        sync: false
