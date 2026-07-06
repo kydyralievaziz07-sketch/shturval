@@ -564,7 +564,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.9.0<br>Чат кокпита во всю высоту экрана (список клиентов и переписка стали большими)</div>
+      Штурвал v4.10.0<br>Реклама: в списке кампаний — поиск по названию и фильтр по статусу (Крутится / Готовые / Не крутят / Пауза); в «Отчётах» — кнопка выгрузки в Excel</div>
   </aside>
 
   <!-- MAIN -->
@@ -5750,6 +5750,16 @@
   const ADS_PERIODS=[['today','Сегодня'],['yesterday','Вчера'],['last_7d','7 дней'],['last_14d','14 дней'],['last_30d','30 дней'],['last_90d','90 дней'],['this_month','Этот месяц'],['last_month','Прошлый месяц'],['maximum','Всё время']];
   let _adsRep={period:'maximum',since:'',until:''};
   let _adsAn={campaign:'',period:'maximum',since:'',until:'',camps:[]};
+  let _adsRepData=null;
+  function exportAdsReport(){
+    const d=_adsRepData; if(!d||!(d.rows||[]).length){ alert('Сначала дождись загрузки отчёта.'); return; }
+    const cur=d.currency||'';
+    const rows=[['Кампания','Потрачено ('+cur+')','Охват','Показы','Клики','CTR %','CPC','CPM','Частота','Переписки','Цена переписки']];
+    d.rows.forEach(c=>rows.push([c.name||'',c.spend,c.reach,c.impr,c.clicks,c.ctr,c.cpc,c.cpm,c.freq,c.conv,c.cpconv||'']));
+    const t=d.totals||{};
+    rows.push(['ИТОГО',t.spend,t.reach,t.impr,t.clicks,t.ctr,t.cpc,'','',t.conv,t.cpconv||'']);
+    downloadCSV('Реклама_отчёт_Бизмарт.csv',rows);
+  }
   function adsPeriodQuery(st){
     if(st.period==='custom'&&st.since&&st.until) return 'since='+encodeURIComponent(st.since)+'&until='+encodeURIComponent(st.until);
     return 'period='+encodeURIComponent(st.period==='custom'?'maximum':st.period);
@@ -5774,12 +5784,15 @@
   async function loadAdsReport(){
     const el=document.getElementById('adsreport-body'); if(!el) return;
     if(!ONEC_BASE){ el.innerHTML='<div class="card">🟠 Нужен подключённый сервер.</div>'; return; }
-    const controls='<div class="card" style="padding:12px;margin-bottom:12px">'+adsPeriodSelect(_adsRep,'adsRepSetPeriod','adsRepSetDates','adsrepdt')+'</div>';
+    const controls='<div class="card" style="padding:12px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between">'
+      +'<div>'+adsPeriodSelect(_adsRep,'adsRepSetPeriod','adsRepSetDates','adsrepdt')+'</div>'
+      +'<button class="btn ghost" style="font-size:12px;padding:6px 12px" onclick="exportAdsReport()">⬇️ В Excel</button></div>';
     el.innerHTML=controls+'<div class="card"><span style="color:var(--muted)">⏳ Собираю отчёт…</span></div>';
     try{
       const r=await apiFetch('/api/ads/report?'+adsPeriodQuery(_adsRep),{},ONEC_BASE); const d=await r.json();
       if(!d.configured){ el.innerHTML=controls+'<div class="card">🟠 Сначала подключи рекламный кабинет (раздел «Реклама»).</div>'; return; }
       if(d.error){ el.innerHTML=controls+'<div class="card">🔴 '+esc(d.error)+'</div>'; return; }
+      _adsRepData=d;
       const cur=d.currency||'', t=d.totals||{};
       const N=n=>Number(n||0).toLocaleString('ru-RU');
       const kpi=(ic,lbl,val)=>'<div class="card" style="padding:12px"><div style="font-size:12px;color:var(--muted)">'+ic+' '+lbl+'</div><div style="font-size:20px;font-weight:700;margin-top:4px">'+val+'</div></div>';
@@ -6111,34 +6124,60 @@
     }catch(e){ msg.innerHTML='🔴 Ошибка: '+esc(String(e)); }
     btn.disabled=false; btn.textContent=old;
   }
+  let _adsCamps={list:[],q:'',status:'all'};
+  function adsCampSearch(v){ _adsCamps.q=(v||'').trim().toLowerCase(); renderAdsCampsTable(); }
+  function adsCampFilter(s){ _adsCamps.status=s; renderAdsCampsTable(); }
+  function _adsCampMatch(c){
+    const q=_adsCamps.q,s=_adsCamps.status,on=c.status==='ACTIVE';
+    if(q && (c.name||'').toLowerCase().indexOf(q)<0) return false;
+    if(s==='spending') return !!c.spending;
+    if(s==='armed')    return !!c.armed && !c.spending;
+    if(s==='idle')     return on && !c.spending && !c.armed;
+    if(s==='paused')   return !on;
+    return true;
+  }
   async function loadAdsCampaigns(){
     const el=document.getElementById('ads-camps-body'); if(!el) return;
+    el.innerHTML='<span style="color:var(--muted)">Загрузка…</span>';
     try{
       const r=await apiFetch('/api/ads/campaigns',{},ONEC_BASE); const d=await r.json();
-      const cs=d.campaigns||[];
-      if(!cs.length){ el.innerHTML='<span style="color:var(--muted)">Пока нет кампаний. Создай первую выше ☝️</span>'; return; }
-      const running=cs.filter(c=>c.spending).length;
-      const note='<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Тратят деньги сегодня: <b style="color:#39d98a">'+running+'</b> из '+cs.length+'. <span style="color:#39d98a">● Крутится</span> = реально откручивается сегодня; <span style="color:#5aa9ff">◐ Готова</span> = включена, но пока $0 за сегодня; <span style="color:#ffb84d">⚠ группы на паузе</span> = тумблер включён, но объявления не идут.</div>';
-      el.innerHTML=note+'<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
-        +'<tr style="color:var(--muted);text-align:left"><th style="padding:6px">Кампания</th><th>Статус</th><th>Бюджет/день</th><th>Сегодня</th><th>Потрачено</th><th>Охват</th><th>Клики</th><th>💬 Переписок</th><th></th></tr>'
-        +cs.map(c=>{
-          const on=c.status==='ACTIVE';           // положение переключателя (для кнопки)
-          let badge;
-          if(c.spending) badge='<span style="color:#39d98a">● Крутится</span>';
-          else if(c.armed) badge='<span style="color:#5aa9ff" title="Кампания включена и группа объявлений активна, но за сегодня расхода ещё нет">◐ Готова</span>';
-          else if(on) badge='<span style="color:#ffb84d" title="Кампания включена, но группы объявлений на паузе или без бюджета — деньги не тратятся">⚠ группы на паузе</span>';
-          else if(c.status==='PAUSED') badge='<span style="color:var(--muted)">❚❚ Пауза</span>';
-          else badge='<span style="color:var(--muted)">'+esc(c.status||'')+'</span>';
-          const today=Number(c.spend_today||0);
-          return '<tr style="border-top:1px solid var(--line,#222)"><td style="padding:7px 6px">'+esc(c.name||'')+'</td><td>'+badge+'</td>'
-            +'<td>'+Number(c.budget||0).toLocaleString("ru-RU")+'</td>'
-            +'<td'+(today>0?' style="color:#39d98a;font-weight:600"':' style="color:var(--muted)"')+'>'+(today>0?today.toLocaleString("ru-RU"):'—')+'</td>'
-            +'<td>'+Number(c.spend||0).toLocaleString("ru-RU")+'</td>'
-            +'<td>'+Number(c.reach||0).toLocaleString("ru-RU")+'</td><td>'+Number(c.clicks||0).toLocaleString("ru-RU")+'</td>'
-            +'<td style="font-weight:600;color:#39d98a">'+Number(c.conversations||0).toLocaleString("ru-RU")+'</td>'
-            +'<td><button class="btn '+(on?'ghost':'')+'" style="font-size:12px;padding:5px 10px" onclick="adsToggle(\''+c.id+'\','+(on?'false':'true')+')">'+(on?'❚❚ Пауза':'▶ Включить')+'</button></td></tr>';
-        }).join('')+'</table></div>';
+      _adsCamps.list=d.campaigns||[];
+      renderAdsCampsTable();
     }catch(e){ el.innerHTML='<span style="color:#ff6b6b">Не удалось загрузить кампании</span>'; }
+  }
+  function renderAdsCampsTable(){
+    const el=document.getElementById('ads-camps-body'); if(!el) return;
+    const all=_adsCamps.list||[];
+    if(!all.length){ el.innerHTML='<span style="color:var(--muted)">Пока нет кампаний. Создай первую выше ☝️</span>'; return; }
+    const running=all.filter(c=>c.spending).length;
+    const note='<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Тратят деньги сегодня: <b style="color:#39d98a">'+running+'</b> из '+all.length+'. <span style="color:#39d98a">● Крутится</span> = реально откручивается сегодня; <span style="color:#5aa9ff">◐ Готова</span> = включена, но пока $0 за сегодня; <span style="color:#ffb84d">⚠ группы на паузе</span> = тумблер включён, но объявления не идут.</div>';
+    const chips=[['all','Все'],['spending','● Крутится'],['armed','◐ Готовые'],['idle','⚠ Не крутят'],['paused','❚❚ Пауза']];
+    const bar='<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px">'
+      +'<input value="'+esc(_adsCamps.q)+'" oninput="adsCampSearch(this.value)" placeholder="🔍 поиск по названию…" style="'+ADS_INP+';max-width:240px;width:auto;display:inline-block">'
+      +chips.map(ch=>'<button onclick="adsCampFilter(\''+ch[0]+'\')" style="font-size:12px;padding:5px 10px;border-radius:8px;cursor:pointer;border:1px solid var(--line,#2a2f3a);background:'+(_adsCamps.status===ch[0]?'#2b6cff;color:#fff':'transparent;color:var(--muted)')+'">'+ch[1]+'</button>').join('')
+      +'</div>';
+    const rows=all.filter(_adsCampMatch);
+    if(!rows.length){ el.innerHTML=note+bar+'<div style="color:var(--muted);padding:10px 0">Ничего не найдено по фильтру.</div>'; return; }
+    el.innerHTML=note+bar+'<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
+      +'<tr style="color:var(--muted);text-align:left"><th style="padding:6px">Кампания</th><th>Статус</th><th>Бюджет/день</th><th>Сегодня</th><th>Потрачено</th><th>Охват</th><th>Клики</th><th>💬 Переписок</th><th></th></tr>'
+      +rows.map(c=>{
+        const on=c.status==='ACTIVE';           // положение переключателя (для кнопки)
+        let badge;
+        if(c.spending) badge='<span style="color:#39d98a">● Крутится</span>';
+        else if(c.armed) badge='<span style="color:#5aa9ff" title="Кампания включена и группа объявлений активна, но за сегодня расхода ещё нет">◐ Готова</span>';
+        else if(on) badge='<span style="color:#ffb84d" title="Кампания включена, но группы объявлений на паузе или без бюджета — деньги не тратятся">⚠ группы на паузе</span>';
+        else if(c.status==='PAUSED') badge='<span style="color:var(--muted)">❚❚ Пауза</span>';
+        else badge='<span style="color:var(--muted)">'+esc(c.status||'')+'</span>';
+        const today=Number(c.spend_today||0);
+        return '<tr style="border-top:1px solid var(--line,#222)"><td style="padding:7px 6px">'+esc(c.name||'')+'</td><td>'+badge+'</td>'
+          +'<td>'+Number(c.budget||0).toLocaleString("ru-RU")+'</td>'
+          +'<td'+(today>0?' style="color:#39d98a;font-weight:600"':' style="color:var(--muted)"')+'>'+(today>0?today.toLocaleString("ru-RU"):'—')+'</td>'
+          +'<td>'+Number(c.spend||0).toLocaleString("ru-RU")+'</td>'
+          +'<td>'+Number(c.reach||0).toLocaleString("ru-RU")+'</td><td>'+Number(c.clicks||0).toLocaleString("ru-RU")+'</td>'
+          +'<td style="font-weight:600;color:#39d98a">'+Number(c.conversations||0).toLocaleString("ru-RU")+'</td>'
+          +'<td><button class="btn '+(on?'ghost':'')+'" style="font-size:12px;padding:5px 10px" onclick="adsToggle(\''+c.id+'\','+(on?'false':'true')+')">'+(on?'❚❚ Пауза':'▶ Включить')+'</button></td></tr>';
+      }).join('')+'</table></div>'
+      +'<div style="font-size:12px;color:var(--muted);margin-top:8px">Показано '+rows.length+' из '+all.length+'</div>';
   }
   async function adsToggle(id,active){
     try{
