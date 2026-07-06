@@ -603,7 +603,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.22.0<br>Рассылка теперь и в WhatsApp: переключатель Instagram/WhatsApp; «спящим» — по одобренному шаблону</div>
+      Штурвал v4.23.0<br>Авто-синхронизация воронки: обновления других сотрудников видны без перезагрузки</div>
   </aside>
 
   <!-- MAIN -->
@@ -808,7 +808,7 @@
         <span id="crm-stats" style="font-size:12px;color:var(--muted)"></span>
       </div>
       <div id="crm-dash" style="margin-bottom:14px"></div>
-      <div class="deals-pre" style="font-size:12px;color:var(--muted);margin-bottom:6px">🧲 Воронка — перетащи клиента из списка чатов на нужную стадию</div>
+      <div class="deals-pre" style="font-size:12px;color:var(--muted);margin-bottom:6px;display:flex;align-items:center;gap:10px">🧲 Воронка — перетащи клиента из списка чатов на нужную стадию<span id="crm-sync-ind" style="opacity:0;transition:opacity 0.4s;font-size:11px;color:#39d98a;background:rgba(57,217,138,.12);border-radius:6px;padding:2px 8px">↻ обновлено</span></div>
       <div class="funnelbar" id="funnelbar"></div>
       <div class="deals-pre" style="margin:8px 0"><input id="ck-search" placeholder="🔎 Поиск клиента по нику или имени…" oninput="ckDoSearch(this.value)" style="width:100%;box-sizing:border-box;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 12px;color:var(--text);font-family:inherit;font-size:14px"></div>
       <div class="cockpit">
@@ -3858,10 +3858,46 @@
   let _crmCloudTimer=null, _crmCloudReady=false, _crmSaveLocalTimer=null;
   function crmPersist(){
     if(CRM.activity&&CRM.activity.length>800) CRM.activity=CRM.activity.slice(0,800);   // не раздувать журнал
+    CRM._ts=Date.now(); _crmLastSavedTs=CRM._ts;          // метка времени для синхронизации между пользователями
     rebuildCrmIndex();
     clearTimeout(_crmSaveLocalTimer);                      // запись в localStorage — с задержкой (большой JSON)
     _crmSaveLocalTimer=setTimeout(()=>{ try{ localStorage.setItem('shturval_crm',JSON.stringify(CRM)); }catch(e){} },400);
     saveCrmCloud();   // + в облако (с задержкой, чтобы не дёргать на каждый клик)
+  }
+  let _crmLastSavedTs=0, _crmSyncTimer=null;
+  function startCrmSync(){
+    if(_crmSyncTimer) return;
+    _crmSyncTimer=setInterval(async()=>{
+      if(!_crmCloudReady) return;
+      // не мешаем если открыта карточка сделки или переписка
+      const dealOpen=document.getElementById('dealbg')&&document.getElementById('dealbg').classList.contains('open');
+      const activeInput=document.activeElement&&(document.activeElement.tagName==='INPUT'||document.activeElement.tagName==='TEXTAREA');
+      if(dealOpen||activeInput) return;
+      // не делаем запрос если мы сами только что сохранили (меньше 4 сек назад)
+      if(Date.now()-_crmLastSavedTs<4000) return;
+      try{
+        const r=await apiFetch('/api/crm-data',{},ONEC_BASE);
+        if(!r.ok) return;
+        const d=await r.json();
+        const cloud=d&&d.data;
+        if(!cloud) return;
+        const cloudTs=cloud._ts||0;
+        if(cloudTs<=( CRM._ts||0)) return;   // облако старее или такое же — ничего не делаем
+        // есть новые данные от другого пользователя
+        CRM={clients:cloud.clients||[],deals:cloud.deals||[],tasks:cloud.tasks||[],activity:cloud.activity||[],_ts:cloudTs};
+        _crmLastSavedTs=cloudTs;
+        let _chg=migrateStatuses(); if(purgeImported()) _chg=true; if(dedupeClients()) _chg=true;
+        rebuildCrmIndex();
+        try{ localStorage.setItem('shturval_crm',JSON.stringify(CRM)); }catch(_){}
+        if(curTab==='deals'||curTab==='crm') { renderFunnel&&renderFunnel(); renderCrmStats&&renderCrmStats(); renderCrmDash&&renderCrmDash(); renderLeft&&renderLeft(); }
+        if(curTab==='tasks') renderTasks&&renderTasks();
+        if(curTab==='chats') renderLeft&&renderLeft();
+        if(_chg) saveCrmCloud();
+        // тихий мигающий индикатор
+        const ind=document.getElementById('crm-sync-ind');
+        if(ind){ ind.style.opacity='1'; setTimeout(()=>{ ind.style.opacity='0'; },2000); }
+      }catch(_){}
+    },20000);
   }
   function saveCrmCloud(){
     if(!_crmCloudReady) return;        // не перезаписывать облако, пока не загрузили его
@@ -3878,7 +3914,8 @@
       const cloudHas=cloud&&((cloud.deals&&cloud.deals.length)||(cloud.clients&&cloud.clients.length));
       const localHas=(CRM.deals&&CRM.deals.length)||(CRM.clients&&CRM.clients.length);
       if(cloudHas){
-        CRM={clients:cloud.clients||[],deals:cloud.deals||[],tasks:cloud.tasks||[],activity:cloud.activity||[]};
+        CRM={clients:cloud.clients||[],deals:cloud.deals||[],tasks:cloud.tasks||[],activity:cloud.activity||[],_ts:cloud._ts||0};
+        _crmLastSavedTs=CRM._ts||0;   // запоминаем метку чтобы sync не применил те же данные сразу
         let _chg=migrateStatuses(); if(purgeImported()) _chg=true; if(dedupeClients()) _chg=true; if(_chg) crmPersist();   // стадии + чистка импорта + слияние дублей
         rebuildCrmIndex();
         try{ localStorage.setItem('shturval_crm',JSON.stringify(CRM)); }catch(_){}
@@ -3892,6 +3929,7 @@
         if(localHas) saveCrmCloud();   // в облаке пусто — зальём то, что есть локально
       }
     }catch(_){ _crmCloudReady=true; }   // нет связи — работаем локально, синхронизируемся позже
+    startCrmSync();   // запускаем фоновую синхронизацию между пользователями
   }
   function uid(){ return 'd'+Date.now().toString(36)+Math.floor(Math.random()*1e6).toString(36); }
   function getClient(id){ return _cById.get(id)||CRM.clients.find(c=>c.id===id)||{}; }
