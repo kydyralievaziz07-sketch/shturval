@@ -207,7 +207,11 @@
   .chatview{display:flex;flex-direction:column;background:var(--bg);min-width:0;min-height:0}
   .chatview .head{padding:13px 16px;border-bottom:1px solid var(--line);font-weight:600;background:var(--panel)}
   .msgs{flex:1;min-height:0;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
-  .bubble{max-width:72%;padding:9px 13px;border-radius:14px;font-size:13px;line-height:1.45;word-wrap:break-word;overflow-wrap:anywhere}
+  .bubble{max-width:72%;padding:9px 13px;border-radius:14px;font-size:13px;line-height:1.45;word-wrap:break-word;overflow-wrap:anywhere;-webkit-touch-callout:none;cursor:context-menu}
+  .msgmenu{position:fixed;z-index:100000;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 34px rgba(0,0,0,.55);padding:6px;min-width:214px;max-width:270px;display:flex;flex-direction:column;gap:2px}
+  .msgmenu button{display:block;width:100%;text-align:left;background:none;border:none;color:var(--text);font-size:14px;padding:12px 12px;border-radius:8px;cursor:pointer;font-family:inherit;min-height:auto}
+  .msgmenu button:hover,.msgmenu button:active{background:var(--panel2)}
+  .msgmenu .mm-note{font-size:11px;color:var(--muted);padding:9px 12px 4px;border-top:1px solid var(--line);margin-top:4px;line-height:1.45}
   .bubble.in{align-self:flex-start;background:var(--panel2);border-bottom-left-radius:4px}
   .bubble.out{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:4px}
   .replybox{padding:12px;border-top:1px solid var(--line);display:flex;gap:8px;background:var(--panel)}
@@ -492,7 +496,7 @@
     .ci-last{font-size:13px}
 
     /* Пузыри сообщений */
-    .bubble{max-width:88%;font-size:14px;padding:10px 14px;line-height:1.5}
+    .bubble{max-width:88%;font-size:14px;padding:10px 14px;line-height:1.5;user-select:none;-webkit-user-select:none}
 
     /* Поле ввода сообщения — кнопки переносятся на след. строку, чтобы все были видны */
     .replybox{padding:10px 12px;gap:8px;flex-wrap:wrap}
@@ -603,7 +607,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.24.0<br>Кадры: после смены логина/пароля сотрудника — подтверждение с новыми данными (раньше модалка молча закрывалась)</div>
+      Штурвал v4.24.0<br>Меню по сообщению (долгий тап / правый клик) в Instagram, WhatsApp и Сделках: копировать, изменить (переотправить), удалить у себя</div>
   </aside>
 
   <!-- MAIN -->
@@ -5070,6 +5074,42 @@
     const igb=document.getElementById('ig-msgs'); if(igb){ igb.dataset.sig=''; if(typeof igCur!=='undefined'&&igCur) igLoadThread(false); }
     const wab=document.getElementById('wa-msgs'); if(wab){ wab.dataset.sig=''; if(typeof waCur!=='undefined'&&waCur) waLoadThread(false); }
   }
+  // ===== Меню действий по сообщению (долгое нажатие на телефоне / правый клик на компьютере) =====
+  let _msgMenuEl=null, _msgPressTimer=null;
+  function closeMsgMenu(){ if(_msgMenuEl){ _msgMenuEl.remove(); _msgMenuEl=null; } document.removeEventListener('click',_outsideClose,true); }
+  function _outsideClose(e){ if(_msgMenuEl && !_msgMenuEl.contains(e.target)) closeMsgMenu(); }
+  function showMsgMenu(b, x, y){
+    closeMsgMenu();
+    const dir=b.getAttribute('data-dir')||'in';
+    const key=b.getAttribute('data-mkey')||'';
+    const text=decodeURIComponent(b.getAttribute('data-mtext')||'');
+    const scope=b.closest('#ck-msgs')?'ck':(b.closest('#ig-msgs')?'ig':(b.closest('#wa-msgs')?'wa':''));
+    const m=document.createElement('div'); m.className='msgmenu';
+    m.dataset.key=key; m.dataset.text=encodeURIComponent(text); m.dataset.scope=scope;
+    let html='';
+    if(text) html+='<button onclick="msgCopy(this)">\uD83D\uDCCB Копировать текст</button>';
+    if(dir==='out' && text) html+='<button onclick="msgEdit(this)">\u270F\uFE0F Изменить (отправить заново)</button>';
+    if(key) html+='<button onclick="msgHide(this)">\uD83D\uDDD1 Удалить у меня</button>';
+    html+='<div class="mm-note">\uD83C\uDF10 «Удалить у всех» и «изменить» у клиента WhatsApp и Instagram <b>не разрешают</b> — у клиента сообщение останется. Убрать можно только из своей переписки.</div>';
+    m.innerHTML=html; document.body.appendChild(m);
+    const mw=m.offsetWidth||230, mh=m.offsetHeight||120;
+    let px=Math.min(x, window.innerWidth-mw-10), py=Math.min(y, window.innerHeight-mh-10);
+    m.style.left=Math.max(10,px)+'px'; m.style.top=Math.max(10,py)+'px';
+    _msgMenuEl=m; setTimeout(function(){ document.addEventListener('click',_outsideClose,true); },0);
+  }
+  function msgCopy(btn){ const t=decodeURIComponent(btn.parentElement.dataset.text||''); try{ navigator.clipboard.writeText(t); }catch(e){} closeMsgMenu(); }
+  function msgHide(btn){ const k=btn.parentElement.dataset.key||''; closeMsgMenu(); if(k) ckHideMsg(k); }
+  function msgEdit(btn){
+    const p=btn.parentElement; const t=decodeURIComponent(p.dataset.text||''); const scope=p.dataset.scope;
+    const inputId=scope==='ig'?'ig-reply':(scope==='wa'?'wa-reply':'ck-reply');
+    const inp=document.getElementById(inputId); if(inp){ inp.value=t; inp.focus(); }
+    closeMsgMenu();
+    alert('Текст вставлен в поле ответа — исправь и отправь заново.\n\n\u26A0\uFE0F Настоящего «изменения» у клиента не будет: WhatsApp и Instagram этого не позволяют. Клиент получит новое сообщение, старое у него останется. Старое можно убрать из своей переписки: нажми на него \u2192 «Удалить у меня».');
+  }
+  document.addEventListener('contextmenu',function(e){ const b=e.target.closest&&e.target.closest('.bubble'); if(b){ e.preventDefault(); showMsgMenu(b, e.clientX, e.clientY); } });
+  function _cancelPress(){ if(_msgPressTimer){ clearTimeout(_msgPressTimer); _msgPressTimer=null; } }
+  document.addEventListener('touchstart',function(e){ const b=e.target.closest&&e.target.closest('.bubble'); if(!b||!e.touches[0]) return; const t=e.touches[0]; _cancelPress(); _msgPressTimer=setTimeout(function(){ _msgPressTimer=null; showMsgMenu(b, t.clientX, t.clientY); if(navigator.vibrate) try{navigator.vibrate(18);}catch(_){}}, 480); },{passive:true});
+  document.addEventListener('touchend',_cancelPress); document.addEventListener('touchmove',_cancelPress); document.addEventListener('touchcancel',_cancelPress);
   // WhatsApp-медиа в чате сделки (формат wa_thread: m.med/m.mtype), с явным номером-аккаунтом
   function waMediaHTML(m, phone){
     const t=m.mtype, id=esc(m.med), ph=esc(phone||'');
@@ -5080,9 +5120,10 @@
     return '<a href="#" onclick="ckOpenWaMedia(\''+id+'\',\''+ph+'\');return false" style="color:#bcd2ff;display:block;margin-top:4px">📎 '+esc(m.fname||'файл')+'</a>';
   }
   function bubbleHTML(m, hideKey, waPhone){
-    const del='';   // крестик «скрыть сообщение» убран по просьбе — сообщения в диалоге не удаляются из интерфейса
     const media=m.med?waMediaHTML(m, waPhone):attHTML(m.att);   // WhatsApp (m.med) или Instagram (m.att)
-    return '<div class="bubble '+m.t+'">'+del+linkify(m.x)+media+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>';
+    const key=(typeof hideKey==='string' && hideKey.indexOf('~')>=0)?hideKey:'';
+    const meta=' data-dir="'+esc(m.t)+'" data-mkey="'+esc(key)+'" data-mtext="'+encodeURIComponent(m.x||'')+'"';
+    return '<div class="bubble '+m.t+'"'+meta+'>'+linkify(m.x)+media+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>';
   }
   // Тянем WhatsApp-медиа в чате сделки через прокси с ЯВНЫМ номером (waCur тут не задан)
   const ckWaCache={};
