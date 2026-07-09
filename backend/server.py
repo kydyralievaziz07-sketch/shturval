@@ -80,6 +80,8 @@ def load_secret():
     cfg["IG_TOKEN_BIZMART_KG"] = env("IG_TOKEN_BIZMART_KG")   # Page Access Token для @bizmart_kg
     cfg["TG_BOT_TOKEN"] = env("TG_BOT_TOKEN")        # токен Telegram-бота (для кросс-постинга)
     cfg["TG_CHANNEL_BIZMART"] = env("TG_CHANNEL_BIZMART")  # @канал или -100xxx Telegram
+    cfg["TG_BOT_USERNAME"] = env("TG_BOT_USERNAME")       # @username бота (для показа)
+    cfg["TG_WEBHOOK_SECRET"] = env("TG_WEBHOOK_SECRET")   # секрет вебхука Telegram (fail-closed при заданном)
     return cfg
 
 CFG = load_secret()
@@ -233,6 +235,8 @@ SECTION_OF = [
     ("/api/wa/reply", "chats"), ("/api/wa/botreply", "chats"), ("/api/wa/accounts", "chats"),
     ("/api/wa/template", "chats"), ("/api/wa/broadcast", "chats"),
     ("/api/wa/media", "chats"), ("/api/wa/profile", "chats"), ("/api/wa/read", "chats"),
+    ("/api/tg/conversations", "chats"), ("/api/tg/thread", "chats"), ("/api/tg/reply", "chats"),
+    ("/api/tg/broadcast", "chats"), ("/api/tg/clients", "clients"),
     ("/api/assistant", "ai"),
     ("/api/ads", "ads"),
 ]
@@ -2821,6 +2825,215 @@ def wa_broadcast(text, account=None, limit=500, template="", lang="ru", min_sile
             failed += 1
             k = str(e)[:90]; errs[k] = errs.get(k, 0) + 1
     return {"eligible": len(targets), "sent": sent, "failed": failed, "errors": errs}
+
+# ============ TELEGRAM — приём/отправка через Bot API (проще Meta: без окна 24ч, номера и подписи) ============
+TG_API = "https://api.telegram.org/bot"
+def _tg_token():
+    return CFG.get("TG_BOT_TOKEN", "") or ""
+def tg_on():
+    return bool(_tg_token())
+def _tg_acct():
+    """Наш «аккаунт» в Telegram — один бот (для связки/показа диалогов)."""
+    return CFG.get("TG_BOT_USERNAME", "") or "telegram"
+def tg_api_call(method, payload):
+    tok = _tg_token()
+    if not tok:
+        raise RuntimeError("Telegram-бот не подключён (нет TG_BOT_TOKEN).")
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(TG_API + tok + "/" + method, data=data, method="POST",
+                                 headers={"Content-Type": "application/json", "User-Agent": "Shturval/1.0"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read().decode() or "{}")
+def tg_send(chat_id, text):
+    return tg_api_call("sendMessage", {"chat_id": str(chat_id), "text": text, "disable_web_page_preview": True})
+
+_tg_names = {}
+def tg_customer_name(chat_id):
+    return _tg_names.get(str(chat_id), "")
+
+def tg_reply(account_id, customer_id, text, by="human"):
+    """Ответ клиенту в Telegram + запись в историю. account_id — наш бот, customer_id — chat_id клиента."""
+    resp = tg_send(customer_id, text)
+    try:
+        mid = str(((resp or {}).get("result") or {}).get("message_id") or "")
+    except Exception:
+        mid = ""
+    try:
+        _supa("POST", "tg_inbox", "",
+              {"company_id": COMPANY_ID, "sender_id": str(account_id), "recipient_id": str(customer_id),
+               "text": text, "mid": mid, "ts": int(time.time() * 1000), "direction": "out",
+               "status": "sent", "raw": {"by": by, "type": "text"}})
+    except Exception:
+        pass
+    return resp
+
+def _tg_name_from(frm):
+    return (" ".join([x for x in [(frm or {}).get("first_name"), (frm or {}).get("last_name")] if x]).strip()
+            or (frm or {}).get("username") or "")
+
+def tg_store_event(evt):
+    """Разобрать webhook Telegram (update) и сохранить входящее сообщение."""
+    if not isinstance(evt, dict):
+        return
+    msg = evt.get("message") or evt.get("edited_message")
+    if not isinstance(msg, dict):
+        return
+    chat = msg.get("chat") or {}; frm = msg.get("from") or {}
+    chat_id = str(chat.get("id") or frm.get("id") or "")
+    if not chat_id:
+        return
+    if _tg_seen_mid(str(msg.get("message_id") or "")):
+        return
+    nm = _tg_name_from(frm)
+    if nm:
+        _tg_names[chat_id] = nm
+    text = msg.get("text") or msg.get("caption") or ""
+    if not text:
+        for k, lbl in (("photo", "\U0001F4F7 фото"), ("voice", "\U0001F3A4 голосовое"),
+                       ("audio", "\U0001F3B5 аудио"), ("video", "\U0001F3AC видео"),
+                       ("document", "\U0001F4CE файл"), ("sticker", "\U0001F31F стикер")):
+            if msg.get(k):
+                text = lbl; break
+        if not text:
+            text = "сообщение"
+    row = {"company_id": COMPANY_ID, "sender_id": chat_id, "recipient_id": _tg_acct(),
+           "mid": str(msg.get("message_id") or ""), "text": text,
+           "ts": int(str(msg.get("date") or "0") or 0) * 1000, "direction": "in", "raw": msg}
+    _inbox_save("tg_inbox", row)
+    if msg.get("text"):
+        _tgbot_schedule(chat_id)
+
+_tg_seen = set()
+def _tg_seen_mid(mid):
+    if not mid:
+        return False
+    key = COMPANY_ID + ":" + str(mid)
+    if key in _tg_seen:
+        return True
+    _tg_seen.add(key)
+    if len(_tg_seen) > 5000:
+        _tg_seen.clear()
+    return False
+
+def _tg_pair(r):
+    if r.get("direction") == "out":
+        return str(r.get("sender_id")), str(r.get("recipient_id"))
+    return str(r.get("recipient_id")), str(r.get("sender_id"))
+
+def tg_rows(limit=1000):
+    if not supa_on():
+        return []
+    try:
+        return _supa("GET", "tg_inbox",
+                     "?company_id=eq.%s&select=*&order=ts.desc,id.desc&limit=%d" % (_q(COMPANY_ID), limit)) or []
+    except Exception:
+        return []
+
+def _build_tg_conversations():
+    convos = {}
+    for r in tg_rows():
+        acc, cust = _tg_pair(r)
+        key = acc + "|" + cust
+        if key not in convos:
+            nm = _tg_name_from((r.get("raw") or {}).get("from")) or _tg_names.get(cust) or ""
+            convos[key] = {"account_id": acc, "customer_id": cust, "account": _tg_acct(),
+                           "channel": "tg", "last_text": r.get("text") or "",
+                           "last_ts": int(r.get("ts") or 0), "last_dir": r.get("direction", "in"),
+                           "count": 0, "customer": nm or ("id" + cust)}
+        convos[key]["count"] += 1
+    return sorted(convos.values(), key=lambda c: c["last_ts"], reverse=True)
+
+def tg_conversations():
+    return cached("tg_convos", 5, _build_tg_conversations)
+
+def tg_thread(account_id, customer_id):
+    msgs = []
+    for r in tg_rows():
+        acc, cust = _tg_pair(r)
+        if acc == str(account_id) and cust == str(customer_id):
+            ts = int(r.get("ts") or 0)
+            msgs.append({"t": ("out" if r.get("direction") == "out" else "in"),
+                         "x": r.get("text", ""), "ts": ts,
+                         "tm": time.strftime("%d.%m %H:%M", time.localtime(ts / 1000)) if ts > 1e12
+                               else (time.strftime("%d.%m %H:%M", time.localtime(ts)) if ts else "")})
+    msgs.sort(key=lambda m: m["ts"])
+    return {"msgs": msgs, "customer": tg_customer_name(customer_id) or ("id" + str(customer_id))}
+
+def tg_clients_base():
+    out = []
+    for c in tg_conversations():
+        out.append({"chat_id": c.get("customer_id") or "", "name": c.get("customer") or "",
+                    "last_ts": c.get("last_ts") or 0, "count": c.get("count") or 0})
+    return out
+
+def tg_broadcast(text, limit=500):
+    """Рассылка в Telegram — без окна 24ч: можно писать всем, кто хоть раз писал боту."""
+    targets = tg_conversations()[:limit]
+    sent = 0; failed = 0; errs = {}
+    for c in targets:
+        try:
+            tg_reply(_tg_acct(), c["customer_id"], text, by="human")
+            sent += 1; time.sleep(0.3)
+        except Exception as e:
+            failed += 1; k = str(e)[:90]; errs[k] = errs.get(k, 0) + 1
+    return {"eligible": len(targets), "sent": sent, "failed": failed, "errors": errs}
+
+# ===== ИИ-бот в Telegram (тот же «Акылай»; мгновенный режим, как в Instagram) =====
+def _tgbot_history(chat_id, n=40):
+    if not supa_on():
+        return []
+    try:
+        rows = _supa("GET", "tg_inbox",
+                     "?company_id=eq.%s&or=(sender_id.eq.%s,recipient_id.eq.%s)&order=ts.desc&limit=%d&select=text,direction,raw,ts"
+                     % (_q(COMPANY_ID), _q(str(chat_id)), _q(str(chat_id)), int(n))) or []
+        return list(reversed(rows))
+    except Exception:
+        return []
+
+TGBOT_DELAY = 5.0
+_tgbot_timers = {}
+_tgbot_lock = threading.Lock()
+def _tgbot_schedule(chat_id):
+    key = str(chat_id)
+    with _tgbot_lock:
+        t = _tgbot_timers.get(key)
+        if t:
+            t.cancel()
+        nt = threading.Timer(TGBOT_DELAY, _tgbot_fire, args=(chat_id, key))
+        nt.daemon = True
+        _tgbot_timers[key] = nt
+        nt.start()
+def _tgbot_fire(chat_id, key):
+    with _tgbot_lock:
+        _tgbot_timers.pop(key, None)
+    try:
+        tgbot_handle(chat_id)
+    except Exception:
+        pass
+def tgbot_handle(chat_id):
+    try:
+        s = _igbot_get()
+        if not s["enabled"] or not (CFG.get("ANTHROPIC_API_KEY") and supa_on()):
+            return
+        hist = _tgbot_history(chat_id, 40)
+        hm = _hhours(s.get("handoff_min"), 5)
+        cutoff = (time.time() - hm * 60) * 1000
+        for r in hist:
+            if (r.get("direction") == "out" and (r.get("raw") or {}).get("by") == "human"
+                    and int(_num(r.get("ts")) or 0) >= cutoff):
+                _igbot_bump("handoffs")
+                return
+        reply = _igbot_generate(hist, s)
+        if not reply:
+            return
+        try:
+            tg_reply(_tg_acct(), chat_id, reply, by="bot")
+        except Exception as e:
+            _igbot_log_error("Отправка в Telegram", str(e))
+            return
+        _igbot_bump("replies")
+    except Exception:
+        pass
 
 # ====== ИИ-БОТ WhatsApp — тот же «Акылай», что и в Instagram (общие настройки и правила) ======
 def _wabot_history(phone_id, customer, n=40):
@@ -5560,6 +5773,27 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             self.send_response(200); self.send_header("Content-Type", "text/plain")
             self.end_headers(); self.wfile.write(b"EVENT_RECEIVED"); return
+        if self.path.startswith("/api/tg/webhook"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(length) if length else b""
+            except Exception:
+                raw = b""
+            secret = CFG.get("TG_WEBHOOK_SECRET", "")
+            if secret:
+                got = self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+                if not hmac.compare_digest(secret, got or ""):
+                    self.send_response(403); self.end_headers(); return
+            try:
+                evt = json.loads(raw or b"{}")
+            except Exception:
+                evt = {}
+            try:
+                tg_store_event(evt)
+            except Exception:
+                pass
+            self.send_response(200); self.send_header("Content-Type", "text/plain")
+            self.end_headers(); self.wfile.write(b"OK"); return
         if self.path.startswith("/api/"):
             u = self._user()
             if not u:
@@ -5676,6 +5910,38 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send(200, {"ok": False, "error": "WhatsApp: " + str(e)})
             return self._send(200, {"ok": True})
+        if self.path.startswith("/api/tg/reply"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            acc = str(body.get("account_id") or _tg_acct()); cust = str(body.get("customer_id") or "")
+            text = (body.get("text") or "").strip()
+            if not cust or not text:
+                return self._send(400, {"error": "нужны customer_id и text"})
+            try:
+                tg_reply(acc, cust, text)
+            except Exception as e:
+                return self._send(200, {"ok": False, "error": "Telegram: " + str(e)})
+            return self._send(200, {"ok": True})
+        if self.path.startswith("/api/tg/broadcast"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            text = (body.get("text") or "").strip()
+            try:
+                limit = max(1, min(int(body.get("limit") or 500), 500))
+            except Exception:
+                limit = 500
+            if not text:
+                return self._send(400, {"error": "Введите текст рассылки"})
+            try:
+                return self._send(200, tg_broadcast(text, limit=limit))
+            except Exception as e:
+                return self._send(500, {"error": "Рассылка не удалась: %s" % e})
         if self.path.startswith("/api/wa/template"):
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -6567,6 +6833,26 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, wa_thread(acc, cust))
             except Exception as e:
                 return self._send(200, {"msgs": [], "error": str(e)})
+        if self.path.startswith("/api/tg/conversations"):
+            try:
+                return self._send(200, {"conversations": tg_conversations(),
+                                        "accounts": [{"display": _tg_acct()}] if tg_on() else []})
+            except Exception as e:
+                return self._send(200, {"conversations": [], "error": str(e)})
+        if self.path.startswith("/api/tg/thread"):
+            p = _parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            acc = (p.get("account") or [""])[0]; cust = (p.get("customer") or [""])[0]
+            if not cust:
+                return self._send(400, {"error": "нужен customer"})
+            try:
+                return self._send(200, tg_thread(acc or _tg_acct(), cust))
+            except Exception as e:
+                return self._send(200, {"msgs": [], "error": str(e)})
+        if self.path.startswith("/api/tg/clients"):
+            try:
+                return self._send(200, {"clients": tg_clients_base()})
+            except Exception as e:
+                return self._send(200, {"clients": [], "error": str(e)})
         if self.path.startswith("/api/wa/media"):
             # Прокси: скачиваем медиа из Meta (нужен токен) и отдаём браузеру для показа/прослушивания.
             p = _parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}

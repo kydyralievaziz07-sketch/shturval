@@ -607,7 +607,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.24.0<br>Меню по сообщению (долгий тап / правый клик) в Instagram, WhatsApp и Сделках: копировать, изменить (переотправить), удалить у себя</div>
+      Штурвал v4.25.0<br>Telegram: приём/ответ/ИИ-бот «Акылай» в пульте рядом с Instagram и WhatsApp (нужен токен бота)</div>
   </aside>
 
   <!-- MAIN -->
@@ -4139,7 +4139,7 @@
     const mk=(c,ch)=>({
       id:c.account_id+'|'+c.customer_id,
       account_id:c.account_id, customer_id:c.customer_id, account:c.account,
-      channel:c.channel||ch,                             // канал: 'ig' (Instagram) или 'wa' (WhatsApp)
+      channel:c.channel||ch,                             // канал: 'ig' (Instagram), 'wa' (WhatsApp) или 'tg' (Telegram)
       name:c.customer||c.customer_id,
       ts:(c.last_ts>1e12?Math.floor(c.last_ts/1000):(c.last_ts||0)),
       time:c.last_ts?igShortTime(c.last_ts):'',
@@ -4148,14 +4148,16 @@
       stage:(c.last_dir==='out'?'В обработке':'')        // мы ответили → «В обработке»; иначе новая
     });
     try{
-      const [dig,dwa]=await Promise.all([
+      const [dig,dwa,dtg]=await Promise.all([
         apiFetch('/api/ig/conversations?_='+Date.now(),{},ONEC_BASE).then(r=>r.json()).catch(()=>({})),
-        apiFetch('/api/wa/conversations?_='+Date.now(),{},ONEC_BASE).then(r=>r.json()).catch(()=>({}))
+        apiFetch('/api/wa/conversations?_='+Date.now(),{},ONEC_BASE).then(r=>r.json()).catch(()=>({})),
+        apiFetch('/api/tg/conversations?_='+Date.now(),{},ONEC_BASE).then(r=>r.json()).catch(()=>({}))
       ]);
       const ig=(dig.conversations||[]).map(c=>mk(c,'ig'));
       const wa=(dwa.conversations||[]).map(c=>mk(c,'wa'));
-      COCKPIT_CHATS=ig.concat(wa).sort((a,b)=>(b.ts||0)-(a.ts||0));   // свежие — наверх, каналы вперемешку
-      LAST_CHAT_ERR=(!COCKPIT_CHATS.length&&(dig.error||dwa.error))?(dig.error||dwa.error):'';
+      const tg=(dtg.conversations||[]).map(c=>mk(c,'tg'));
+      COCKPIT_CHATS=ig.concat(wa).concat(tg).sort((a,b)=>(b.ts||0)-(a.ts||0));   // свежие — наверх, каналы вперемешку
+      LAST_CHAT_ERR=(!COCKPIT_CHATS.length&&(dig.error||dwa.error||dtg.error))?(dig.error||dwa.error||dtg.error):'';
     }
     catch(e){ COCKPIT_CHATS=[]; LAST_CHAT_ERR='нет связи с сервером'; }
     autoClassify();
@@ -4277,6 +4279,7 @@
   function chanBadge(ch){
     if(ch==='wa') return ' <span style="font-size:11px;color:#25d366;font-weight:400">🟢 WhatsApp</span>';
     if(ch==='ig') return ' <span style="font-size:11px;color:var(--accent);font-weight:400">📷 Instagram</span>';
+    if(ch==='tg') return ' <span style="font-size:11px;color:#2AABEE;font-weight:400">✈️ Telegram</span>';
     return '';
   }
   function renderLeft(){
@@ -5015,11 +5018,12 @@
   function ckCloseConvo(){ document.body.classList.remove('ck-open'); ckCurId=null; ckCurName=''; const h=document.getElementById('ck-head'); if(h) h.innerHTML='\u2190 Выберите клиента в списке слева'; const m=document.getElementById('ck-msgs'); if(m) m.innerHTML=''; renderLeft(); }
   function ckHead(){
     const head=document.getElementById('ck-head'); if(!head) return; const deal=findDealByName(ckCurName);
-    const curChat=COCKPIT_CHATS.find(x=>x.id===ckCurId); const acc=curChat?curChat.account:''; const isWa=curChat&&curChat.channel==='wa';
+    const curChat=COCKPIT_CHATS.find(x=>x.id===ckCurId); const acc=curChat?curChat.account:''; const isWa=curChat&&curChat.channel==='wa'; const isTg=curChat&&curChat.channel==='tg';
+    const chanTxt=isWa?'<span style="font-size:12px;color:#25d366">🟢 WhatsApp</span>':(isTg?'<span style="font-size:12px;color:#2AABEE">\u2708\uFE0F Telegram</span>':(acc?'<span style="font-size:12px;color:var(--accent)">📷 пишет на @'+esc(acc)+'</span>':''));
     head.innerHTML='<button class="btn ghost ck-back" onclick="ckCloseConvo()" title="Назад к списку">\u2190</button><span style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
         '<span style="cursor:pointer" onclick="openDealForClient()" title="Открыть карточку заказа">📋 <b>'+esc(ckCurName||'—')+'</b>'+(deal?' · <span style="color:var(--muted)">'+esc(deal.status)+'</span>':'')+'</span>'+
-        (acc?'<span style="font-size:12px;color:'+(isWa?'#25d366':'var(--accent)')+'">'+(isWa?'🟢 WhatsApp':'📷')+' пишет на '+(isWa?esc(acc):'@'+esc(acc))+'</span>':'')+
-        (isWa?'':igBtnHTML(ckCurName))+
+        chanTxt+
+        ((isWa||isTg)?'':igBtnHTML(ckCurName))+
       '</span>'+
       (ckCurName?'<span style="display:flex;align-items:center;gap:5px;font-size:13px">💰 <input type="number" value="'+(deal?Math.round(dealAmount(deal)):0)+'" placeholder="сумма счёта" style="width:120px;padding:5px 8px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text)" onchange="setAmount(this.value)"> сом</span>':'');
   }
@@ -5143,7 +5147,7 @@
   }
   async function ckOpenWaMedia(id, phone){ try{ const u=await ckFetchWaMedia(id, phone); window.open(u,'_blank'); }catch(e){ alert('Не удалось открыть файл.'); } }
   // база API диалога по каналу чата: WhatsApp → /api/wa, иначе Instagram → /api/ig
-  function ckBase(id){ const c=COCKPIT_CHATS.find(x=>x.id===(id||ckCurId)); return (c&&c.channel==='wa')?'/api/wa':'/api/ig'; }
+  function ckBase(id){ const c=COCKPIT_CHATS.find(x=>x.id===(id||ckCurId)); const ch=c&&c.channel; return ch==='wa'?'/api/wa':(ch==='tg'?'/api/tg':'/api/ig'); }
   async function loadConvoMsgs(id, silent){
     const box=document.getElementById('ck-msgs'); if(!box||!id) return;
     const upd=document.getElementById('ck-upd');
@@ -5202,6 +5206,7 @@
   function ckWindowCheck(msgs){
     const w=document.getElementById('ck-warn'); if(!w) return;
     const cc=COCKPIT_CHATS.find(x=>x.id===ckCurId); const isWa=cc&&cc.channel==='wa';
+    if(cc&&cc.channel==='tg'){ ckWindowOpen=true; w.style.display='none'; w.innerHTML=''; return; }  // Telegram — окна нет, пишем всегда
     const NET=isWa?'WhatsApp':'Instagram';
     const LIMIT=isWa?24:168;          // WhatsApp — 24 часа; Instagram — 7 дней (режим «ответ живого агента»)
     const LIMTXT=isWa?'24 часа':'7 дней';
