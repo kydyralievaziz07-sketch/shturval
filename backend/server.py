@@ -76,6 +76,10 @@ def load_secret():
     cfg["META_PAGE_ID"] = env("META_PAGE_ID")        # id Страницы Facebook (реклама привязана к странице)
     cfg["META_IG_ID"] = env("META_IG_ID")            # id бизнес-аккаунта Instagram для рекламы (если пусто — берём IG_ACCOUNT_ID)
     cfg["IG_USERNAME"] = env("IG_USERNAME")          # ник Instagram (для ссылки по умолчанию)
+    # Bizmart автопостинг — отдельный токен страницы Facebook (постоянный, не истекает)
+    cfg["IG_TOKEN_BIZMART_KG"] = env("IG_TOKEN_BIZMART_KG")   # Page Access Token для @bizmart_kg
+    cfg["TG_BOT_TOKEN"] = env("TG_BOT_TOKEN")        # токен Telegram-бота (для кросс-постинга)
+    cfg["TG_CHANNEL_BIZMART"] = env("TG_CHANNEL_BIZMART")  # @канал или -100xxx Telegram
     return cfg
 
 CFG = load_secret()
@@ -2057,6 +2061,164 @@ def igbot_source_del(url):
     srcs = [x for x in (s.get("sources") or []) if x.get("url") != (url or "")]
     _igbot_set({"sources": srcs})
     return {"ok": True, "count": len(srcs)}
+
+# ====== BIZMART АВТОПОСТИНГ (Instagram @bizmart_kg + Telegram) ======
+# Очередь хранится в Supabase (bizmart_post_queue).
+# Публикация через Facebook Graph API (graph.facebook.com) — Business account через Page Token.
+# Telegram — через Bot API (если TG_BOT_TOKEN задан).
+
+BIZ_IG_GRAPH = "https://graph.facebook.com/v21.0"
+BIZ_IG_ID = "17841467596674317"   # @bizmart_kg
+
+def _biz_ig_token():
+    return CFG.get("IG_TOKEN_BIZMART_KG", "")
+
+def _biz_ig_req(method, path, params=None, body=None):
+    """Запрос к Facebook Graph API для @bizmart_kg."""
+    token = _biz_ig_token()
+    qs = urllib.parse.urlencode({**(params or {}), "access_token": token})
+    url = BIZ_IG_GRAPH + path + ("?" + qs if qs else "")
+    data = json.dumps(body, ensure_ascii=False).encode() if body else None
+    headers = {"Content-Type": "application/json", "User-Agent": "Shturval/1.0"}
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read().decode())
+
+def _biz_ig_poll_status(creation_id, max_wait=120):
+    """Ждать пока медиа-контейнер будет готов (status_code=FINISHED)."""
+    deadline = time.time() + max_wait
+    while time.time() < deadline:
+        r = _biz_ig_req("GET", "/%s" % creation_id, {"fields": "status_code"})
+        sc = r.get("status_code", "")
+        if sc == "FINISHED":
+            return True
+        if sc == "ERROR":
+            raise Exception("Instagram вернул ERROR при обработке медиа")
+        time.sleep(5)
+    raise Exception("Таймаут ожидания обработки медиа Instagram")
+
+def biz_ig_publish(row):
+    """Опубликовать один пост из очереди в @bizmart_kg.
+    row: dict из bizmart_post_queue (media_type, media_url, cover_url, caption).
+    Возвращает Instagram media_id при успехе."""
+    mtype = (row.get("media_type") or "PHOTO").upper()
+    caption = row.get("caption") or ""
+    media_url = row.get("media_url") or ""
+    cover_url = row.get("cover_url") or ""
+    ig_id = row.get("ig_account_id") or BIZ_IG_ID
+
+    if mtype == "PHOTO":
+        body = {"image_url": media_url, "caption": caption}
+        r = _biz_ig_req("POST", "/%s/media" % ig_id, body=body)
+        cid = r.get("id") or r.get("creation_id")
+        if not cid:
+            raise Exception("Нет creation_id: %s" % r)
+        _biz_ig_poll_status(cid)
+        pub = _biz_ig_req("POST", "/%s/media_publish" % ig_id, body={"creation_id": cid})
+        return pub.get("id")
+
+    elif mtype == "REELS":
+        body = {"media_type": "REELS", "video_url": media_url, "caption": caption}
+        if cover_url:
+            body["cover_url"] = cover_url
+        r = _biz_ig_req("POST", "/%s/media" % ig_id, body=body)
+        cid = r.get("id") or r.get("creation_id")
+        if not cid:
+            raise Exception("Нет creation_id: %s" % r)
+        # Reels обрабатываются дольше
+        _biz_ig_poll_status(cid, max_wait=300)
+        pub = _biz_ig_req("POST", "/%s/media_publish" % ig_id, body={"creation_id": cid})
+        return pub.get("id")
+
+    elif mtype == "STORY":
+        body = {"media_type": "STORIES", "image_url": media_url}
+        r = _biz_ig_req("POST", "/%s/media" % ig_id, body=body)
+        cid = r.get("id") or r.get("creation_id")
+        if not cid:
+            raise Exception("Нет creation_id: %s" % r)
+        _biz_ig_poll_status(cid)
+        pub = _biz_ig_req("POST", "/%s/media_publish" % ig_id, body={"creation_id": cid})
+        return pub.get("id")
+
+    elif mtype == "CAROUSEL":
+        # media_url содержит URL через запятую (до 10 фото)
+        urls = [u.strip() for u in media_url.split(",") if u.strip()]
+        child_ids = []
+        for u in urls[:10]:
+            r = _biz_ig_req("POST", "/%s/media" % ig_id,
+                            body={"image_url": u, "is_carousel_item": True})
+            cid = r.get("id") or r.get("creation_id")
+            if cid:
+                child_ids.append(cid)
+        if not child_ids:
+            raise Exception("Не удалось создать элементы карусели")
+        r = _biz_ig_req("POST", "/%s/media" % ig_id,
+                        body={"media_type": "CAROUSEL", "children": ",".join(child_ids),
+                              "caption": caption})
+        cid = r.get("id") or r.get("creation_id")
+        if not cid:
+            raise Exception("Нет creation_id карусели: %s" % r)
+        _biz_ig_poll_status(cid)
+        pub = _biz_ig_req("POST", "/%s/media_publish" % ig_id, body={"creation_id": cid})
+        return pub.get("id")
+
+    else:
+        raise Exception("Неизвестный тип медиа: %s" % mtype)
+
+def _biz_tg_post(row, ig_media_id=None):
+    """Отправить пост в Telegram-канал Бизмарта (если TG_BOT_TOKEN задан)."""
+    bot_token = CFG.get("TG_BOT_TOKEN", "")
+    channel = CFG.get("TG_CHANNEL_BIZMART", "")
+    if not bot_token or not channel:
+        return
+    mtype = (row.get("media_type") or "PHOTO").upper()
+    caption = row.get("caption") or ""
+    media_url = row.get("media_url") or ""
+    try:
+        if mtype in ("PHOTO", "STORY"):
+            body = {"chat_id": channel, "photo": media_url, "caption": caption[:1024]}
+            endpoint = "sendPhoto"
+        elif mtype == "REELS":
+            body = {"chat_id": channel, "video": media_url, "caption": caption[:1024]}
+            endpoint = "sendVideo"
+        else:
+            body = {"chat_id": channel, "text": caption[:4096]}
+            endpoint = "sendMessage"
+        url = "https://api.telegram.org/bot%s/%s" % (bot_token, endpoint)
+        data = json.dumps(body, ensure_ascii=False).encode()
+        req = urllib.request.Request(url, data=data, method="POST",
+                                     headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=20).read()
+    except Exception as e:
+        print("[biz_tg] Ошибка отправки в Telegram:", e)
+
+def _biz_post_scheduler():
+    """Фоновый поток: каждые 10 минут проверяет очередь и публикует посты."""
+    while True:
+        try:
+            if supa_on() and _biz_ig_token():
+                now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                rows = _supa("GET", "bizmart_post_queue",
+                             "?status=eq.queued&scheduled_at=lte.%s&order=scheduled_at.asc&limit=5" % now_iso)
+                for row in (rows or []):
+                    rid = row["id"]
+                    try:
+                        media_id = biz_ig_publish(row)
+                        _supa("PATCH", "bizmart_post_queue",
+                              "?id=eq.%s" % rid,
+                              {"status": "published",
+                               "published_at": now_iso,
+                               "error": "ig_media_id:%s" % media_id})
+                        _biz_tg_post(row, media_id)
+                        print("[biz_post] Опубликовано:", rid, "→ IG:", media_id)
+                    except Exception as e:
+                        _supa("PATCH", "bizmart_post_queue",
+                              "?id=eq.%s" % rid,
+                              {"status": "failed", "error": str(e)[:500]})
+                        print("[biz_post] Ошибка публикации %s: %s" % (rid, e))
+        except Exception as e:
+            print("[biz_post] Планировщик: ошибка:", e)
+        time.sleep(600)   # каждые 10 минут
 
 def _igbot_scheduler():
     """Фоновый поток: авто-обучение по расписанию (learn_every_days), запасной ответ
@@ -5302,6 +5464,47 @@ class Handler(BaseHTTPRequestHandler):
         return self._user() is not None
 
     def do_POST(self):
+        # Bizmart: добавить пост в очередь
+        if self.path.startswith("/api/bizmart/queue"):
+            user = self._auth()
+            if not user:
+                return self._send(401, {"error": "не авторизован"})
+            if not supa_on():
+                return self._send(503, {"error": "Supabase не настроен"})
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                p = json.loads(self.rfile.read(length)) if length else {}
+            except Exception:
+                return self._send(400, {"error": "неверный JSON"})
+            action = p.get("action", "add")
+            if action == "delete":
+                rid = p.get("id")
+                if not rid:
+                    return self._send(400, {"error": "нет id"})
+                _supa("DELETE", "bizmart_post_queue", "?id=eq.%s" % rid)
+                return self._send(200, {"ok": True})
+            if action == "retry":
+                rid = p.get("id")
+                if not rid:
+                    return self._send(400, {"error": "нет id"})
+                _supa("PATCH", "bizmart_post_queue", "?id=eq.%s" % rid,
+                      {"status": "queued", "error": None})
+                return self._send(200, {"ok": True})
+            # action == "add"
+            row = {
+                "scheduled_at": p.get("scheduled_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "media_type": (p.get("media_type") or "PHOTO").upper(),
+                "media_url": p.get("media_url") or "",
+                "cover_url": p.get("cover_url") or None,
+                "caption": p.get("caption") or "",
+                "ig_account_id": p.get("ig_account_id") or BIZ_IG_ID,
+                "tg_channel": p.get("tg_channel") or None,
+                "status": "queued",
+            }
+            if not row["media_url"]:
+                return self._send(400, {"error": "нет media_url"})
+            result = _supa("POST", "bizmart_post_queue", "", row)
+            return self._send(200, {"ok": True, "row": result[0] if result else {}})
         # Instagram webhook — ПУБЛИЧНЫЙ (Meta шлёт события без нашего логина). Отвечаем быстро 200.
         if self.path.startswith("/api/ig/webhook"):
             try:
@@ -6428,6 +6631,15 @@ class Handler(BaseHTTPRequestHandler):
                                     "default_prompt": IGBOT_DEFAULT_PROMPT,
                                     "stats": kv_load("igbot_stats") or {},
                                     "errors": kv_load("igbot_errors") or []})
+        if self.path.startswith("/api/bizmart/queue"):
+            if not supa_on():
+                return self._send(503, {"error": "Supabase не настроен"})
+            try:
+                rows = _supa("GET", "bizmart_post_queue",
+                             "?order=scheduled_at.asc&limit=100&select=id,scheduled_at,media_type,media_url,cover_url,caption,ig_account_id,tg_channel,status,error,created_at,published_at")
+                return self._send(200, {"queue": rows or []})
+            except Exception as e:
+                return self._send(500, {"error": str(e)})
         if self.path.startswith("/api/chats"):
             if CFG.get("CHATPLACE_KEY"):
                 try:
@@ -6470,4 +6682,8 @@ if __name__ == "__main__":
     # авто-обучение ИИ-бота по расписанию
     if CFG.get("ANTHROPIC_API_KEY"):
         threading.Thread(target=_igbot_scheduler, daemon=True).start()
+    # Bizmart автопостинг — публикует из очереди по расписанию
+    if CFG.get("IG_TOKEN_BIZMART_KG") and supa_on():
+        threading.Thread(target=_biz_post_scheduler, daemon=True).start()
+        print("  Bizmart автопостинг: активен ✅")
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
