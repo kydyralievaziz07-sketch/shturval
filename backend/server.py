@@ -5679,7 +5679,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         # Bizmart: добавить пост в очередь
         if self.path.startswith("/api/bizmart/queue"):
-            user = self._auth()
+            user = self._user()
             if not user:
                 return self._send(401, {"error": "не авторизован"})
             if not supa_on():
