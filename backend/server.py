@@ -6605,6 +6605,53 @@ class Handler(BaseHTTPRequestHandler):
                 "name": (u or {}).get("name", ""), "sections": (u or {}).get("sections", []),
                 "role": (u or {}).get("role", ""), "department": (u or {}).get("department", ""),
                 "owner": bool((u or {}).get("owner")), "plan_day": (u or {}).get("plan_day", 0)})
+        # Instagram OAuth — ПУБЛИЧНЫЙ (браузер открывает напрямую без заголовков авторизации)
+        if self.path.startswith("/api/bizmart/ig-connect"):
+            import urllib.parse as _up
+            APP_ID = "1565669398224182"
+            REDIRECT = "https://shturval-backend.onrender.com/api/bizmart/ig-callback"
+            SCOPE = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_messages,instagram_business_manage_comments"
+            auth_url = ("https://api.instagram.com/oauth/authorize?client_id=%s&redirect_uri=%s&scope=%s&response_type=code"
+                        % (APP_ID, _up.quote(REDIRECT), SCOPE))
+            self.send_response(302); self.send_header("Location", auth_url)
+            self.send_header("Access-Control-Allow-Origin", "*"); self.end_headers(); return
+        if self.path.startswith("/api/bizmart/ig-callback"):
+            import urllib.parse as _up
+            qs2 = _up.parse_qs(_up.urlparse(self.path).query)
+            code = (qs2.get("code") or [""])[0]
+            if not code:
+                err = (qs2.get("error_description") or ["нет code"])[0]
+                self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.end_headers()
+                self.wfile.write(("<h2>Ошибка: %s</h2>" % err).encode()); return
+            try:
+                APP_ID = "1565669398224182"
+                APP_SECRET = CFG.get("IG_APP_SECRET_BIZMART_POSTING", "")
+                REDIRECT = "https://shturval-backend.onrender.com/api/bizmart/ig-callback"
+                data = _up.urlencode({"client_id": APP_ID, "client_secret": APP_SECRET,
+                    "grant_type": "authorization_code", "redirect_uri": REDIRECT, "code": code}).encode()
+                req = urllib.request.Request("https://api.instagram.com/oauth/access_token", data=data, method="POST")
+                sl = json.loads(urllib.request.urlopen(req, timeout=20).read())
+                sl_token = sl.get("access_token", "")
+                if not sl_token:
+                    raise Exception("Нет access_token: %s" % sl)
+                ll_url = ("https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=%s&access_token=%s"
+                          % (APP_SECRET, _up.quote(sl_token)))
+                ll = json.loads(urllib.request.urlopen(urllib.request.Request(ll_url, headers={"User-Agent": "Shturval/1.0"}), timeout=20).read())
+                ll_token = ll.get("access_token", "")
+                if not ll_token:
+                    raise Exception("Нет долгого токена: %s" % ll)
+                ig_id, username = ig_resolve(ll_token)
+                if not ig_id:
+                    raise Exception("Не удалось получить ig_id")
+                _supa("POST", "ig_accounts", "?on_conflict=company_id,ig_id",
+                      {"company_id": COMPANY_ID, "ig_id": ig_id, "username": username, "token": ll_token})
+                self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.end_headers()
+                self.wfile.write(("<h2>✅ Готово!</h2><p>@%s подключён. Токен сохранён. Можно закрыть страницу.</p>" % username).encode())
+                print("[ig-callback] Токен @%s (%s) сохранён" % (username, ig_id))
+            except Exception as e:
+                self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.end_headers()
+                self.wfile.write(("<h2>Ошибка</h2><pre>%s</pre>" % str(e)).encode())
+            return
         # всё остальное под /api/ — нужен вход и доступ к разделу
         if self.path.startswith("/api/"):
             u = self._user()
