@@ -2071,7 +2071,7 @@ def igbot_source_del(url):
 # Публикация через Facebook Graph API (graph.facebook.com) — Business account через Page Token.
 # Telegram — через Bot API (если TG_BOT_TOKEN задан).
 
-BIZ_IG_ID = "17841467596674317"   # @bizmart_kg
+BIZ_IG_ID = "26536556892687654"   # @bizmart_kg (Instagram Login ID)
 
 def _biz_ig_token(ig_id=None):
     """Токен для публикации: сначала из ig_accounts (Instagram Login), потом из env."""
