@@ -607,7 +607,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.25.0<br>Telegram: приём/ответ/ИИ-бот «Акылай» в пульте рядом с Instagram и WhatsApp (нужен токен бота)</div>
+      Штурвал v4.26.0<br>Постоянный вход: «?key=» теперь сохраняется навсегда + кнопка «Моя ссылка входа» в настройках</div>
   </aside>
 
   <!-- MAIN -->
@@ -1237,6 +1237,15 @@
           </div>
         </div>
         <div id="set-acc-msg" style="font-size:13px;margin-top:10px;min-height:16px"></div>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
+          <label style="font-size:12px;color:var(--muted)">Личная ссылка входа — сохрани как закладку, чтобы не вводить пароль</label>
+          <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+            <input type="text" id="set-mylink" readonly style="flex:1;min-width:200px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--muted);font-size:12px" placeholder="нажми «Показать»">
+            <button class="btn ghost" onclick="genMyLink()">🔗 Показать</button>
+            <button class="btn" id="set-mylink-copy" onclick="copyMyLink()" style="display:none">📋 Копировать</button>
+          </div>
+          <div id="set-mylink-msg" style="font-size:12px;color:var(--muted);margin-top:6px">Открой эту ссылку — попадёшь сразу в Штурвал без пароля. Сохрани в закладках или на рабочем столе телефона.</div>
+        </div>
       </div>
 
       <!-- Авто Рент: валюта + оплата менеджеров (только владелец проката) -->
@@ -2107,6 +2116,23 @@
       m.style.color='var(--green)'; m.textContent='✅ Логин изменён на «'+(d.login||nl)+'»';
     }catch(e){ m.style.color='var(--red)'; m.textContent='Не удалось: '+(e.message||e); }
   }
+  function genMyLink(){
+    var pw=getPw(), lg=getLg(); if(!pw){ alert('Сначала войдите в систему'); return; }
+    var raw=lg?(lg+':'+pw):pw;
+    var tok=btoa(unescape(encodeURIComponent(raw)));
+    var url=location.origin+location.pathname+'?key='+encodeURIComponent(tok);
+    var inp=document.getElementById('set-mylink'); if(inp) inp.value=url;
+    var btn=document.getElementById('set-mylink-copy'); if(btn) btn.style.display='';
+    var msg=document.getElementById('set-mylink-msg'); if(msg) msg.textContent='Ссылка готова. Нажми «Копировать», отправь себе в WhatsApp/Telegram и сохрани как закладку.';
+  }
+  function copyMyLink(){
+    var inp=document.getElementById('set-mylink'); if(!inp||!inp.value) return;
+    try{ navigator.clipboard.writeText(inp.value).then(function(){
+      var msg=document.getElementById('set-mylink-msg'); if(msg){ msg.style.color='var(--green)'; msg.textContent='✅ Ссылка скопирована! Открой её — попадёшь без пароля.'; }
+    }); }catch(e){ inp.select(); document.execCommand('copy');
+      var msg=document.getElementById('set-mylink-msg'); if(msg){ msg.style.color='var(--green)'; msg.textContent='✅ Скопировано!'; }
+    }
+  }
   function showLogin(show){
     const el=document.getElementById('login');
     if(el) el.style.display = show ? 'flex' : 'none';
@@ -2163,9 +2189,10 @@
         var dec=_kp; try{ dec=decodeURIComponent(escape(atob(_kp))); }catch(e){ dec=_kp; }
         var _lgv='', _pwv=dec;
         if(dec.indexOf(':')>0){ var ix=dec.indexOf(':'); _lgv=dec.slice(0,ix); _pwv=dec.slice(ix+1); }
-        // вход по ссылке — ТОЛЬКО для этой вкладки (sessionStorage), не трогаем основной вход
+        // вход по ссылке — сохраняем постоянно (localStorage+cookie) и на сессию (sessionStorage)
+        _lsSet(LG_KEY,_lgv); _lsSet(PW_KEY,_pwv); _setCk(LG_KEY,_lgv); _setCk(PW_KEY,_pwv);
         _ssSet(LG_KEY,_lgv); _ssSet(PW_KEY,_pwv);
-        try{ sessionStorage.removeItem(USER_KEY); }catch(e){}   // профиль перезапросим под этот вход
+        try{ sessionStorage.removeItem(USER_KEY); localStorage.removeItem('shturval_user'); }catch(e){}   // профиль перезапросим
       }
     }catch(e){}
     const hasCreds=!!getPw(); let cached=getCachedUser();
