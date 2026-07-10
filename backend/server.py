@@ -3195,6 +3195,16 @@ def _wb_backup_load(key):
     except Exception:
         return None
 
+# Когда WB лимитирует (429), нужно помнить «до какого времени ждать» ПЕРЕЖИВАЯ рестарт —
+# иначе каждый деплой сбрасывает память и снова бьёт по ещё не остывшему лимиту, продлевая
+# его самому себе. Это отдельный, лёгкий (не сжатый) снимок — просто одно число.
+def _wb_next_try_save(key, next_try):
+    kv_save(key, {"next_try": next_try})
+
+def _wb_next_try_load(key):
+    v = kv_load(key)
+    return (v or {}).get("next_try", 0)
+
 def wb_token(company):
     """Ключ WB читаем напрямую из окружения (WB_TOKEN_<COMPANY заглавными>), а не через
     CFG — CFG собирает только заранее перечисленный список ключей (load_secret), и держать
@@ -3300,6 +3310,7 @@ def _wb_refresh(company):
         cur["t"] = time.time(); cur["error"] = str(e)
         cur["next_try"] = time.time() + e.retry_after + 5
         WB_CACHE[company] = cur
+        _wb_next_try_save("wb_goods_wait_" + company, cur["next_try"])
     except Exception as e:
         cur = WB_CACHE.get(company) or {"goods": [], "cats": {}}
         cur["t"] = time.time()
@@ -3310,11 +3321,19 @@ def _wb_ensure(company):
     cur = WB_CACHE.get(company)
     if cur is None:
         b = _wb_backup_load("wb_goods_" + company)   # холодный старт — сразу отдаём снимок из базы
-        if b and b.get("goods"):
-            WB_CACHE[company] = {"t": 0.0, "goods": b["goods"], "cats": b.get("cats") or {}, "from_backup": True}
+        wait_until = _wb_next_try_load("wb_goods_wait_" + company)
+        base = {"t": 0.0, "goods": (b or {}).get("goods") or [], "cats": (b or {}).get("cats") or {},
+                "from_backup": bool(b)}
+        if wait_until and time.time() < wait_until:
+            # ещё не остыл лимит (переживает рестарт!) — не бьём по WB, просто отдаём снимок
+            base["next_try"] = wait_until
+            base["error"] = "Wildberries временно ограничила частоту запросов"
+            WB_CACHE[company] = base
+        elif b and b.get("goods"):
+            WB_CACHE[company] = base
             threading.Thread(target=_wb_refresh, args=(company,), daemon=True).start()
         else:
-            _wb_refresh(company)      # ни памяти, ни снимка в базе — тянем живьём (синхронно)
+            _wb_refresh(company)      # ни памяти, ни снимка в базе, лимит не активен — тянем живьём
     elif time.time() - cur.get("t", 0) > WB_TTL and time.time() >= cur.get("next_try", 0):
         threading.Thread(target=_wb_refresh, args=(company,), daemon=True).start()
     return WB_CACHE.get(company) or {"goods": [], "cats": {}}
@@ -3351,6 +3370,7 @@ def _wb_sales_refresh(company):
         cur["t"] = time.time(); cur["error"] = str(e)
         cur["next_try"] = time.time() + e.retry_after + 5
         WB_SALES_CACHE[company] = cur
+        _wb_next_try_save("wb_sales_wait_" + company, cur["next_try"])
     except Exception as e:
         cur = WB_SALES_CACHE.get(company) or {"rows": []}
         cur["t"] = time.time()
@@ -3361,11 +3381,17 @@ def wb_sales_cache(company):
     cur = WB_SALES_CACHE.get(company)
     if cur is None:
         b = _wb_backup_load("wb_sales_" + company)
-        if b and b.get("rows"):
-            WB_SALES_CACHE[company] = {"t": 0.0, "rows": b["rows"], "from_backup": True}
+        wait_until = _wb_next_try_load("wb_sales_wait_" + company)
+        base = {"t": 0.0, "rows": (b or {}).get("rows") or [], "from_backup": bool(b)}
+        if wait_until and time.time() < wait_until:
+            base["next_try"] = wait_until
+            base["error"] = "Wildberries временно ограничила частоту запросов"
+            WB_SALES_CACHE[company] = base
+        elif b and b.get("rows"):
+            WB_SALES_CACHE[company] = base
             threading.Thread(target=_wb_sales_refresh, args=(company,), daemon=True).start()
         else:
-            _wb_sales_refresh(company)         # ни памяти, ни снимка в базе — тянем живьём
+            _wb_sales_refresh(company)         # ни памяти, ни снимка, лимит не активен — тянем живьём
     elif time.time() - cur.get("t", 0) > WB_SALES_TTL and time.time() >= cur.get("next_try", 0):
         threading.Thread(target=_wb_sales_refresh, args=(company,), daemon=True).start()
     return WB_SALES_CACHE.get(company) or {"rows": []}
@@ -3476,6 +3502,7 @@ def _wb_orders_refresh(company):
         cur["t"] = time.time(); cur["error"] = str(e)
         cur["next_try"] = time.time() + e.retry_after + 5
         WB_ORDERS_CACHE[company] = cur
+        _wb_next_try_save("wb_orders_wait_" + company, cur["next_try"])
     except Exception as e:
         cur = WB_ORDERS_CACHE.get(company) or {"rows": []}
         cur["t"] = time.time(); cur["error"] = str(e)
@@ -3485,8 +3512,14 @@ def wb_orders_cache(company):
     cur = WB_ORDERS_CACHE.get(company)
     if cur is None:
         b = _wb_backup_load("wb_orders_" + company)
-        if b and b.get("rows"):
-            WB_ORDERS_CACHE[company] = {"t": 0.0, "rows": b["rows"], "from_backup": True}
+        wait_until = _wb_next_try_load("wb_orders_wait_" + company)
+        base = {"t": 0.0, "rows": (b or {}).get("rows") or [], "from_backup": bool(b)}
+        if wait_until and time.time() < wait_until:
+            base["next_try"] = wait_until
+            base["error"] = "Wildberries временно ограничила частоту запросов"
+            WB_ORDERS_CACHE[company] = base
+        elif b and b.get("rows"):
+            WB_ORDERS_CACHE[company] = base
             threading.Thread(target=_wb_orders_refresh, args=(company,), daemon=True).start()
         else:
             _wb_orders_refresh(company)
