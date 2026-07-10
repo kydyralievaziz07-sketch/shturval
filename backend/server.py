@@ -240,6 +240,7 @@ SECTION_OF = [
     ("/api/assistant", "ai"),
     ("/api/ads", "ads"),
     ("/api/wbads", "wbads"),
+    ("/api/wborders", "sales"),
 ]
 
 # Исправления для бота (обучение). Хранится в памяти процесса + дозапись в файл.
@@ -3366,6 +3367,50 @@ def wb_assortment(company, days=30):
     groups = [{"title": k, "sales": round(v["sales"]), "units": v["units"]}
               for k, v in sorted(by_subj.items(), key=lambda i: -i[1]["sales"])]
     res = {"period_days": days, "groups": groups, "floors": [], "tree": groups, "note": _WB_NOTE}
+    if cache.get("error") and not rows:
+        res["error"] = cache["error"]
+    return res
+
+# --- Wildberries: заказы (оформлено покупателем, ещё до подтверждённой продажи/выкупа) ---
+WB_ORDERS_CACHE = {}
+WB_ORDERS_TTL = 1800
+WB_ORDERS_DAYS = 90
+
+def _wb_fetch_orders(company):
+    date_from = time.strftime("%Y-%m-%dT00:00:00", time.gmtime(time.time() - WB_ORDERS_DAYS * 86400))
+    data = wb_request(company, "stats", "/api/v1/supplier/orders?dateFrom=%s" % date_from)
+    return data if isinstance(data, list) else []
+
+def _wb_orders_refresh(company):
+    try:
+        rows = _wb_fetch_orders(company)
+        WB_ORDERS_CACHE[company] = {"t": time.time(), "rows": rows}
+    except Exception as e:
+        cur = WB_ORDERS_CACHE.get(company) or {"rows": []}
+        cur["t"] = time.time(); cur["error"] = str(e)
+        WB_ORDERS_CACHE[company] = cur
+
+def wb_orders_cache(company):
+    cur = WB_ORDERS_CACHE.get(company)
+    if cur is None:
+        _wb_orders_refresh(company)
+    elif time.time() - cur.get("t", 0) > WB_ORDERS_TTL:
+        threading.Thread(target=_wb_orders_refresh, args=(company,), daemon=True).start()
+    return WB_ORDERS_CACHE.get(company) or {"rows": []}
+
+def wb_orders_overview(company):
+    """Заказы (оформлено покупателем) по периодам — сумма/штук/доля отмен. Это НЕ то же самое,
+    что продажи (wb_sales_*): заказ может быть отменён или возвращён до выкупа."""
+    cache = wb_orders_cache(company)
+    rows = cache.get("rows") or []
+    today = _today_str(); wk = _days_ago(6); mo = today[:7]
+    def agg(pred):
+        sel = [r for r in rows if pred((r.get("date") or "")[:10])]
+        cancelled = [r for r in sel if r.get("isCancel")]
+        total = sum(_num(r.get("priceWithDisc")) for r in sel if not r.get("isCancel"))
+        return {"count": len(sel) - len(cancelled), "sum": round(total), "cancelled": len(cancelled)}
+    res = {"today": agg(lambda d: d == today), "week": agg(lambda d: d >= wk),
+           "month": agg(lambda d: (d or "")[:7] == mo)}
     if cache.get("error") and not rows:
         res["error"] = cache["error"]
     return res
@@ -7087,6 +7132,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, wb_ads_overview(_co))
             except Exception as e:
                 return self._send(200, {"has_token": True, "error": str(e), "groups": []})
+        if self.path.startswith("/api/wborders"):
+            _co = (self._user() or {}).get("company") or COMPANY_ID
+            if _co == COMPANY_ID:
+                return self._send(200, {"today": {}, "week": {}, "month": {}})
+            try:
+                return self._send(200, wb_orders_overview(_co))
+            except Exception as e:
+                return self._send(200, {"error": str(e)})
         if self.path.startswith("/api/ads/"):
             from urllib.parse import urlparse, parse_qs
             _qp = parse_qs(urlparse(self.path).query)

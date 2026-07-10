@@ -1030,6 +1030,11 @@
         </div>
       </div>
       <div id="wbads-body" class="card">Загрузка…</div>
+      <div class="card" style="margin-top:16px">
+        <h3>🧾 Заказы Wildberries (оформлено покупателем)</h3>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Не то же самое, что продажи — заказ может быть отменён/возвращён до выкупа.</div>
+        <div id="wborders-body">Загрузка…</div>
+      </div>
     </section>
 
     <!-- MARKET -->
@@ -3105,6 +3110,22 @@
         '</tbody></table>';
     }
     box.innerHTML=html;
+    loadWbOrders();
+  }
+  async function loadWbOrders(){
+    const box=document.getElementById('wborders-body'); if(!box) return;
+    let d=null;
+    try{ const r=await apiFetch('/api/wborders',{},ONEC_BASE); d=await r.json(); }
+    catch(e){ box.innerHTML='<span style="color:var(--muted);font-size:13px">🔴 Нет связи с сервером.</span>'; return; }
+    if(!d||d.error){ box.innerHTML='<span style="color:var(--muted);font-size:13px">'+(d&&d.error?esc(d.error):'Нет данных.')+'</span>'; return; }
+    const per=[['today','Сегодня'],['week','Неделя'],['month','Месяц']];
+    box.innerHTML='<div class="kpis">'+per.map(([k,lbl])=>{
+      const v=d[k]||{};
+      return '<div class="card kpi"><div class="label">'+lbl+'</div>'+
+        '<div class="value"><span class="money" data-som="'+(v.sum||0)+'">'+fmt(v.sum||0)+'</span></div>'+
+        '<div style="font-size:12px;color:var(--muted);margin-top:4px">'+(v.count||0)+' заказ(ов)'+(v.cancelled?', отменено '+v.cancelled:'')+'</div></div>';
+    }).join('')+'</div>';
+    renderMoney();
   }
   async function marketSearch(){
     const q=(document.getElementById('mkt-q').value||'').trim();
