@@ -626,7 +626,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.28.0<br>Баннер запроса разрешения на уведомления браузера: появляется через 2с после входа, «Позже» — откладывает на 3 дня</div>
+      Штурвал v4.28.1<br>Кнопка «Включить уведомления» в Настройках → Приложение; статус (включены/заблокированы/выключены) обновляется при открытии раздела</div>
   </aside>
 
   <!-- MAIN -->
@@ -1329,6 +1329,10 @@
           <span class="lbl">🤖 Авто-воронка по переписке <span style="font-size:11px;color:var(--muted)">бот сам раскладывает чаты по стадиям</span></span>
           <label class="switch"><input type="checkbox" id="sw-auto" onchange="setAuto(this.checked)"><span class="slider"></span></label>
         </div>
+        <div class="set-row" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
+          <span class="lbl">🔔 Уведомления браузера <span style="font-size:11px;color:var(--muted)" id="set-push-status"></span></span>
+          <button class="btn ghost" id="set-push-btn" onclick="settingsAskNotif()">Включить</button>
+        </div>
         <div style="margin-top:22px"><button class="btn ghost" onclick="logout()">🚪 Выйти из аккаунта</button></div>
       </div>
     </section>
@@ -1800,6 +1804,7 @@
     document.body.classList.toggle('wa-open', tab==='wainbox' && !!waCur);  // мобильный: переписка только если выбран чат
     if(titles[tab]){ const pt=document.getElementById('page-title'),ps=document.getElementById('page-sub'); if(pt)pt.textContent=titles[tab][0]; if(ps)ps.textContent=titles[tab][1]; }
     renderTopNav(); renderSubmenu();
+    if(tab==='set') try{ updateNotifSettingsUI(); }catch(e){}
     dispatchTab(tab);
     // кнопки периода (Сегодня/Неделя/Месяц) показываем только там, где они реально работают
     const psw=document.getElementById('periodsw');
@@ -4412,6 +4417,31 @@
   function skipNotifBanner(){
     var el=document.getElementById('push-banner'); if(el) el.remove();
     try{ localStorage.setItem('shturval_push_ask', String(Date.now()+3*24*60*60*1000)); }catch(e){}  // снова через 3 дня
+  }
+
+  function updateNotifSettingsUI(){
+    var btn=document.getElementById('set-push-btn');
+    var lbl=document.getElementById('set-push-status');
+    if(!btn||!lbl) return;
+    if(!('Notification' in window)){
+      lbl.textContent='не поддерживается браузером'; btn.style.display='none'; return;
+    }
+    var p=Notification.permission;
+    if(p==='granted'){
+      lbl.textContent='✅ включены'; btn.textContent='Включить'; btn.disabled=true; btn.style.opacity='.45';
+    } else if(p==='denied'){
+      lbl.textContent='🚫 заблокированы в браузере — разрешите вручную в настройках браузера (🔒 рядом с адресной строкой)';
+      btn.textContent='Заблокированы'; btn.disabled=true; btn.style.opacity='.45';
+    } else {
+      lbl.textContent='выключены'; btn.textContent='Включить'; btn.disabled=false; btn.style.opacity='1';
+    }
+  }
+  function settingsAskNotif(){
+    if(!('Notification' in window)) return;
+    if(Notification.permission==='granted'||Notification.permission==='denied') return;
+    try{ localStorage.removeItem('shturval_push_ask'); }catch(e){}  // сброс «Позже»
+    doAskNotifPerm();
+    setTimeout(updateNotifSettingsUI, 1500);
   }
   // Авто-воронка: раскладываем чаты по стадиям из подсказки сервера (c.stage).
   // Сделки, которые двигали ВРУЧНУЮ (d.manual===true), не трогаем.
