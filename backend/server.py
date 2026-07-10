@@ -3205,6 +3205,13 @@ def wb_token(company):
 def wb_connected(company):
     return bool(wb_token(company))
 
+class WBRateLimited(Exception):
+    """WB отдала 429 — несём дальше, через сколько секунд можно снова пробовать
+    (X-Ratelimit-Reset), чтобы не тратить редкую попытку впустую."""
+    def __init__(self, retry_after):
+        self.retry_after = retry_after
+        super().__init__("Wildberries временно ограничила частоту запросов")
+
 def wb_request(company, host, path, method="GET", body=None):
     token = wb_token(company)
     if not token:
@@ -3215,8 +3222,17 @@ def wb_request(company, host, path, method="GET", body=None):
         "Authorization": token, "Content-Type": "application/json",
         "User-Agent": "Shturval/1.0",
     })
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if e.code == 429:
+            try:
+                retry_after = int(e.headers.get("X-Ratelimit-Reset") or e.headers.get("Retry-After") or 300)
+            except (TypeError, ValueError):
+                retry_after = 300
+            raise WBRateLimited(retry_after)
+        raise
 
 def _wb_fetch_raw(company):
     """Тянет полный каталог карточек WB (постранично) + актуальные цены + реальные остатки
@@ -3263,23 +3279,27 @@ def _wb_fetch_raw(company):
                 g["PRICE"] = round(pmap.get(g.get("_nm"), 0.0) * _rate, 2)
         except Exception:
             pass       # без цен каталог всё равно полезен (названия/категории/остатки)
-        try:
-            date_from = time.strftime("%Y-%m-%dT00:00:00", time.gmtime(time.time() - 400 * 86400))
-            sdata = wb_request(company, "stats", "/api/v1/supplier/stocks?dateFrom=%s" % date_from)
-            qmap = {}
-            for s in (sdata or []):
-                qmap[s.get("nmId")] = qmap.get(s.get("nmId"), 0) + _num(s.get("quantity"))
-            for g in goods:
-                g["QUANTITY"] = qmap.get(g.get("_nm"), 0)
-        except Exception:
-            pass       # без остатков каталог всё равно полезен (названия/категории/цены)
+        # Остатки НЕ тянем: старый метод (/api/v1/supplier/stocks) отключён самой WB и делит
+        # общий лимит запросов с продажами/заказами (тот же хост statistics-api) — только
+        # тратил впустую единственную доступную попытку. Актуальный метод остатков
+        # (/api/analytics/v1/stocks-report/wb-warehouses, отдельный хост) требует у ключа
+        # категорию «Аналитика» — у текущего токена её нет (403 "base token without secret").
+        # Включим, как только владелец добавит эту категорию ключу.
     return goods, cats
 
 def _wb_refresh(company):
+    cur0 = WB_CACHE.get(company) or {}
+    if time.time() < cur0.get("next_try", 0):
+        return    # WB сама сказала, когда можно повторить — раньше не долбим
     try:
         goods, cats = _wb_fetch_raw(company)
         WB_CACHE[company] = {"t": time.time(), "goods": goods, "cats": cats}
         _wb_backup_save("wb_goods_" + company, {"goods": goods, "cats": cats})
+    except WBRateLimited as e:
+        cur = WB_CACHE.get(company) or {"goods": [], "cats": {}}
+        cur["t"] = time.time(); cur["error"] = str(e)
+        cur["next_try"] = time.time() + e.retry_after + 5
+        WB_CACHE[company] = cur
     except Exception as e:
         cur = WB_CACHE.get(company) or {"goods": [], "cats": {}}
         cur["t"] = time.time()
@@ -3295,7 +3315,7 @@ def _wb_ensure(company):
             threading.Thread(target=_wb_refresh, args=(company,), daemon=True).start()
         else:
             _wb_refresh(company)      # ни памяти, ни снимка в базе — тянем живьём (синхронно)
-    elif time.time() - cur.get("t", 0) > WB_TTL:
+    elif time.time() - cur.get("t", 0) > WB_TTL and time.time() >= cur.get("next_try", 0):
         threading.Thread(target=_wb_refresh, args=(company,), daemon=True).start()
     return WB_CACHE.get(company) or {"goods": [], "cats": {}}
 
@@ -3319,10 +3339,18 @@ def _wb_fetch_sales(company):
     return data if isinstance(data, list) else []
 
 def _wb_sales_refresh(company):
+    cur0 = WB_SALES_CACHE.get(company) or {}
+    if time.time() < cur0.get("next_try", 0):
+        return
     try:
         rows = _wb_fetch_sales(company)
         WB_SALES_CACHE[company] = {"t": time.time(), "rows": rows}
         _wb_backup_save("wb_sales_" + company, {"rows": rows})
+    except WBRateLimited as e:
+        cur = WB_SALES_CACHE.get(company) or {"rows": []}
+        cur["t"] = time.time(); cur["error"] = str(e)
+        cur["next_try"] = time.time() + e.retry_after + 5
+        WB_SALES_CACHE[company] = cur
     except Exception as e:
         cur = WB_SALES_CACHE.get(company) or {"rows": []}
         cur["t"] = time.time()
@@ -3338,7 +3366,7 @@ def wb_sales_cache(company):
             threading.Thread(target=_wb_sales_refresh, args=(company,), daemon=True).start()
         else:
             _wb_sales_refresh(company)         # ни памяти, ни снимка в базе — тянем живьём
-    elif time.time() - cur.get("t", 0) > WB_SALES_TTL:
+    elif time.time() - cur.get("t", 0) > WB_SALES_TTL and time.time() >= cur.get("next_try", 0):
         threading.Thread(target=_wb_sales_refresh, args=(company,), daemon=True).start()
     return WB_SALES_CACHE.get(company) or {"rows": []}
 
@@ -3436,10 +3464,18 @@ def _wb_fetch_orders(company):
     return data if isinstance(data, list) else []
 
 def _wb_orders_refresh(company):
+    cur0 = WB_ORDERS_CACHE.get(company) or {}
+    if time.time() < cur0.get("next_try", 0):
+        return
     try:
         rows = _wb_fetch_orders(company)
         WB_ORDERS_CACHE[company] = {"t": time.time(), "rows": rows}
         _wb_backup_save("wb_orders_" + company, {"rows": rows})
+    except WBRateLimited as e:
+        cur = WB_ORDERS_CACHE.get(company) or {"rows": []}
+        cur["t"] = time.time(); cur["error"] = str(e)
+        cur["next_try"] = time.time() + e.retry_after + 5
+        WB_ORDERS_CACHE[company] = cur
     except Exception as e:
         cur = WB_ORDERS_CACHE.get(company) or {"rows": []}
         cur["t"] = time.time(); cur["error"] = str(e)
@@ -3454,7 +3490,7 @@ def wb_orders_cache(company):
             threading.Thread(target=_wb_orders_refresh, args=(company,), daemon=True).start()
         else:
             _wb_orders_refresh(company)
-    elif time.time() - cur.get("t", 0) > WB_ORDERS_TTL:
+    elif time.time() - cur.get("t", 0) > WB_ORDERS_TTL and time.time() >= cur.get("next_try", 0):
         threading.Thread(target=_wb_orders_refresh, args=(company,), daemon=True).start()
     return WB_ORDERS_CACHE.get(company) or {"rows": []}
 
