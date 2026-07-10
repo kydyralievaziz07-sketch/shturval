@@ -626,7 +626,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.28.1<br>Кнопка «Включить уведомления» в Настройках → Приложение; статус (включены/заблокированы/выключены) обновляется при открытии раздела</div>
+      Штурвал v4.28.2<br>Кнопка уведомлений в Настройках: переключается между «Включить» и «Выключить»; при выключении пуш-уведомления и звук замолкают</div>
   </aside>
 
   <!-- MAIN -->
@@ -4323,6 +4323,7 @@
     }catch(e){}
   }
   function showBrowserNotif(title, body){
+    if(!NOTIF_ON) return;
     try{ if('Notification' in window && Notification.permission==='granted'){ const n=new Notification(title,{body:(body||'').slice(0,120),icon:'shturval-logo.png',tag:'shturval-msg'}); n.onclick=function(){ try{ window.focus(); }catch(e){} try{ n.close(); }catch(e){} }; setTimeout(function(){ try{ n.close(); }catch(e){} },9000); } }catch(e){}
   }
   let _titleBase=null, _titleTimer=null;
@@ -4427,19 +4428,35 @@
       lbl.textContent='не поддерживается браузером'; btn.style.display='none'; return;
     }
     var p=Notification.permission;
-    if(p==='granted'){
-      lbl.textContent='✅ включены'; btn.textContent='Включить'; btn.disabled=true; btn.style.opacity='.45';
+    if(p==='granted' && NOTIF_ON){
+      lbl.textContent='✅ включены';
+      btn.textContent='Выключить'; btn.disabled=false; btn.style.opacity='1';
+      btn.onclick=function(){ setNotifOn(false); };
+    } else if(p==='granted' && !NOTIF_ON){
+      lbl.textContent='⏸ выключены вами';
+      btn.textContent='Включить'; btn.disabled=false; btn.style.opacity='1';
+      btn.onclick=function(){ setNotifOn(true); };
     } else if(p==='denied'){
-      lbl.textContent='🚫 заблокированы в браузере — разрешите вручную в настройках браузера (🔒 рядом с адресной строкой)';
+      lbl.textContent='🚫 заблокированы — нажмите 🔒 в адресной строке браузера и разрешите вручную';
       btn.textContent='Заблокированы'; btn.disabled=true; btn.style.opacity='.45';
     } else {
-      lbl.textContent='выключены'; btn.textContent='Включить'; btn.disabled=false; btn.style.opacity='1';
+      lbl.textContent='выключены';
+      btn.textContent='Включить'; btn.disabled=false; btn.style.opacity='1';
+      btn.onclick=function(){ settingsAskNotif(); };
     }
+  }
+  function setNotifOn(on){
+    NOTIF_ON=on;
+    try{ localStorage.setItem('shturval_notif', on?'1':'0'); }catch(e){}
+    var b=document.getElementById('notif-sound-btn'); if(b) b.textContent=on?'🔔 Звук уведомлений: вкл':'🔕 Звук уведомлений: выкл';
+    updateNotifSettingsUI();
+    if(on) notifUnlock();
   }
   function settingsAskNotif(){
     if(!('Notification' in window)) return;
-    if(Notification.permission==='granted'||Notification.permission==='denied') return;
-    try{ localStorage.removeItem('shturval_push_ask'); }catch(e){}  // сброс «Позже»
+    if(Notification.permission==='denied') return;
+    if(Notification.permission==='granted'){ setNotifOn(true); return; }
+    try{ localStorage.removeItem('shturval_push_ask'); }catch(e){}
     doAskNotifPerm();
     setTimeout(updateNotifSettingsUI, 1500);
   }
