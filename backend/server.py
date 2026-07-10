@@ -3234,8 +3234,9 @@ def _wb_fetch_raw(company):
                 # цена продажи — с учётом скидки (то, что реально платит покупатель)
                 price = sizes[0].get("discountedPrice") if sizes else g.get("discountedPrice")
                 pmap[g.get("nmID")] = _num(price)
+            _rate = rub_to_kgs()   # WB отдаёт цены в рублях — интерфейс Штурвала везде в сомах
             for g in goods:
-                g["PRICE"] = pmap.get(g.get("_nm"), 0.0)
+                g["PRICE"] = round(pmap.get(g.get("_nm"), 0.0) * _rate, 2)
         except Exception:
             pass       # без цен каталог всё равно полезен (названия/категории/остатки)
         try:
@@ -3305,7 +3306,8 @@ def wb_sales_cache(company):
         threading.Thread(target=_wb_sales_refresh, args=(company,), daemon=True).start()
     return WB_SALES_CACHE.get(company) or {"rows": []}
 
-_WB_NOTE = "Прибыль недоступна — Wildberries не передаёт закупочную (себестоимость) цену товара, только выручку."
+_WB_NOTE = ("Прибыль недоступна — Wildberries не передаёт закупочную (себестоимость) цену товара, только выручку. "
+            "Суммы пересчитаны из рублей в сом по текущему курсу.")
 
 def wb_sales_day(company, date_str=None):
     cache = wb_sales_cache(company)
@@ -3314,9 +3316,10 @@ def wb_sales_day(company, date_str=None):
     day_rows = [r for r in rows if (r.get("date") or "")[:10] == day]
     s_rows = [r for r in day_rows if (r.get("saleID") or "").startswith("S")]
     r_rows = [r for r in day_rows if (r.get("saleID") or "").startswith("R")]
-    net = sum(_num(x.get("forPay")) for x in s_rows) - sum(_num(x.get("forPay")) for x in r_rows)
-    gross = sum(_num(x.get("priceWithDisc")) for x in s_rows)
-    ret_sum = sum(_num(x.get("forPay")) for x in r_rows)
+    _rate = rub_to_kgs()   # WB отдаёт суммы в рублях — интерфейс Штурвала везде в сомах
+    net = (sum(_num(x.get("forPay")) for x in s_rows) - sum(_num(x.get("forPay")) for x in r_rows)) * _rate
+    gross = sum(_num(x.get("priceWithDisc")) for x in s_rows) * _rate
+    ret_sum = sum(_num(x.get("forPay")) for x in r_rows) * _rate
     res = {"date": day, "sales_count": len(s_rows), "net_sales": round(net),
            "gross_sales": round(gross), "profit": None,
            "avg_check": round(net / len(s_rows)) if s_rows else 0,
@@ -3341,11 +3344,12 @@ def wb_sales_history(company, days=14):
             agg["sales"] += _num(r.get("forPay")); agg["cnt"] += 1
         elif sid.startswith("R"):
             agg["ret"] += _num(r.get("forPay"))
+    _rate = rub_to_kgs()
     out = []
     for d in sorted(by_day.keys())[-days:]:
         v = by_day[d]
-        out.append({"date": d, "sales": round(v["sales"] - v["ret"]), "profit": None,
-                    "receipts": v["cnt"], "returns_sum": round(v["ret"])})
+        out.append({"date": d, "sales": round((v["sales"] - v["ret"]) * _rate), "profit": None,
+                    "receipts": v["cnt"], "returns_sum": round(v["ret"] * _rate)})
     res = {"days": out, "note": _WB_NOTE}
     if cache.get("error") and not rows:
         res["error"] = cache["error"]
@@ -3364,7 +3368,8 @@ def wb_assortment(company, days=30):
         s = r.get("subject") or "Без категории"
         agg = by_subj.setdefault(s, {"sales": 0.0, "units": 0})
         agg["sales"] += _num(r.get("forPay")); agg["units"] += 1
-    groups = [{"title": k, "sales": round(v["sales"]), "units": v["units"]}
+    _rate = rub_to_kgs()
+    groups = [{"title": k, "sales": round(v["sales"] * _rate), "units": v["units"]}
               for k, v in sorted(by_subj.items(), key=lambda i: -i[1]["sales"])]
     res = {"period_days": days, "groups": groups, "floors": [], "tree": groups, "note": _WB_NOTE}
     if cache.get("error") and not rows:
@@ -3404,13 +3409,15 @@ def wb_orders_overview(company):
     cache = wb_orders_cache(company)
     rows = cache.get("rows") or []
     today = _today_str(); wk = _days_ago(6); mo = today[:7]
+    _rate = rub_to_kgs()
     def agg(pred):
         sel = [r for r in rows if pred((r.get("date") or "")[:10])]
         cancelled = [r for r in sel if r.get("isCancel")]
-        total = sum(_num(r.get("priceWithDisc")) for r in sel if not r.get("isCancel"))
+        total = sum(_num(r.get("priceWithDisc")) for r in sel if not r.get("isCancel")) * _rate
         return {"count": len(sel) - len(cancelled), "sum": round(total), "cancelled": len(cancelled)}
     res = {"today": agg(lambda d: d == today), "week": agg(lambda d: d >= wk),
-           "month": agg(lambda d: (d or "")[:7] == mo)}
+           "month": agg(lambda d: (d or "")[:7] == mo),
+           "note": "Суммы пересчитаны из рублей в сом по текущему курсу."}
     if cache.get("error") and not rows:
         res["error"] = cache["error"]
     return res
@@ -3421,10 +3428,11 @@ def wb_sales_sums(company):
     cache = wb_sales_cache(company)
     rows = cache.get("rows") or []
     today = _today_str(); wk = _days_ago(6); mo = today[:7]
+    _rate = rub_to_kgs()
     def net(pred):
         s = sum(_num(r.get("forPay")) for r in rows if (r.get("saleID") or "").startswith("S") and pred((r.get("date") or "")[:10]))
         rt = sum(_num(r.get("forPay")) for r in rows if (r.get("saleID") or "").startswith("R") and pred((r.get("date") or "")[:10]))
-        return round(s - rt)
+        return round((s - rt) * _rate)
     return {"today": {"sales": net(lambda d: d == today), "profit": 0},
             "week": {"sales": net(lambda d: d >= wk), "profit": 0},
             "month": {"sales": net(lambda d: (d or "")[:7] == mo), "profit": 0}}
