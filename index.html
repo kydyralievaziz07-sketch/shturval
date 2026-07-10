@@ -954,13 +954,13 @@
           <h3>📈 Продажи по дням</h3>
           <div id="sales-history" class="bars"><span style="color:var(--muted);font-size:13px">Копим историю — графики появятся за несколько дней.</span></div>
         </div>
-        <div class="card">
+        <div class="card" id="sales-pay-card">
           <h3>💳 Способы оплаты</h3>
           <div id="sales-pay"><span style="color:var(--muted);font-size:13px">—</span></div>
         </div>
       </div>
       <div class="grid2b">
-        <div class="card">
+        <div class="card" id="sales-sellers-card">
           <h3>🧑‍💼 Кассы</h3>
           <div id="sales-sellers"><span style="color:var(--muted);font-size:13px">—</span></div>
         </div>
@@ -3590,16 +3590,23 @@
          : '🟢 <b>Продажи из '+(isBizmart()?'1С (касса)':'Wildberries')+'</b> · за сегодня · обновлено '+esc(d.updated||'')+' · <span style="color:var(--muted)">обновляется само каждую минуту</span>');
     const sfx=past?'':' сегодня';
     const km=(label,som)=>'<div class="card kpi"><div class="label">'+label+'</div><div class="value"><span class="money" data-som="'+(som||0)+'">'+fmt(som||0)+'</span></div></div>';
+    const kmNA=(label)=>'<div class="card kpi"><div class="label">'+label+'</div><div class="value" style="color:var(--muted);font-size:14px">нет данных</div></div>';
     document.getElementById('sales-kpis').innerHTML=
       kpiCard('Чеков'+sfx,(d.sales_count||0).toLocaleString('ru-RU'))+
       km('Выручка'+sfx,d.net_sales)+
-      km('Прибыль'+sfx,d.profit)+
+      (d.profit==null?kmNA('Прибыль'+sfx):km('Прибыль'+sfx,d.profit))+
       km('Средний чек',d.avg_check)+
       kpiCard('Возвраты',(d.returns_count||0)+' · '+(d.returns_sum||0).toLocaleString('ru-RU')+' сом');
-    const pays=(d.by_pay||[]).filter(p=>p.sum>0); const pmax=Math.max.apply(null,pays.map(p=>p.sum).concat([1]));
-    document.getElementById('sales-pay').innerHTML=pays.length?pays.map(p=>
-      '<div style="margin-bottom:11px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px"><span>'+esc(p.name)+'</span><span class="money" data-som="'+p.sum+'">'+fmt(p.sum)+'</span></div><div class="progress"><div style="width:'+Math.round(p.sum/pmax*100)+'%"></div></div></div>').join(''):'<span style="color:var(--muted);font-size:13px">Нет данных</span>';
-    document.getElementById('sales-sellers').innerHTML=(d.by_seller||[]).length?'<table><tbody>'+(d.by_seller||[]).map(s=>'<tr><td>'+esc(s.name)+'</td><td style="text-align:right;color:var(--muted)">'+s.count+' чек.</td><td style="text-align:right"><span class="money" data-som="'+s.sum+'">'+fmt(s.sum)+'</span></td></tr>').join('')+'</tbody></table>':'<span style="color:var(--muted);font-size:13px">Нет данных</span>';
+    // «Способы оплаты» и «Кассы» — только для Бизмарта (1С-касса); у WB таких понятий нет
+    const payCard=document.getElementById('sales-pay-card'), sellCard=document.getElementById('sales-sellers-card');
+    if(payCard) payCard.style.display=isBizmart()?'':'none';
+    if(sellCard) sellCard.style.display=isBizmart()?'':'none';
+    if(isBizmart()){
+      const pays=(d.by_pay||[]).filter(p=>p.sum>0); const pmax=Math.max.apply(null,pays.map(p=>p.sum).concat([1]));
+      document.getElementById('sales-pay').innerHTML=pays.length?pays.map(p=>
+        '<div style="margin-bottom:11px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px"><span>'+esc(p.name)+'</span><span class="money" data-som="'+p.sum+'">'+fmt(p.sum)+'</span></div><div class="progress"><div style="width:'+Math.round(p.sum/pmax*100)+'%"></div></div></div>').join(''):'<span style="color:var(--muted);font-size:13px">Нет данных</span>';
+      document.getElementById('sales-sellers').innerHTML=(d.by_seller||[]).length?'<table><tbody>'+(d.by_seller||[]).map(s=>'<tr><td>'+esc(s.name)+'</td><td style="text-align:right;color:var(--muted)">'+s.count+' чек.</td><td style="text-align:right"><span class="money" data-som="'+s.sum+'">'+fmt(s.sum)+'</span></td></tr>').join('')+'</tbody></table>':'<span style="color:var(--muted);font-size:13px">Нет данных</span>';
+    }
     document.getElementById('sales-top').innerHTML=(d.top_products||[]).length?'<table><thead><tr><th>Товар</th><th style="text-align:right">Шт</th><th style="text-align:right">Сумма</th><th style="text-align:right">Прибыль</th></tr></thead><tbody>'+(d.top_products||[]).slice(0,15).map(p=>'<tr><td>'+esc(p.name)+'</td><td style="text-align:right">'+p.qty+'</td><td style="text-align:right"><span class="money" data-som="'+p.sum+'">'+fmt(p.sum)+'</span></td><td style="text-align:right;color:var(--muted)"><span class="money" data-som="'+p.profit+'">'+fmt(p.profit)+'</span></td></tr>').join('')+'</tbody></table>':'<span style="color:var(--muted);font-size:13px">Нет данных</span>';
     const rc=(d.receipts||[]);
     document.getElementById('sales-receipts').innerHTML=rc.length?'<table><thead><tr><th>Время</th><th>№</th><th>Товары</th><th>Касса</th><th>Оплата</th><th style="text-align:right">Сумма</th></tr></thead><tbody>'+rc.map(x=>{const ret=(x.type==='Возврат');return '<tr><td style="white-space:nowrap">'+esc(x.time)+'</td><td style="color:var(--muted)">'+esc(''+(x.num||''))+'</td><td style="font-size:12px">'+esc(x.items||'')+(ret?' <span class="badge b-out">возврат</span>':'')+'</td><td style="white-space:nowrap">'+esc(x.seller)+'</td><td style="white-space:nowrap;font-size:12px">'+esc(x.pay)+'</td><td style="text-align:right;white-space:nowrap'+(ret?';color:#ff6b6b':'')+'"><span class="money" data-som="'+x.total+'">'+fmt(x.total)+'</span></td></tr>';}).join('')+'</tbody></table>':'<span style="color:var(--muted);font-size:13px">Нет чеков за этот день</span>';

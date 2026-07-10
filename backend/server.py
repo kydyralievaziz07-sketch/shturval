@@ -3356,11 +3356,24 @@ def wb_sales_day(company, date_str=None):
     net = (sum(_num(x.get("forPay")) for x in s_rows) - sum(_num(x.get("forPay")) for x in r_rows)) * _rate
     gross = sum(_num(x.get("priceWithDisc")) for x in s_rows) * _rate
     ret_sum = sum(_num(x.get("forPay")) for x in r_rows) * _rate
+    receipts_out = []
+    for r in sorted(day_rows, key=lambda x: x.get("date") or "", reverse=True)[:200]:
+        is_ret = (r.get("saleID") or "").startswith("R")
+        ts = r.get("date") or ""
+        receipts_out.append({
+            "time": ts[11:16] if len(ts) >= 16 else "",
+            "num": (r.get("srid") or "")[:10],
+            "items": r.get("subject") or r.get("supplierArticle") or "",
+            "seller": r.get("warehouseName") or "Wildberries",
+            "pay": "Онлайн",
+            "total": round(_num(r.get("forPay")) * _rate * (-1 if is_ret else 1)),
+            "type": "Возврат" if is_ret else "",
+        })
     res = {"date": day, "sales_count": len(s_rows), "net_sales": round(net),
            "gross_sales": round(gross), "profit": None,
            "avg_check": round(net / len(s_rows)) if s_rows else 0,
            "returns_count": len(r_rows), "returns_sum": round(ret_sum),
-           "receipts": day_rows[:200], "note": _WB_NOTE}
+           "receipts": receipts_out, "note": _WB_NOTE}
     if cache.get("error"):
         res["stale"] = True
         res["error"] = cache["error"]
