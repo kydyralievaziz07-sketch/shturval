@@ -3571,6 +3571,9 @@ _WB_AD_TYPE = {4: "в каталоге", 5: "в карточке товара", 
                7: "в рекомендациях", 8: "автоматическая", 9: "аукцион"}
 
 def _wb_ads_refresh(company):
+    cur0 = WB_ADS_CACHE.get(company) or {}
+    if time.time() < cur0.get("next_try", 0):
+        return
     try:
         data = wb_request(company, "advert", "/adv/v1/promotion/count")
         groups = []
@@ -3585,6 +3588,13 @@ def _wb_ads_refresh(company):
         active = sum(g["count"] for g in groups if g["status"] == 9)
         total = sum(g["count"] for g in groups)
         WB_ADS_CACHE[company] = {"t": time.time(), "groups": groups, "active": active, "total": total}
+        _wb_backup_save("wb_ads_" + company, {"groups": groups, "active": active, "total": total})
+    except WBRateLimited as e:
+        cur = WB_ADS_CACHE.get(company) or {"groups": [], "active": 0, "total": 0}
+        cur["t"] = time.time(); cur["error"] = str(e)
+        cur["next_try"] = time.time() + e.retry_after + 5
+        WB_ADS_CACHE[company] = cur
+        _wb_next_try_save("wb_ads_wait_" + company, cur["next_try"])
     except Exception as e:
         cur = WB_ADS_CACHE.get(company) or {"groups": [], "active": 0, "total": 0}
         cur["t"] = time.time(); cur["error"] = str(e)
@@ -3595,8 +3605,20 @@ def wb_ads_overview(company):
         return {"has_token": False}
     cur = WB_ADS_CACHE.get(company)
     if cur is None:
-        _wb_ads_refresh(company)
-    elif time.time() - cur.get("t", 0) > WB_ADS_TTL:
+        b = _wb_backup_load("wb_ads_" + company)
+        wait_until = _wb_next_try_load("wb_ads_wait_" + company)
+        base = {"t": 0.0, "groups": (b or {}).get("groups") or [], "active": (b or {}).get("active", 0),
+                "total": (b or {}).get("total", 0), "from_backup": bool(b)}
+        if wait_until and time.time() < wait_until:
+            base["next_try"] = wait_until
+            base["error"] = "Wildberries временно ограничила частоту запросов"
+            WB_ADS_CACHE[company] = base
+        elif b:
+            WB_ADS_CACHE[company] = base
+            threading.Thread(target=_wb_ads_refresh, args=(company,), daemon=True).start()
+        else:
+            _wb_ads_refresh(company)
+    elif time.time() - cur.get("t", 0) > WB_ADS_TTL and time.time() >= cur.get("next_try", 0):
         threading.Thread(target=_wb_ads_refresh, args=(company,), daemon=True).start()
     cur = WB_ADS_CACHE.get(company) or {"groups": [], "active": 0, "total": 0}
     res = {"has_token": True, "active": cur.get("active", 0), "total": cur.get("total", 0),
