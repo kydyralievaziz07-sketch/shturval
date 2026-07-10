@@ -861,7 +861,7 @@
 
     <!-- PRODUCTS (живые данные из 1С) -->
     <section id="tab-prod" class="hide">
-      <div id="prod-status" class="note" style="margin-bottom:16px">⏳ Загружаю каталог из 1С…</div>
+      <div id="prod-status" class="note" style="margin-bottom:16px">⏳ Загружаю каталог…</div>
       <div id="prod-kpis" class="kpis"></div>
       <div class="grid2">
         <div class="card">
@@ -902,7 +902,7 @@
         <div id="prod-supercats"><span style="color:var(--muted);font-size:13px">—</span></div>
       </div>
       <div class="card">
-        <h3>🗂 Группы из 1С <span style="font-size:12px;color:var(--muted);font-weight:400">— как товары названы в 1С (детально)</span></h3>
+        <h3>🗂 Группы товаров <span style="font-size:12px;color:var(--muted);font-weight:400">— детальные названия категорий</span></h3>
         <div id="prod-catbrowser"><span style="color:var(--muted);font-size:13px">—</span></div>
       </div>
       <div class="card">
@@ -918,13 +918,13 @@
           <thead><tr><th>Товар</th><th>Категория</th><th>Розн. цена</th><th>Закуп</th><th>Маржа</th><th>Остаток</th><th>Статус</th></tr></thead>
           <tbody id="prodRows"></tbody>
         </table>
-        <div class="note" style="margin-top:16px">🟢 Данные приходят <b>напрямую из 1С</b> (товары, цены, остатки). Поиск — по всему каталогу (23 000+ позиций). 📌 Позже: фильтры по категориям, фото, массовое изменение цен.</div>
+        <div id="prod-note-source" class="note" style="margin-top:16px">🟢 Данные приходят напрямую из источника компании (товары, цены, остатки). Поиск — по всему каталогу. 📌 Позже: фильтры по категориям, фото, массовое изменение цен.</div>
       </div>
     </section>
 
     <!-- SALES -->
     <section id="tab-sales" class="hide">
-      <div id="sales-status" class="note" style="margin-bottom:14px">⏳ Загружаю продажи из 1С…</div>
+      <div id="sales-status" class="note" style="margin-bottom:14px">⏳ Загружаю продажи…</div>
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap">
         <span style="font-size:13px;color:var(--muted)">📅 День:</span>
         <select id="sales-date" onchange="onSalesDate()" style="background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:7px 10px;font-size:13px"></select>
@@ -953,7 +953,7 @@
       <div class="card">
         <h3>🧾 Чеки</h3>
         <div id="sales-receipts" style="max-height:480px;overflow:auto"><span style="color:var(--muted);font-size:13px">—</span></div>
-        <div class="note" style="margin-top:14px">📌 Чеки приходят прямо из <b>1С</b> (касса). Возвраты показаны со знаком «−».</div>
+        <div id="sales-note-source" class="note" style="margin-top:14px">📌 Возвраты показаны со знаком «−».</div>
       </div>
     </section>
 
@@ -1341,7 +1341,7 @@
   <div class="modal-bg" id="addbg">
     <div class="modal">
       <h3>➕ Новый товар</h3>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Товар сохранится в 1С и появится в каталоге</div>
+      <div id="ap-note-source" style="font-size:12px;color:var(--muted);margin-bottom:6px">Товар появится в каталоге</div>
       <label>Название *</label>
       <input id="ap-title" placeholder="Напр. Одеяло 1.5-спальное">
       <label>Категория</label>
@@ -1360,7 +1360,7 @@
       </div>
       <div id="ap-msg" style="font-size:13px;margin-top:12px;min-height:18px"></div>
       <div class="modal-foot">
-        <button class="btn" id="ap-save" onclick="submitAddProduct()">Сохранить в 1С</button>
+        <button class="btn" id="ap-save" onclick="submitAddProduct()">Сохранить</button>
         <button class="btn ghost" onclick="closeAddProduct()">Отмена</button>
       </div>
     </div>
@@ -1717,8 +1717,10 @@
     if(tab==='wainbox') return isOwner()||canSee('wainbox')||canSee('chats');
     if(tab==='dash') return isOwner()||canSee('dash')||canSee('crm');
     if(tab==='sim') return isOwner()||canSee('sim')||canSee('ai')||canSee('analytics')||canSee('dash');
-    if(tab==='assort') return isOwner()||canSee('assort')||canSee('sales')||canSee('analytics');
-    if(tab==='report') return isOwner()||canSee('assort')||canSee('sales')||canSee('analytics');
+    // ABC-анализ по чистой прибыли требует себестоимости — считается только из 1С (Бизмарт);
+    // у Wildberries закупочной цены нет, показывать эти вкладки там нечего
+    if(tab==='assort') return isBizmart()&&(isOwner()||canSee('assort')||canSee('sales')||canSee('analytics'));
+    if(tab==='report') return isBizmart()&&(isOwner()||canSee('assort')||canSee('sales')||canSee('analytics'));
     return canSee(tab);
   }
   // временно скрытые модули — прячем ИКОНКУ у тех, кто видит их только через «all».
@@ -1925,6 +1927,7 @@
   function isOwner(){ return USER.sections.indexOf('all')>=0; }
   function isCabinetOwner(){ return !!USER.owner || USER.sections.indexOf('all')>=0; }
   function isRentCabinet(){ return false; }
+  function isBizmart(){ return (USER.company||'bizmart')==='bizmart'; }
   function MUNIT(){ return 'сом'; }
   function _toggleEmpPay(){
     var cb=document.getElementById('emp-comm-block'), vb=document.getElementById('emp-video-block');
@@ -1943,7 +1946,8 @@
     // ВАЖНО: пустой массив [] = «нет доступа к разделам» (только Мой день/Настройки),
     // а НЕ «показать всё». ['all'] ставим только если поле sections вообще не пришло.
     USER={name:(d&&d.name)||'', sections:(d&&Array.isArray(d.sections))?d.sections:['all'],
-          role:(d&&d.role)||'', department:(d&&d.department)||'', plan_day:(d&&d.plan_day)||0, owner:!!(d&&d.owner)};
+          role:(d&&d.role)||'', department:(d&&d.department)||'', plan_day:(d&&d.plan_day)||0, owner:!!(d&&d.owner),
+          company:(d&&d.company)||'bizmart'};
     // СМЕНА АККАУНТА → сбросить кэши данных в памяти, чтобы не показывались чужие (старые) данные
     try{
       var _who=(getLg()||'').toLowerCase()+'|'+((d&&d.name)||'');
@@ -2406,9 +2410,10 @@
     if(typeof renderNotifs==='function') renderNotifs();   // обновить колокольчик (заканчивающиеся товары)
     const st=document.getElementById('prod-status');
     st.style.borderStyle='solid'; st.style.borderColor=d.stale?'#ffb84d':'#39d98a';
+    const _src=isBizmart()?'1С':'Wildberries';
     st.innerHTML=d.stale
-      ? '🟠 <b>1С временно недоступна</b> · показываю последний сохранённый каталог (на '+esc(d.updated||'')+'). Обновится, когда 1С ответит.'
-      : '🟢 <b>Каталог из 1С</b> · обновлено '+esc(d.updated||'')+' · всего '+(d.total_sku||0).toLocaleString('ru-RU')+' позиций · <span style="color:var(--muted)">обновляется само каждую минуту</span>';
+      ? '🟠 <b>'+_src+' временно недоступна</b> · показываю последний сохранённый каталог (на '+esc(d.updated||'')+'). Обновится, когда '+_src+' ответит.'
+      : '🟢 <b>Каталог из '+_src+'</b> · обновлено '+esc(d.updated||'')+' · всего '+(d.total_sku||0).toLocaleString('ru-RU')+' позиций · <span style="color:var(--muted)">обновляется само каждую минуту</span>';
     const km=(label,som)=>'<div class="card kpi"><div class="label">'+label+'</div><div class="value"><span class="money" data-som="'+(som||0)+'">'+fmt(som||0)+'</span></div></div>';
     document.getElementById('prod-kpis').innerHTML=
       kpiCard('Позиций (SKU)',(d.total_sku||0).toLocaleString('ru-RU'))+
@@ -2875,9 +2880,13 @@
   function drawFinance(d){
     const box=document.getElementById('fin-stock'); if(!box||!d||d.error) return;
     const km=(l,s)=>'<div class="card kpi"><div class="label">'+l+'</div><div class="value"><span class="money" data-som="'+(s||0)+'">'+fmt(s||0)+'</span></div></div>';
-    box.innerHTML=km('Склад в рознице',d.retail_value)+km('Закуп склада (себестоимость)',d.cost_value)+
-      km('Потенц. наценка',d.margin_value)+kpiCard('Позиций · штук',(d.total_sku||0).toLocaleString('ru-RU')+' · '+(d.total_units||0).toLocaleString('ru-RU'));
-    const st=document.getElementById('fin-status'); if(st){ st.style.borderStyle='solid'; st.style.borderColor='#39d98a'; st.innerHTML='🟢 <b>Данные из 1С</b> · склад обновлён '+esc(d.updated||''); }
+    box.innerHTML=km('Склад в рознице',d.retail_value)+
+      (d.no_cost_data?'<div class="card kpi"><div class="label">Закуп склада (себестоимость)</div><div class="value" style="color:var(--muted);font-size:14px">нет данных</div></div>'
+                     :km('Закуп склада (себестоимость)',d.cost_value))+
+      (d.no_cost_data?'<div class="card kpi"><div class="label">Потенц. наценка</div><div class="value" style="color:var(--muted);font-size:14px">нет данных</div></div>'
+                     :km('Потенц. наценка',d.margin_value))+
+      kpiCard('Позиций · штук',(d.total_sku||0).toLocaleString('ru-RU')+' · '+(d.total_units||0).toLocaleString('ru-RU'));
+    const st=document.getElementById('fin-status'); if(st){ st.style.borderStyle='solid'; st.style.borderColor='#39d98a'; st.innerHTML='🟢 <b>Данные из '+(isBizmart()?'1С':'Wildberries')+'</b> · склад обновлён '+esc(d.updated||''); }
     renderMoney();
   }
   // общие всплывающие окна
@@ -2945,7 +2954,7 @@
     if(window._invData&&!window._invData.error) drawFinance(window._invData);
     else loadInventory();
     loadExpenses();
-    const st=document.getElementById('fin-status'); if(st){ st.style.borderStyle='solid'; st.style.borderColor='#39d98a'; st.innerHTML='🟢 <b>Финансы</b> · продажи из 1С минус твои расходы. Период — кнопками сверху.'; }
+    const st=document.getElementById('fin-status'); if(st){ st.style.borderStyle='solid'; st.style.borderColor='#39d98a'; st.innerHTML='🟢 <b>Финансы</b> · продажи из '+(isBizmart()?'1С':'Wildberries')+' минус твои расходы. Период — кнопками сверху.'; }
   }
   // отдельная вкладка «Расходы» — только ввод и список (без выручки/прибыли)
   function renderExpPage(){ loadExpenses(); }
@@ -3543,8 +3552,8 @@
     }catch(e){
       if(e&&(e.message==='unauthorized'||e.message==='forbidden')) return;
       const isLocal=(API_BASE!=='');
-      if(isLocal){ st.style.borderStyle='dashed'; st.style.borderColor='#ff6b6b'; st.innerHTML='🔴 <b>Нет связи с 1С.</b> Запусти на компьютере <b>backend/Запустить-сервер.command</b> и обнови страницу.'; }
-      else if(!past && attempt<7){ st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d'; st.innerHTML='⏳ <b>Сервер 1С просыпается…</b> после паузы это занимает до минуты. Жду, не закрывай (попытка '+attempt+'/6)…'; clearTimeout(salesTimer); salesTimer=setTimeout(()=>loadSales(attempt+1),12000); }
+      if(isLocal){ st.style.borderStyle='dashed'; st.style.borderColor='#ff6b6b'; st.innerHTML='🔴 <b>Нет связи с '+(isBizmart()?'1С':'сервером')+'.</b> Запусти на компьютере <b>backend/Запустить-сервер.command</b> и обнови страницу.'; }
+      else if(!past && attempt<7){ st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d'; st.innerHTML='⏳ <b>Сервер просыпается…</b> после паузы это занимает до минуты. Жду, не закрывай (попытка '+attempt+'/6)…'; clearTimeout(salesTimer); salesTimer=setTimeout(()=>loadSales(attempt+1),12000); }
       else { st.style.borderStyle='dashed'; st.style.borderColor='#ff6b6b'; st.innerHTML='🔴 <b>Сервер пока не ответил.</b> Обнови страницу через минуту.'; }
     }
   }
@@ -3554,11 +3563,12 @@
     const past=!!d.from_db;
     st.style.borderStyle='solid'; st.style.borderColor=past?'#4f8cff':'#39d98a';
     if(d.stale) st.style.borderColor='#ffb84d';
+    const _ssrc=isBizmart()?'1С':'Wildberries';
     st.innerHTML=past
       ? '📅 <b>Отчёт за '+esc(d.date||salesDate)+'</b> · из нашей базы (сохранённый день)'
       : (d.stale
-         ? '🟠 <b>1С временно недоступна</b> · показываю последнее сохранённое'+(d.stale_date?(' за '+esc(d.stale_date)):'')+' (на '+esc(d.updated||'')+'). Обновится, когда 1С снова ответит.'
-         : '🟢 <b>Продажи из 1С (касса)</b> · за сегодня · обновлено '+esc(d.updated||'')+' · <span style="color:var(--muted)">обновляется само каждую минуту</span>');
+         ? '🟠 <b>'+_ssrc+' временно недоступна</b> · показываю последнее сохранённое'+(d.stale_date?(' за '+esc(d.stale_date)):'')+' (на '+esc(d.updated||'')+'). Обновится, когда '+_ssrc+' снова ответит.'
+         : '🟢 <b>Продажи из '+(isBizmart()?'1С (касса)':'Wildberries')+'</b> · за сегодня · обновлено '+esc(d.updated||'')+' · <span style="color:var(--muted)">обновляется само каждую минуту</span>');
     const sfx=past?'':' сегодня';
     const km=(label,som)=>'<div class="card kpi"><div class="label">'+label+'</div><div class="value"><span class="money" data-som="'+(som||0)+'">'+fmt(som||0)+'</span></div></div>';
     document.getElementById('sales-kpis').innerHTML=
@@ -5593,7 +5603,7 @@
       '</div>'+
       '<div id="myday-salary"></div>'+
       '<div class="grid2b">'+
-        '<div class="card"><h3>📊 Продажи по дням <span style="font-size:12px;color:var(--muted);font-weight:400">— 1С, последние 7</span></h3><div id="myday-bars7"><span style="color:var(--muted);font-size:13px">Загружаю продажи…</span></div></div>'+
+        '<div class="card"><h3>📊 Продажи по дням <span style="font-size:12px;color:var(--muted);font-weight:400">— последние 7</span></h3><div id="myday-bars7"><span style="color:var(--muted);font-size:13px">Загружаю продажи…</span></div></div>'+
         '<div class="card"><h3>⚙️ Мои заявки в работе</h3>'+
           (active.length?'<div style="max-height:230px;overflow:auto"><table><tbody>'+
             active.slice(0,30).map(d=>{const c=getClient(d.client_id);return '<tr><td>'+esc((c&&c.name)||'Без имени')+'</td><td style="text-align:right"><span class="badge b-low">'+esc(d.status)+'</span></td></tr>';}).join('')+
@@ -5601,7 +5611,7 @@
         '</div>'+
       '</div>'+
       '<div class="card" style="margin-top:16px"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">'+
-        '<h3 style="margin:0">📈 Динамика продаж <span style="font-size:12px;color:var(--muted);font-weight:400">— из 1С</span></h3>'+
+        '<h3 style="margin:0">📈 Динамика продаж</h3>'+
         '<div class="period" id="myday-trend-sw">'+
           '<button class="active" data-g="day" onclick="setMydayGran(\'day\')">Дни</button>'+
           '<button data-g="week" onclick="setMydayGran(\'week\')">Недели</button>'+

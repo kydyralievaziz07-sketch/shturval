@@ -3823,6 +3823,11 @@ def build_inventory(company=None):
         "updated": time.strftime("%H:%M:%S"),
     }
     if company and company != COMPANY_ID:
+        # WB не отдаёт закупочную цену — cost_value/margin_value были бы враньём
+        # (0 закупки → «наценка» = вся розница). Честно помечаем как неизвестные.
+        _inv_res["cost_value"] = None
+        _inv_res["margin_value"] = None
+        _inv_res["no_cost_data"] = True
         wbc = WB_CACHE.get(company) or {}
         if wbc.get("error"):
             _inv_res["stale"] = True
@@ -6956,7 +6961,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200 if u else 401, {"ok": bool(u),
                 "name": (u or {}).get("name", ""), "sections": (u or {}).get("sections", []),
                 "role": (u or {}).get("role", ""), "department": (u or {}).get("department", ""),
-                "owner": bool((u or {}).get("owner")), "plan_day": (u or {}).get("plan_day", 0)})
+                "owner": bool((u or {}).get("owner")), "plan_day": (u or {}).get("plan_day", 0),
+                "company": (u or {}).get("company") or COMPANY_ID})
         # Instagram OAuth — ПУБЛИЧНЫЙ (браузер открывает напрямую без заголовков авторизации)
         if self.path.startswith("/api/bizmart/ig-connect"):
             import urllib.parse as _up
