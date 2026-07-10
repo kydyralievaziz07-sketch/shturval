@@ -6882,6 +6882,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"error": "Нет связи с 1С: " + str(e), "groups": []})
         if self.path.startswith("/api/sales-history"):
             from urllib.parse import urlparse, parse_qs
+            _co = (self._user() or {}).get("company") or COMPANY_ID
+            if _co != COMPANY_ID:
+                return self._send(200, {"days": [], "note": "Продажи Wildberries ещё не подключены."})
             try:
                 days = int(parse_qs(urlparse(self.path).query).get("days", ["14"])[0])
             except ValueError:
@@ -6889,6 +6892,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, sales_history(max(1, min(days, 400))))
         if self.path.startswith("/api/sales"):
             from urllib.parse import urlparse, parse_qs
+            _co = (self._user() or {}).get("company") or COMPANY_ID
+            if _co != COMPANY_ID:
+                return self._send(200, {"sales_count": 0, "net_sales": 0, "gross_sales": 0,
+                                         "profit": 0, "avg_check": 0, "returns_count": 0,
+                                         "returns_sum": 0, "receipts": [],
+                                         "note": "Продажи Wildberries ещё не подключены."})
             date = (parse_qs(urlparse(self.path).query).get("date", [""])[0] or "").strip()
             try:
                 return self._send(200, sales_day(date))
