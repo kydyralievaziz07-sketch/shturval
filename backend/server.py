@@ -3193,9 +3193,9 @@ def wb_request(company, host, path, method="GET", body=None):
         return json.loads(r.read().decode("utf-8"))
 
 def _wb_fetch_raw(company):
-    """Тянет полный каталог карточек WB (постранично) + актуальные цены.
-    Остатки (QUANTITY) новому магазину без складов ставим 0 — они появятся, когда
-    появятся реальные остатки на WB (отдельный склад. API, не нужен при 0 товаров)."""
+    """Тянет полный каталог карточек WB (постранично) + актуальные цены + реальные остатки
+    по складам (Statistics API, /api/v1/supplier/stocks — суммируем по nmID, склады не
+    показываем отдельно, это не нужно для сводки «Товары»)."""
     goods = []
     cats = {}
     cursor = {"limit": 100}
@@ -3236,6 +3236,16 @@ def _wb_fetch_raw(company):
                 g["PRICE"] = pmap.get(g.get("_nm"), 0.0)
         except Exception:
             pass       # без цен каталог всё равно полезен (названия/категории/остатки)
+        try:
+            date_from = time.strftime("%Y-%m-%dT00:00:00", time.gmtime(time.time() - 400 * 86400))
+            sdata = wb_request(company, "stats", "/api/v1/supplier/stocks?dateFrom=%s" % date_from)
+            qmap = {}
+            for s in (sdata or []):
+                qmap[s.get("nmId")] = qmap.get(s.get("nmId"), 0) + _num(s.get("quantity"))
+            for g in goods:
+                g["QUANTITY"] = qmap.get(g.get("_nm"), 0)
+        except Exception:
+            pass       # без остатков каталог всё равно полезен (названия/категории/цены)
     return goods, cats
 
 def _wb_refresh(company):
