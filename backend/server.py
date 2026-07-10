@@ -3157,6 +3157,106 @@ def _wa_fallback_sweep():
     except Exception:
         pass
 
+# --- Wildberries: товары/цены для компаний-НЕ-Бизмарт (мульти-тенант, своя ветка) ---
+# Полностью отдельно от 1С: ключ доступа свой на компанию (WB_TOKEN_<COMPANY_ID заглавными>,
+# env Render), свой кэш (WB_CACHE, по company), свои функции. Данные Бизмарта эта ветка
+# не читает и не может прочитать — токена Бизмарта тут просто нет.
+WB_HOSTS = {
+    "content": "https://content-api.wildberries.ru",
+    "prices": "https://discounts-prices-api.wildberries.ru",
+}
+WB_CACHE = {}          # company -> {"t": unix, "goods": [...], "cats": {...}}
+WB_TTL = 300
+
+def wb_token(company):
+    return CFG.get("WB_TOKEN_%s" % (company or "").upper(), "").strip()
+
+def wb_connected(company):
+    return bool(wb_token(company))
+
+def wb_request(company, host, path, method="GET", body=None):
+    token = wb_token(company)
+    if not token:
+        raise RuntimeError("Wildberries API не подключён для компании «%s» — нет ключа." % company)
+    url = WB_HOSTS[host] + path
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method, headers={
+        "Authorization": token, "Content-Type": "application/json",
+        "User-Agent": "Shturval/1.0",
+    })
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+def _wb_fetch_raw(company):
+    """Тянет полный каталог карточек WB (постранично) + актуальные цены.
+    Остатки (QUANTITY) новому магазину без складов ставим 0 — они появятся, когда
+    появятся реальные остатки на WB (отдельный склад. API, не нужен при 0 товаров)."""
+    goods = []
+    cats = {}
+    cursor = {"limit": 100}
+    for _ in range(50):    # защита от бесконечной пагинации
+        data = wb_request(company, "content", "/content/v2/get/cards/list?locale=ru", method="POST",
+                           body={"settings": {"cursor": cursor,
+                                               "filter": {"withPhoto": -1, "allowedCategoriesOnly": False},
+                                               "sort": {"ascending": False}}})
+        cards = data.get("cards") or []
+        for c in cards:
+            sid = c.get("subjectID")
+            sname = c.get("subjectName") or "Без категории"
+            if sid is not None:
+                cats[sid] = sname
+            goods.append({
+                "TITLE": c.get("title") or c.get("vendorCode") or "",
+                "CATEGORY_ID": sid,
+                "QUANTITY": 0,
+                "PRICE": 0.0,
+                "PRICES": [],
+                "_nm": c.get("nmID"),
+            })
+        cur = data.get("cursor") or {}
+        total = cur.get("total", 0)
+        if not cards or total < cursor.get("limit", 100):
+            break
+        cursor = {"limit": 100, "updatedAt": cur.get("updatedAt"), "nmID": cur.get("nmID")}
+    if goods:
+        try:
+            pdata = wb_request(company, "prices", "/api/v2/list/goods/filter?limit=1000&offset=0")
+            pmap = {}
+            for g in (pdata.get("data") or {}).get("listGoods", []) or []:
+                sizes = g.get("sizes") or []
+                # цена продажи — с учётом скидки (то, что реально платит покупатель)
+                price = sizes[0].get("discountedPrice") if sizes else g.get("discountedPrice")
+                pmap[g.get("nmID")] = _num(price)
+            for g in goods:
+                g["PRICE"] = pmap.get(g.get("_nm"), 0.0)
+        except Exception:
+            pass       # без цен каталог всё равно полезен (названия/категории/остатки)
+    return goods, cats
+
+def _wb_refresh(company):
+    try:
+        goods, cats = _wb_fetch_raw(company)
+        WB_CACHE[company] = {"t": time.time(), "goods": goods, "cats": cats}
+    except Exception as e:
+        cur = WB_CACHE.get(company) or {"goods": [], "cats": {}}
+        cur["t"] = time.time()
+        cur["error"] = str(e)
+        WB_CACHE[company] = cur
+
+def _wb_ensure(company):
+    cur = WB_CACHE.get(company)
+    if cur is None:
+        _wb_refresh(company)          # первый раз — синхронно (магазин маленький, не 1С)
+    elif time.time() - cur.get("t", 0) > WB_TTL:
+        threading.Thread(target=_wb_refresh, args=(company,), daemon=True).start()
+    return WB_CACHE.get(company) or {"goods": [], "cats": {}}
+
+def wb_get_goods(company):
+    return _wb_ensure(company).get("goods") or []
+
+def wb_get_categories(company):
+    return _wb_ensure(company).get("cats") or {}
+
 # --- 1С (Yaros DataGate): товары, остатки, цены ---
 import base64
 
@@ -3231,9 +3331,13 @@ def _refresh_catalog(force=False):
     finally:
         _goods["refreshing"] = False
 
-def get_goods():
+def get_goods(company=None):
     """Мгновенно отдаёт каталог из памяти. Если устарел — обновляет ФОНОМ, не задерживая ответ.
-    Ждать (~50 сек) приходится только при самой первой загрузке, когда кэша ещё нет."""
+    Ждать (~50 сек) приходится только при самой первой загрузке, когда кэша ещё нет.
+    Компания, отличная от Бизмарта (например, joru/Wildberries), идёт по СВОЕЙ, полностью
+    отдельной ветке (см. wb_get_goods) — общий кэш/1С этой веткой не трогается."""
+    if company and company != COMPANY_ID:
+        return wb_get_goods(company)
     if _goods["goods"] is not None:
         if time.time() >= _goods.get("next_try", 0) and not _goods["refreshing"]:
             threading.Thread(target=_refresh_catalog, daemon=True).start()
@@ -3257,7 +3361,9 @@ def get_goods():
             raise
         return _goods["goods"]
 
-def get_categories():
+def get_categories(company=None):
+    if company and company != COMPANY_ID:
+        return wb_get_categories(company)
     if _goods["cats"] is None:
         try:
             _goods["cats"] = _fetch_cats()
@@ -3413,10 +3519,10 @@ def super_category(text):
 def _good_scat(x, cats):
     return super_category((cats.get(x.get("CATEGORY_ID"), "") or "") + " " + (x.get("TITLE", "") or ""))
 
-def build_inventory():
+def build_inventory(company=None):
     """Лёгкая сводка по складу для дашборда «Товары»."""
-    goods = get_goods()
-    cats = get_categories()
+    goods = get_goods(company)
+    cats = get_categories(company)
     total_units = 0.0
     retail_value = 0.0
     cost_value = 0.0
@@ -3492,6 +3598,12 @@ def build_inventory():
         "low": low_out,
         "updated": time.strftime("%H:%M:%S"),
     }
+    if company and company != COMPANY_ID:
+        wbc = WB_CACHE.get(company) or {}
+        if wbc.get("error"):
+            _inv_res["stale"] = True
+            _inv_res["error"] = wbc["error"]
+        return _inv_res
     if _goods.get("from_backup"):      # каталог взят из резервной копии (1С недоступна)
         _inv_res["stale"] = True
         if _goods.get("t"):
@@ -3500,8 +3612,11 @@ def build_inventory():
         kv_save("inventory", _inv_res)     # запоминаем последний удачный снимок склада
     return _inv_res
 
-def get_inventory():
-    """Сводка склада, устойчивая к сбоям 1С: при ошибке отдаёт последний снимок из базы."""
+def get_inventory(company=None):
+    """Сводка склада, устойчивая к сбоям 1С: при ошибке отдаёт последний снимок из базы.
+    Для НЕ-Бизмарт компаний (WB) — свой кэш-ключ, без общего файлового снимка 1С."""
+    if company and company != COMPANY_ID:
+        return cached("inventory_%s" % company, 120, lambda: build_inventory(company))
     try:
         return cached("inventory", 120, build_inventory)
     except Exception:
@@ -3511,8 +3626,8 @@ def get_inventory():
             return d
         raise
 
-def build_categories():
-    cats = get_categories()
+def build_categories(company=None):
+    cats = get_categories(company)
     items = [{"id": k, "title": v} for k, v in cats.items() if v]
     items.sort(key=lambda i: i["title"])
     return {"categories": items}
@@ -3538,9 +3653,9 @@ def yaros_create_good(payload):
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
-def search_products(q, page, per=50, cat=None, in_stock=False, scat=None):
-    goods = get_goods()
-    cats = get_categories()
+def search_products(q, page, per=50, cat=None, in_stock=False, scat=None, company=None):
+    goods = get_goods(company)
+    cats = get_categories(company)
     q = (q or "").strip().lower()
     cat = (cat or "").strip().lower()
     scat = (scat or "").strip()
@@ -3566,7 +3681,7 @@ def search_products(q, page, per=50, cat=None, in_stock=False, scat=None):
             "qty": int(_num(x.get("QUANTITY"))),
         })
     res = {"total": total, "page": page, "per": per, "items": out}
-    if _goods.get("from_backup"):      # каталог из резервной копии — честно помечаем
+    if not (company and company != COMPANY_ID) and _goods.get("from_backup"):
         res["stale"] = True
         if _goods.get("t"):
             res["updated"] = time.strftime("%d.%m %H:%M", time.localtime(_goods["t"]))
@@ -6119,6 +6234,10 @@ class Handler(BaseHTTPRequestHandler):
             title = (body.get("title") or "").strip()
             if not title:
                 return self._send(400, {"ok": False, "error": "Нужно название товара"})
+            _co = (self._user() or {}).get("company") or COMPANY_ID
+            if _co != COMPANY_ID:
+                return self._send(200, {"ok": False,
+                    "error": "Добавление товара для Wildberries пока не подключено — карточки создаются в кабинете WB, здесь появятся автоматически."})
             payload = {
                 "TITLE": title,
                 "CATEGORY_ID": (body.get("category_id") or "").strip(),
@@ -6721,21 +6840,30 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/overview"):
             return self._send(200, get_overview())
         if self.path.startswith("/api/categories"):
+            _co = (self._user() or {}).get("company") or COMPANY_ID
             try:
-                return self._send(200, build_categories())
+                return self._send(200, build_categories(_co))
             except Exception as e:
                 return self._send(200, {"categories": [], "error": str(e)})
         if self.path.startswith("/api/inventory"):
+            _co = (self._user() or {}).get("company") or COMPANY_ID
             try:
-                return self._send(200, get_inventory())
+                return self._send(200, get_inventory(_co))
             except Exception as e:
-                return self._send(200, {"error": "Нет связи с 1С: " + str(e)})
+                src = "1С" if _co == COMPANY_ID else "Wildberries"
+                return self._send(200, {"error": "Нет связи с %s: %s" % (src, e)})
         if self.path.startswith("/api/assortment"):
             from urllib.parse import urlparse, parse_qs
+            _co = (self._user() or {}).get("company") or COMPANY_ID
             try:
                 days = int(parse_qs(urlparse(self.path).query).get("days", ["30"])[0])
             except ValueError:
                 days = 30
+            if _co != COMPANY_ID:
+                # Продажи для WB-компаний пока не подключены (нужна статистика заказов WB) —
+                # честно отдаём пустой, но валидный результат, чтобы фронт не падал.
+                return self._send(200, {"period_days": days, "groups": [], "floors": [], "tree": [],
+                                         "note": "Продажи Wildberries ещё не подключены."})
             try:
                 return self._send(200, get_assortment(days))
             except Exception as e:
@@ -6814,10 +6942,13 @@ class Handler(BaseHTTPRequestHandler):
                 page = int(qs.get("page", ["1"])[0])
             except ValueError:
                 page = 1
+            _co = (self._user() or {}).get("company") or COMPANY_ID
             try:
-                return self._send(200, search_products(q, max(1, page), cat=cat, in_stock=in_stock, scat=scat))
+                return self._send(200, search_products(q, max(1, page), cat=cat, in_stock=in_stock,
+                                                        scat=scat, company=_co))
             except Exception as e:
-                return self._send(200, {"error": "Нет связи с 1С: " + str(e), "items": [], "total": 0})
+                src = "1С" if _co == COMPANY_ID else "Wildberries"
+                return self._send(200, {"error": "Нет связи с %s: %s" % (src, e), "items": [], "total": 0})
         if self.path.startswith("/api/ig/clients"):
             try:
                 return self._send(200, {"clients": ig_clients_base()})

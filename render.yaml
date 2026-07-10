@@ -35,6 +35,10 @@ services:
       - key: YAROS_CREATE_URL
         sync: false
 
+      # --- Wildberries (по компаниям, WB_TOKEN_<COMPANY_ID заглавными>) ---
+      - key: WB_TOKEN_JORU
+        sync: false
+
       # --- ChatPlace ---
       - key: CHATPLACE_KEY
         sync: false
