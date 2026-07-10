@@ -607,7 +607,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.26.0<br>Постоянный вход: «?key=» теперь сохраняется навсегда + кнопка «Моя ссылка входа» в настройках</div>
+      Штурвал v4.27.0<br>Галочки статуса WhatsApp (✓/✓✓/прочитано) вернулись и в пульт «Сделки», не только в отдельную вкладку</div>
   </aside>
 
   <!-- MAIN -->
@@ -5154,7 +5154,9 @@
     const media=m.med?waMediaHTML(m, waPhone):attHTML(m.att);   // WhatsApp (m.med) или Instagram (m.att)
     const key=(typeof hideKey==='string' && hideKey.indexOf('~')>=0)?hideKey:'';
     const meta=' data-dir="'+esc(m.t)+'" data-mkey="'+esc(key)+'" data-mtext="'+encodeURIComponent(m.x||'')+'"';
-    return '<div class="bubble '+m.t+'"'+meta+'>'+linkify(m.x)+media+(m.tm?'<span style="display:block;font-size:10px;opacity:.5;margin-top:2px">'+esc(m.tm)+'</span>':'')+'</div>';
+    const tick=(('st' in m) && m.t==='out')?(' '+waMsgTick(m)):'';   // галочки статуса ✓/✓✓ — только WhatsApp (у IG/TG поля st нет)
+    const foot=(m.tm||tick)?'<span style="display:block;font-size:10px;margin-top:2px"><span style="opacity:.5">'+esc(m.tm||'')+'</span>'+tick+'</span>':'';
+    return '<div class="bubble '+m.t+'"'+meta+'>'+linkify(m.x)+media+foot+'</div>';
   }
   // Тянем WhatsApp-медиа в чате сделки через прокси с ЯВНЫМ номером (waCur тут не задан)
   const ckWaCache={};
