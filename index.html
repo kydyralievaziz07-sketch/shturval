@@ -3566,13 +3566,19 @@
       const r=await apiFetch('/api/sales'+(past?('?date='+encodeURIComponent(salesDate)):''),{},ONEC_BASE); if(!r.ok) throw 0;
       const d=await r.json();
       if(d.empty){ st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d'; st.innerHTML='📅 За <b>'+esc(salesDate)+'</b> у нас ещё нет сохранённых данных. История копится с 18.06.2026.'; clearSales(); loadSalesHistory(); return; }
-      if(d.error) throw 0;
+      if(d.error && isBizmart()) throw 0;   // у Бизмарта ошибка = 1С реально недоступна (старое поведение)
+      if(d.error){   // у WB ошибка = Wildberries временно ограничил частоту запросов — это НЕ «сервер спит»
+        window._salesData=d; renderSales(d); loadSalesHistory();
+        st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d';
+        st.innerHTML='🟠 <b>Wildberries временно ограничил частоту запросов</b> (не сервер Штурвала — он не засыпает). Обновится само в течение получаса, ничего делать не нужно.';
+        return;
+      }
       window._salesData=d; renderSales(d); loadSalesHistory();
     }catch(e){
       if(e&&(e.message==='unauthorized'||e.message==='forbidden')) return;
       const isLocal=(API_BASE!=='');
       if(isLocal){ st.style.borderStyle='dashed'; st.style.borderColor='#ff6b6b'; st.innerHTML='🔴 <b>Нет связи с '+(isBizmart()?'1С':'сервером')+'.</b> Запусти на компьютере <b>backend/Запустить-сервер.command</b> и обнови страницу.'; }
-      else if(!past && attempt<7){ st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d'; st.innerHTML='⏳ <b>Сервер просыпается…</b> после паузы это занимает до минуты. Жду, не закрывай (попытка '+attempt+'/6)…'; clearTimeout(salesTimer); salesTimer=setTimeout(()=>loadSales(attempt+1),12000); }
+      else if(!past && attempt<7){ st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d'; st.innerHTML='⏳ <b>'+(isBizmart()?'Сервер 1С просыпается':'Сервер просыпается')+'…</b> после паузы это занимает до минуты. Жду, не закрывай (попытка '+attempt+'/6)…'; clearTimeout(salesTimer); salesTimer=setTimeout(()=>loadSales(attempt+1),12000); }
       else { st.style.borderStyle='dashed'; st.style.borderColor='#ff6b6b'; st.innerHTML='🔴 <b>Сервер пока не ответил.</b> Обнови страницу через минуту.'; }
     }
   }
