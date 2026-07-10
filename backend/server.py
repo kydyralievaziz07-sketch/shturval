@@ -3171,6 +3171,30 @@ WB_HOSTS = {
 WB_CACHE = {}          # company -> {"t": unix, "goods": [...], "cats": {...}}
 WB_TTL = 300
 
+# Кэш выше живёт только в памяти процесса — каждый рестарт/деплой Render его теряет,
+# а WB Statistics API жёстко лимитирует частоту (быстро отвечает 429 после рестарта,
+# пока лимит не остынет). Поэтому дублируем в Supabase (kv_cache, сжато) — при холодном
+# старте отдаём последний известный снимок МГНОВЕННО, не дожидаясь живого WB.
+def _wb_backup_save(key, payload):
+    if not supa_on():
+        return
+    try:
+        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        packed = base64.b64encode(gzip.compress(raw, 6)).decode("ascii")
+        kv_save(key, {"z": packed, "t": int(time.time())})
+    except Exception:
+        pass
+
+def _wb_backup_load(key):
+    try:
+        v = kv_load(key)
+        if not v or not v.get("z"):
+            return None
+        raw = gzip.decompress(base64.b64decode(v["z"]))
+        return json.loads(raw.decode("utf-8"))
+    except Exception:
+        return None
+
 def wb_token(company):
     """Ключ WB читаем напрямую из окружения (WB_TOKEN_<COMPANY заглавными>), а не через
     CFG — CFG собирает только заранее перечисленный список ключей (load_secret), и держать
@@ -3255,6 +3279,7 @@ def _wb_refresh(company):
     try:
         goods, cats = _wb_fetch_raw(company)
         WB_CACHE[company] = {"t": time.time(), "goods": goods, "cats": cats}
+        _wb_backup_save("wb_goods_" + company, {"goods": goods, "cats": cats})
     except Exception as e:
         cur = WB_CACHE.get(company) or {"goods": [], "cats": {}}
         cur["t"] = time.time()
@@ -3264,7 +3289,12 @@ def _wb_refresh(company):
 def _wb_ensure(company):
     cur = WB_CACHE.get(company)
     if cur is None:
-        _wb_refresh(company)          # первый раз — синхронно (магазин маленький, не 1С)
+        b = _wb_backup_load("wb_goods_" + company)   # холодный старт — сразу отдаём снимок из базы
+        if b and b.get("goods"):
+            WB_CACHE[company] = {"t": 0.0, "goods": b["goods"], "cats": b.get("cats") or {}, "from_backup": True}
+            threading.Thread(target=_wb_refresh, args=(company,), daemon=True).start()
+        else:
+            _wb_refresh(company)      # ни памяти, ни снимка в базе — тянем живьём (синхронно)
     elif time.time() - cur.get("t", 0) > WB_TTL:
         threading.Thread(target=_wb_refresh, args=(company,), daemon=True).start()
     return WB_CACHE.get(company) or {"goods": [], "cats": {}}
@@ -3292,6 +3322,7 @@ def _wb_sales_refresh(company):
     try:
         rows = _wb_fetch_sales(company)
         WB_SALES_CACHE[company] = {"t": time.time(), "rows": rows}
+        _wb_backup_save("wb_sales_" + company, {"rows": rows})
     except Exception as e:
         cur = WB_SALES_CACHE.get(company) or {"rows": []}
         cur["t"] = time.time()
@@ -3301,7 +3332,12 @@ def _wb_sales_refresh(company):
 def wb_sales_cache(company):
     cur = WB_SALES_CACHE.get(company)
     if cur is None:
-        _wb_sales_refresh(company)             # первый раз — синхронно
+        b = _wb_backup_load("wb_sales_" + company)
+        if b and b.get("rows"):
+            WB_SALES_CACHE[company] = {"t": 0.0, "rows": b["rows"], "from_backup": True}
+            threading.Thread(target=_wb_sales_refresh, args=(company,), daemon=True).start()
+        else:
+            _wb_sales_refresh(company)         # ни памяти, ни снимка в базе — тянем живьём
     elif time.time() - cur.get("t", 0) > WB_SALES_TTL:
         threading.Thread(target=_wb_sales_refresh, args=(company,), daemon=True).start()
     return WB_SALES_CACHE.get(company) or {"rows": []}
@@ -3390,6 +3426,7 @@ def _wb_orders_refresh(company):
     try:
         rows = _wb_fetch_orders(company)
         WB_ORDERS_CACHE[company] = {"t": time.time(), "rows": rows}
+        _wb_backup_save("wb_orders_" + company, {"rows": rows})
     except Exception as e:
         cur = WB_ORDERS_CACHE.get(company) or {"rows": []}
         cur["t"] = time.time(); cur["error"] = str(e)
@@ -3398,7 +3435,12 @@ def _wb_orders_refresh(company):
 def wb_orders_cache(company):
     cur = WB_ORDERS_CACHE.get(company)
     if cur is None:
-        _wb_orders_refresh(company)
+        b = _wb_backup_load("wb_orders_" + company)
+        if b and b.get("rows"):
+            WB_ORDERS_CACHE[company] = {"t": 0.0, "rows": b["rows"], "from_backup": True}
+            threading.Thread(target=_wb_orders_refresh, args=(company,), daemon=True).start()
+        else:
+            _wb_orders_refresh(company)
     elif time.time() - cur.get("t", 0) > WB_ORDERS_TTL:
         threading.Thread(target=_wb_orders_refresh, args=(company,), daemon=True).start()
     return WB_ORDERS_CACHE.get(company) or {"rows": []}
