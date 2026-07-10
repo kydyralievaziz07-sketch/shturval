@@ -190,6 +190,25 @@
   .overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:40;display:none}
   .overlay.open{display:block}
 
+  /* Баннер запроса разрешения на уведомления браузера */
+  .push-banner{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:14px 18px;display:flex;align-items:center;gap:14px;z-index:300;
+    box-shadow:0 8px 32px rgba(0,0,0,.4);min-width:290px;max-width:400px;
+    animation:pbSlideUp .35s ease}
+  @keyframes pbSlideUp{from{opacity:0;transform:translateX(-50%) translateY(18px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+  .push-banner .pb-ico{font-size:26px;flex-shrink:0}
+  .push-banner .pb-txt{flex:1;font-size:13px;line-height:1.45;min-width:0}
+  .push-banner .pb-txt b{font-size:14px;display:block;margin-bottom:3px;color:var(--text)}
+  .push-banner .pb-txt span{color:var(--muted)}
+  .push-banner .pb-btns{display:flex;gap:8px;flex-shrink:0}
+  .push-banner .pb-ok{background:var(--accent);color:#fff;border:none;border-radius:8px;
+    padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap}
+  .push-banner .pb-ok:hover{opacity:.88}
+  .push-banner .pb-skip{background:none;color:var(--muted);border:1px solid var(--line);
+    border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;font-family:inherit;white-space:nowrap}
+  .push-banner .pb-skip:hover{color:var(--text);border-color:var(--muted)}
+
   /* INBOX / чаты */
   .inbox{display:grid;grid-template-columns:300px 1fr;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;height:72vh}
   .chatlist{border-right:1px solid var(--line);overflow-y:auto;background:var(--panel);min-height:0}
@@ -607,7 +626,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.27.0<br>Галочки статуса WhatsApp (✓/✓✓/прочитано) вернулись и в пульт «Сделки», не только в отдельную вкладку</div>
+      Штурвал v4.28.0<br>Баннер запроса разрешения на уведомления браузера: появляется через 2с после входа, «Позже» — откладывает на 3 дня</div>
   </aside>
 
   <!-- MAIN -->
@@ -4334,6 +4353,7 @@
     if(_notifTimer) return;
     document.addEventListener('click', notifUnlock, {once:true});   // разблокировать звук/разрешение при первом клике
     const b=document.getElementById('notif-sound-btn'); if(b) b.textContent=NOTIF_ON?'🔔 Звук уведомлений: вкл':'🔕 Звук уведомлений: выкл';
+    setTimeout(showNotifPermBanner, 2000);    // через 2с после входа — показать баннер разрешения уведомлений
     notifyPoll();                              // первый проход строит базу (без звона)
     _notifTimer=setInterval(notifyPoll, 25000);
   }
@@ -4341,6 +4361,44 @@
     NOTIF_ON=!NOTIF_ON; try{ localStorage.setItem('shturval_notif',NOTIF_ON?'1':'0'); }catch(e){}
     const b=document.getElementById('notif-sound-btn'); if(b) b.textContent=NOTIF_ON?'🔔 Звук уведомлений: вкл':'🔕 Звук уведомлений: выкл';
     if(NOTIF_ON){ notifUnlock(); playDing(); }   // включили — сразу разблокируем и проиграем пример
+  }
+
+  // ── Баннер запроса разрешения на push-уведомления браузера ──────────────────
+  function showNotifPermBanner(){
+    if(!('Notification' in window)) return;                // браузер не поддерживает
+    if(Notification.permission !== 'default') return;     // уже granted или denied
+    try{
+      var v=localStorage.getItem('shturval_push_ask');
+      if(v==='block') return;                              // пользователь запретил навсегда
+      if(v){ var until=Number(v); if(Date.now()<until) return; }  // нажал «Позже» — ждём 3 дня
+    }catch(e){}
+    if(document.getElementById('push-banner')) return;    // уже показан
+    var el=document.createElement('div');
+    el.id='push-banner'; el.className='push-banner';
+    el.innerHTML='<div class="pb-ico">🔔</div>'
+      +'<div class="pb-txt"><b>Включите уведомления</b><span>Будете получать сигнал о новых сообщениях от клиентов</span></div>'
+      +'<div class="pb-btns">'
+      +'<button class="pb-ok" onclick="doAskNotifPerm()">Разрешить</button>'
+      +'<button class="pb-skip" onclick="skipNotifBanner()">Позже</button>'
+      +'</div>';
+    document.body.appendChild(el);
+  }
+  function doAskNotifPerm(){
+    var el=document.getElementById('push-banner');
+    function done(p){
+      if(el) el.remove();
+      if(p==='granted'){ playDing(); }
+      else if(p==='denied'){ try{ localStorage.setItem('shturval_push_ask','block'); }catch(e){} }
+    }
+    try{
+      var r=Notification.requestPermission();
+      if(r && typeof r.then==='function') r.then(done).catch(function(){ if(el) el.remove(); });
+      else done(r);   // старый callback-based API (Safari < 15)
+    }catch(e){ if(el) el.remove(); }
+  }
+  function skipNotifBanner(){
+    var el=document.getElementById('push-banner'); if(el) el.remove();
+    try{ localStorage.setItem('shturval_push_ask', String(Date.now()+3*24*60*60*1000)); }catch(e){}  // снова через 3 дня
   }
   // Авто-воронка: раскладываем чаты по стадиям из подсказки сервера (c.stage).
   // Сделки, которые двигали ВРУЧНУЮ (d.manual===true), не трогаем.
