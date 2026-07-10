@@ -1,44 +1,73 @@
-# Конфигурация «всегда включённого» сервера Штурвала для Render.com.
-# Этот сервер держит каталог 1С (20 МБ) в памяти и обновляет его в фоне,
-# поэтому товары видны на телефоне даже при выключенном ноутбуке.
-# Секреты (токены/пароли) НЕ хранятся здесь — их вводят в панели Render (sync: false).
+# Конфигурация сервера Штурвала для Render.com.
+# ВАЖНО: все переменные объявлены с sync:false — это значит Render НЕ трогает их значения
+# при деплоях. Значения задаются ТОЛЬКО через панель Render → Environment.
+# Добавление нового env var в код → добавь его сюда с sync:false → иначе Render сотрёт его.
 services:
   - type: web
     name: shturval-backend
     runtime: python
-    plan: free
+    plan: starter
     rootDir: backend
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python server.py"
     envVars:
-      - key: AMO_SUBDOMAIN
+      # --- AUTH ---
+      - key: SITE_PASSWORD
         sync: false
-      - key: AMO_TOKEN
+      - key: OWNER_LOGIN
         sync: false
+      - key: USERS_JSON
+        sync: false
+
+      # --- Supabase ---
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+
+      # --- Yaros / 1С ---
       - key: YAROS_URL
         sync: false
       - key: YAROS_LOGIN
         sync: false
       - key: YAROS_PASS
         sync: false
+      - key: YAROS_CREATE_URL
+        sync: false
+
+      # --- ChatPlace ---
       - key: CHATPLACE_KEY
         sync: false
-      - key: SITE_PASSWORD
+
+      # --- Instagram ---
+      - key: IG_APP_SECRET
         sync: false
-      # WhatsApp Cloud API (официальное подключение своего номера через Meta)
+      - key: IG_VERIFY_TOKEN
+        sync: false
+      - key: IG_TOKEN
+        sync: false
+      - key: IG_ACCOUNT_ID
+        sync: false
+      - key: IG_USERNAME
+        sync: false
+      - key: IG_TOKEN_BIZMART_KG
+        sync: false
+      - key: IG_APP_SECRET_BIZMART_POSTING
+        sync: false
+
+      # --- WhatsApp ---
       - key: WA_TOKEN
+        sync: false
+      - key: WA_APP_SECRET
         sync: false
       - key: WA_PHONE_ID
         sync: false
       - key: WA_VERIFY_TOKEN
         sync: false
-      - key: WA_APP_SECRET
-        sync: false
       - key: WA_DISPLAY
         sync: false
-      # Реклама (Meta Marketing API). ОБЪЯВЛЕНЫ здесь (sync:false), чтобы деплой
-      # НЕ стирал их — значения задаются в панели Render. Особенно META_ADS_TOKEN,
-      # который иначе пропадал при передеплоях и реклама «отключалась».
+
+      # --- Реклама Meta ---
       - key: META_ADS_TOKEN
         sync: false
       - key: META_AD_ACCOUNT
@@ -46,4 +75,26 @@ services:
       - key: META_PAGE_ID
         sync: false
       - key: META_IG_ID
+        sync: false
+
+      # --- ИИ-бот ---
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        sync: false
+
+      # --- Google Sheets (Авто Рент) ---
+      - key: GOOGLE_SA_JSON
+        sync: false
+      - key: RENT_SHEET_ID
+        sync: false
+
+      # --- Telegram ---
+      - key: TG_BOT_TOKEN
+        sync: false
+
+      # --- AMO CRM (отключён, но объявлен чтобы Render не стёр если вернём) ---
+      - key: AMO_SUBDOMAIN
+        sync: false
+      - key: AMO_TOKEN
         sync: false
