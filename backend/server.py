@@ -3164,6 +3164,7 @@ def _wa_fallback_sweep():
 WB_HOSTS = {
     "content": "https://content-api.wildberries.ru",
     "prices": "https://discounts-prices-api.wildberries.ru",
+    "stats": "https://statistics-api.wildberries.ru",
 }
 WB_CACHE = {}          # company -> {"t": unix, "goods": [...], "cats": {...}}
 WB_TTL = 300
@@ -3260,6 +3261,117 @@ def wb_get_goods(company):
 
 def wb_get_categories(company):
     return _wb_ensure(company).get("cats") or {}
+
+# --- Wildberries: продажи/чеки/выручка (Statistics API) ---
+# ВАЖНО: у WB нет закупочной цены товара → «прибыль» (в смысле маржи) отсюда посчитать
+# НЕЛЬЗЯ — честно показываем только выручку (то, что реально приходит продавцу — forPay)
+# и число чеков, без выдуманной себестоимости.
+WB_SALES_CACHE = {}     # company -> {"t": unix, "rows": [...], "error": ...}
+WB_SALES_TTL = 1800     # 30 минут — статистика WB и так обновляется у них раз в ~30 мин
+WB_SALES_DAYS = 90      # WB гарантирует хранение данных не более 90 дней
+
+def _wb_fetch_sales(company):
+    date_from = time.strftime("%Y-%m-%dT00:00:00", time.gmtime(time.time() - WB_SALES_DAYS * 86400))
+    data = wb_request(company, "stats", "/api/v1/supplier/sales?dateFrom=%s" % date_from)
+    return data if isinstance(data, list) else []
+
+def _wb_sales_refresh(company):
+    try:
+        rows = _wb_fetch_sales(company)
+        WB_SALES_CACHE[company] = {"t": time.time(), "rows": rows}
+    except Exception as e:
+        cur = WB_SALES_CACHE.get(company) or {"rows": []}
+        cur["t"] = time.time()
+        cur["error"] = str(e)
+        WB_SALES_CACHE[company] = cur
+
+def wb_sales_cache(company):
+    cur = WB_SALES_CACHE.get(company)
+    if cur is None:
+        _wb_sales_refresh(company)             # первый раз — синхронно
+    elif time.time() - cur.get("t", 0) > WB_SALES_TTL:
+        threading.Thread(target=_wb_sales_refresh, args=(company,), daemon=True).start()
+    return WB_SALES_CACHE.get(company) or {"rows": []}
+
+_WB_NOTE = "Прибыль недоступна — Wildberries не передаёт закупочную (себестоимость) цену товара, только выручку."
+
+def wb_sales_day(company, date_str=None):
+    cache = wb_sales_cache(company)
+    rows = cache.get("rows") or []
+    day = date_str if (date_str and len(date_str) == 10) else time.strftime("%Y-%m-%d")
+    day_rows = [r for r in rows if (r.get("date") or "")[:10] == day]
+    s_rows = [r for r in day_rows if (r.get("saleID") or "").startswith("S")]
+    r_rows = [r for r in day_rows if (r.get("saleID") or "").startswith("R")]
+    net = sum(_num(x.get("forPay")) for x in s_rows) - sum(_num(x.get("forPay")) for x in r_rows)
+    gross = sum(_num(x.get("priceWithDisc")) for x in s_rows)
+    ret_sum = sum(_num(x.get("forPay")) for x in r_rows)
+    res = {"date": day, "sales_count": len(s_rows), "net_sales": round(net),
+           "gross_sales": round(gross), "profit": None,
+           "avg_check": round(net / len(s_rows)) if s_rows else 0,
+           "returns_count": len(r_rows), "returns_sum": round(ret_sum),
+           "receipts": day_rows[:200], "note": _WB_NOTE}
+    if cache.get("error"):
+        res["stale"] = True
+        res["error"] = cache["error"]
+    return res
+
+def wb_sales_history(company, days=14):
+    cache = wb_sales_cache(company)
+    rows = cache.get("rows") or []
+    by_day = {}
+    for r in rows:
+        d = (r.get("date") or "")[:10]
+        if not d:
+            continue
+        agg = by_day.setdefault(d, {"sales": 0.0, "cnt": 0, "ret": 0.0})
+        sid = r.get("saleID") or ""
+        if sid.startswith("S"):
+            agg["sales"] += _num(r.get("forPay")); agg["cnt"] += 1
+        elif sid.startswith("R"):
+            agg["ret"] += _num(r.get("forPay"))
+    out = []
+    for d in sorted(by_day.keys())[-days:]:
+        v = by_day[d]
+        out.append({"date": d, "sales": round(v["sales"] - v["ret"]), "profit": None,
+                    "receipts": v["cnt"], "returns_sum": round(v["ret"])})
+    res = {"days": out, "note": _WB_NOTE}
+    if cache.get("error") and not rows:
+        res["error"] = cache["error"]
+    return res
+
+def wb_assortment(company, days=30):
+    cache = wb_sales_cache(company)
+    rows = cache.get("rows") or []
+    cutoff = time.strftime("%Y-%m-%d", time.gmtime(time.time() - days * 86400))
+    by_subj = {}
+    for r in rows:
+        if (r.get("date") or "")[:10] < cutoff:
+            continue
+        if not (r.get("saleID") or "").startswith("S"):
+            continue
+        s = r.get("subject") or "Без категории"
+        agg = by_subj.setdefault(s, {"sales": 0.0, "units": 0})
+        agg["sales"] += _num(r.get("forPay")); agg["units"] += 1
+    groups = [{"title": k, "sales": round(v["sales"]), "units": v["units"]}
+              for k, v in sorted(by_subj.items(), key=lambda i: -i[1]["sales"])]
+    res = {"period_days": days, "groups": groups, "floors": [], "tree": groups, "note": _WB_NOTE}
+    if cache.get("error") and not rows:
+        res["error"] = cache["error"]
+    return res
+
+def wb_sales_sums(company):
+    """Выручка по периодам для «Расходов» — profit=0 (у WB нет закупочной цены, маржу
+    посчитать нечем), иначе «чистая» строка в Расходах врала бы, приравнивая выручку к прибыли."""
+    cache = wb_sales_cache(company)
+    rows = cache.get("rows") or []
+    today = _today_str(); wk = _days_ago(6); mo = today[:7]
+    def net(pred):
+        s = sum(_num(r.get("forPay")) for r in rows if (r.get("saleID") or "").startswith("S") and pred((r.get("date") or "")[:10]))
+        rt = sum(_num(r.get("forPay")) for r in rows if (r.get("saleID") or "").startswith("R") and pred((r.get("date") or "")[:10]))
+        return round(s - rt)
+    return {"today": {"sales": net(lambda d: d == today), "profit": 0},
+            "week": {"sales": net(lambda d: d >= wk), "profit": 0},
+            "month": {"sales": net(lambda d: (d or "")[:7] == mo), "profit": 0}}
 
 # --- 1С (Yaros DataGate): товары, остатки, цены ---
 import base64
@@ -5035,9 +5147,7 @@ def expenses_view(company=None):
             c = (r.get("category") or "Без категории")
             cat[c] = cat.get(c, 0) + _num(r.get("amount"))
     by_cat = [{"category": k, "amount": round(v)} for k, v in sorted(cat.items(), key=lambda i: -i[1])]
-    ss = sales_sums() if co == COMPANY_ID else {"today": {"sales": 0, "profit": 0},
-                                                 "week": {"sales": 0, "profit": 0},
-                                                 "month": {"sales": 0, "profit": 0}}
+    ss = sales_sums() if co == COMPANY_ID else wb_sales_sums(co)
     periods = {}
     for p in ("today", "week", "month"):
         periods[p] = {"sales": ss[p]["sales"], "profit": ss[p]["profit"],
@@ -5066,8 +5176,11 @@ def expenses_view(company=None):
         sv = mrev.get(mm, {"sales": 0.0, "profit": 0.0}); ev = mexp.get(mm, 0.0)
         by_month.append({"month": mm, "sales": round(sv["sales"]), "profit": round(sv["profit"]),
                          "expense": round(ev), "net": round(sv["profit"] - ev)})
-    return {"expenses": rows[:200], "by_category": by_cat, "periods": periods,
-            "by_month": by_month, "total_count": len(rows)}
+    res = {"expenses": rows[:200], "by_category": by_cat, "periods": periods,
+           "by_month": by_month, "total_count": len(rows)}
+    if co != COMPANY_ID:
+        res["note"] = _WB_NOTE
+    return res
 
 
 # ====== РЫНОК: цены товаров на маркетплейсах (Wildberries) ======
@@ -6872,10 +6985,10 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 days = 30
             if _co != COMPANY_ID:
-                # Продажи для WB-компаний пока не подключены (нужна статистика заказов WB) —
-                # честно отдаём пустой, но валидный результат, чтобы фронт не падал.
-                return self._send(200, {"period_days": days, "groups": [], "floors": [], "tree": [],
-                                         "note": "Продажи Wildberries ещё не подключены."})
+                try:
+                    return self._send(200, wb_assortment(_co, days))
+                except Exception as e:
+                    return self._send(200, {"error": "Нет связи с Wildberries: " + str(e), "groups": []})
             try:
                 return self._send(200, get_assortment(days))
             except Exception as e:
@@ -6883,22 +6996,25 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/sales-history"):
             from urllib.parse import urlparse, parse_qs
             _co = (self._user() or {}).get("company") or COMPANY_ID
-            if _co != COMPANY_ID:
-                return self._send(200, {"days": [], "note": "Продажи Wildberries ещё не подключены."})
             try:
                 days = int(parse_qs(urlparse(self.path).query).get("days", ["14"])[0])
             except ValueError:
                 days = 14
+            if _co != COMPANY_ID:
+                try:
+                    return self._send(200, wb_sales_history(_co, max(1, min(days, 400))))
+                except Exception as e:
+                    return self._send(200, {"days": [], "error": "Нет связи с Wildberries: " + str(e)})
             return self._send(200, sales_history(max(1, min(days, 400))))
         if self.path.startswith("/api/sales"):
             from urllib.parse import urlparse, parse_qs
             _co = (self._user() or {}).get("company") or COMPANY_ID
-            if _co != COMPANY_ID:
-                return self._send(200, {"sales_count": 0, "net_sales": 0, "gross_sales": 0,
-                                         "profit": 0, "avg_check": 0, "returns_count": 0,
-                                         "returns_sum": 0, "receipts": [],
-                                         "note": "Продажи Wildberries ещё не подключены."})
             date = (parse_qs(urlparse(self.path).query).get("date", [""])[0] or "").strip()
+            if _co != COMPANY_ID:
+                try:
+                    return self._send(200, wb_sales_day(_co, date))
+                except Exception as e:
+                    return self._send(200, {"error": "Нет связи с Wildberries: " + str(e), "receipts": []})
             try:
                 return self._send(200, sales_day(date))
             except Exception as e:
