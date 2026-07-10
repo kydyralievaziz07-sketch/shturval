@@ -1021,6 +1021,17 @@
       </div>
     </section>
 
+    <!-- WB ADS (read-only обзор продвижения Wildberries) -->
+    <section id="tab-wbads" class="hide">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div style="font-size:12px;color:var(--muted)">📣 Обзор кампаний продвижения на <b>Wildberries</b> — только просмотр, без запуска/остановки.</div>
+          <button class="btn ghost" style="font-size:12px;padding:6px 12px" onclick="loadWbAds()">🔄 Обновить</button>
+        </div>
+      </div>
+      <div id="wbads-body" class="card">Загрузка…</div>
+    </section>
+
     <!-- MARKET -->
     <section id="tab-market" class="hide">
       <div class="card">
@@ -1631,6 +1642,7 @@
     sim      :["Симулятор «Что если»","Подвигай ползунки — увидишь, как изменится прибыль"],
     hr       :["Кадры","Явка, часы, авансы и премии"],
     ads      :["Реклама","Таргет Instagram/Facebook — запуск прямо из Штурвала"],
+    wbads    :["Реклама WB","Обзор кампаний продвижения на Wildberries (только просмотр)"],
     adsreport:["Отчёты по рекламе","Метрики кампаний: расход, охват, клики, переписки, цена результата"],
     adsanalysis:["Анализ рекламы","Какая аудитория и площадки работают лучше"],
     rentdash :["Авто Рент — Дашборд","Сводка по аренде авто"],
@@ -1657,6 +1669,7 @@
     supl:{icon:'🤝',label:'Поставщики'}, fin:{icon:'💰',label:'Финансы'}, exp:{icon:'💸',label:'Расходы'},
     myday:{icon:'🎯',label:'Мой день'}, hr:{icon:'🗓',label:'Кадры'},
     ads:{icon:'📣',label:'Реклама'}, adsreport:{icon:'📑',label:'Отчёты по рекламе'}, adsanalysis:{icon:'🔬',label:'Анализ'},
+    wbads:{icon:'📣',label:'Реклама WB'},
     iginbox:{icon:'📷',label:'Instagram + бот'},
     wainbox:{icon:'🟢',label:'WhatsApp + бот'},
     ai:{icon:'🤖',label:'ИИ-помощник'}, sim:{icon:'📊',label:'Симулятор'},
@@ -1668,7 +1681,7 @@
   };
   const MODULES=[
     {key:'crm',  icon:'🧲', label:'CRM',     tabs:['crmdash','deals','tasks','clients','iginbox','wainbox']},
-    {key:'mkt',  icon:'📣', label:'Реклама', tabs:['ads','adsreport','adsanalysis']},
+    {key:'mkt',  icon:'📣', label:'Реклама', tabs:['ads','adsreport','adsanalysis','wbads']},
     {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','assort','report','analytics','supl','fin','exp']},
     {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','renttasks','rentnotes','rentcars','rentlist','rentalert','rentexp','renthanded','rentanalysis','rentplan','rentclients','rentcalendar']},
     {key:'team', icon:'👥', label:'Команда', tabs:['myday','hr']},
@@ -1692,6 +1705,7 @@
     }
     if(tab==='hr') return isOwner()||USER.sections.indexOf('hr')>=0;
     if(tab==='ads') return isOwner()||canSee('ads');
+    if(tab==='wbads') return canSee('wbads');
     if(tab==='adsreport') return isOwner()||canSee('adsreport')||canSee('ads');       // 'ads' = вся реклама (обратная совместимость)
     if(tab==='adsanalysis') return isOwner()||canSee('adsanalysis')||canSee('ads');
     if(tab==='iginbox') return isOwner()||canSee('iginbox')||canSee('chats');          // 'chats' = обе переписки (обр. совместимость)
@@ -1719,6 +1733,7 @@
     else if(tab==='ads') loadAds();
     else if(tab==='adsreport') loadAdsReport();
     else if(tab==='adsanalysis') loadAdsAnalysis();
+    else if(tab==='wbads') loadWbAds();
     else if(tab==='iginbox') loadIgInbox();
     else if(tab==='wainbox'){ loadWaInbox(); startWaAuto(); }
     else if(tab==='clients') renderClients();
@@ -3071,6 +3086,26 @@
     return _rubKgs;
   }
   function wbPrice(x){ const s=(x.sizes&&x.sizes[0]&&x.sizes[0].price)||{}; return ((s.product||s.basic||x.salePriceU||x.priceU||0))/100; }
+  async function loadWbAds(){
+    const box=document.getElementById('wbads-body'); if(!box) return;
+    box.innerHTML='⏳ Загрузка…';
+    let d=null;
+    try{ const r=await apiFetch('/api/wbads',{},ONEC_BASE); d=await r.json(); }
+    catch(e){ box.innerHTML='<span style="color:var(--muted);font-size:13px">🔴 Нет связи с сервером.</span>'; return; }
+    if(!d||d.has_token===false){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Реклама Wildberries не подключена — нет ключа API для этой компании.</span>'; return; }
+    if(d.error && !(d.groups||[]).length){ box.innerHTML='<span style="color:var(--muted);font-size:13px">⚠️ '+esc(d.error)+'</span>'; return; }
+    const groups=d.groups||[];
+    let html='<div class="kpis" style="margin-bottom:16px">'+
+      '<div class="card kpi"><div class="label">Активных кампаний</div><div class="value">'+(d.active||0)+'</div></div>'+
+      '<div class="card kpi"><div class="label">Всего кампаний</div><div class="value">'+(d.total||0)+'</div></div></div>';
+    if(!groups.length){ html+='<div class="card"><span style="color:var(--muted);font-size:13px">Кампаний пока нет.</span></div>'; }
+    else{
+      html+='<table><thead><tr><th>Статус</th><th>Тип</th><th style="text-align:right">Кампаний</th></tr></thead><tbody>'+
+        groups.map(g=>'<tr><td>'+esc(g.status_label||'')+'</td><td>'+esc(g.type_label||'')+'</td><td style="text-align:right">'+(g.count||0)+'</td></tr>').join('')+
+        '</tbody></table>';
+    }
+    box.innerHTML=html;
+  }
   async function marketSearch(){
     const q=(document.getElementById('mkt-q').value||'').trim();
     const box=document.getElementById('mkt-results'); const sum=document.getElementById('mkt-summary');
@@ -5938,7 +5973,7 @@
   }
   function renderStaff(d){
     const b=document.getElementById('staff-body'); if(!b) return; const staff=d.staff||[];
-    const secNames={all:'Все разделы',dash:'Дашборд',myday:'Мой день',crm:'Живые данные',deals:'CRM',chats:'Чаты',prod:'Товары',sales:'Продажи',clients:'Клиенты',market:'Рынок',analytics:'Аналитика',fin:'Финансы',supl:'Поставщики',rent:'Авто Рент',ads:'Реклама',ai:'ИИ-помощник',staff:'Персонал',set:'Настройки'};
+    const secNames={all:'Все разделы',dash:'Дашборд',myday:'Мой день',crm:'Живые данные',deals:'CRM',chats:'Чаты',prod:'Товары',sales:'Продажи',clients:'Клиенты',market:'Рынок',analytics:'Аналитика',fin:'Финансы',supl:'Поставщики',rent:'Авто Рент',ads:'Реклама',wbads:'Реклама WB',ai:'ИИ-помощник',staff:'Персонал',set:'Настройки'};
     const depts=new Set(staff.filter(s=>s.department).map(s=>s.department));
     const rows=staff.map(s=>{
       const secs=(s.sections||[]).map(x=>secNames[x]||x).join(', ')||'—';

@@ -239,6 +239,7 @@ SECTION_OF = [
     ("/api/tg/broadcast", "chats"), ("/api/tg/clients", "clients"),
     ("/api/assistant", "ai"),
     ("/api/ads", "ads"),
+    ("/api/wbads", "wbads"),
 ]
 
 # Исправления для бота (обучение). Хранится в памяти процесса + дозапись в файл.
@@ -3382,6 +3383,50 @@ def wb_sales_sums(company):
     return {"today": {"sales": net(lambda d: d == today), "profit": 0},
             "week": {"sales": net(lambda d: d >= wk), "profit": 0},
             "month": {"sales": net(lambda d: (d or "")[:7] == mo), "profit": 0}}
+
+# --- Wildberries: реклама (продвижение внутри поиска WB — read-only обзор) ---
+WB_HOSTS["advert"] = "https://advert-api.wildberries.ru"
+WB_ADS_CACHE = {}
+WB_ADS_TTL = 900
+_WB_AD_STATUS = {-1: "удаляется", 4: "готова к запуску", 7: "завершена",
+                  8: "отклонена", 9: "активна", 11: "приостановлена"}
+_WB_AD_TYPE = {4: "в каталоге", 5: "в карточке товара", 6: "в поиске",
+               7: "в рекомендациях", 8: "автоматическая", 9: "аукцион"}
+
+def _wb_ads_refresh(company):
+    try:
+        data = wb_request(company, "advert", "/adv/v1/promotion/count")
+        groups = []
+        for g in (data.get("adverts") or []):
+            groups.append({
+                "type": g.get("type"), "type_label": _WB_AD_TYPE.get(g.get("type"), "тип %s" % g.get("type")),
+                "status": g.get("status"), "status_label": _WB_AD_STATUS.get(g.get("status"), "статус %s" % g.get("status")),
+                "count": g.get("count", 0),
+                "campaigns": [{"id": a.get("advertId"), "changed": a.get("changeTime")}
+                              for a in (g.get("advert_list") or [])][:100],
+            })
+        active = sum(g["count"] for g in groups if g["status"] == 9)
+        total = sum(g["count"] for g in groups)
+        WB_ADS_CACHE[company] = {"t": time.time(), "groups": groups, "active": active, "total": total}
+    except Exception as e:
+        cur = WB_ADS_CACHE.get(company) or {"groups": [], "active": 0, "total": 0}
+        cur["t"] = time.time(); cur["error"] = str(e)
+        WB_ADS_CACHE[company] = cur
+
+def wb_ads_overview(company):
+    if not wb_connected(company):
+        return {"has_token": False}
+    cur = WB_ADS_CACHE.get(company)
+    if cur is None:
+        _wb_ads_refresh(company)
+    elif time.time() - cur.get("t", 0) > WB_ADS_TTL:
+        threading.Thread(target=_wb_ads_refresh, args=(company,), daemon=True).start()
+    cur = WB_ADS_CACHE.get(company) or {"groups": [], "active": 0, "total": 0}
+    res = {"has_token": True, "active": cur.get("active", 0), "total": cur.get("total", 0),
+           "groups": cur.get("groups", [])}
+    if cur.get("error"):
+        res["error"] = cur["error"]
+    return res
 
 # --- 1С (Yaros DataGate): товары, остатки, цены ---
 import base64
@@ -7036,6 +7081,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, market_search(q))
             except Exception as e:
                 return self._send(200, {"items": [], "error": str(e)})
+        if self.path.startswith("/api/wbads"):
+            _co = (self._user() or {}).get("company") or COMPANY_ID
+            try:
+                return self._send(200, wb_ads_overview(_co))
+            except Exception as e:
+                return self._send(200, {"has_token": True, "error": str(e), "groups": []})
         if self.path.startswith("/api/ads/"):
             from urllib.parse import urlparse, parse_qs
             _qp = parse_qs(urlparse(self.path).query)
