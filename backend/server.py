@@ -3772,7 +3772,8 @@ def _wb_fin_refresh(company):
     except Exception as e:
         cur = WB_FIN_CACHE.get(company) or {"by_day": {}}
         cur["t"] = time.time(); cur["error"] = str(e)
-        WB_FIN_CACHE[company] = cur
+        cur["next_try"] = time.time() + 120   # временная ошибка (напр. 503 от WB) — повтор через 2 мин,
+        WB_FIN_CACHE[company] = cur           # не через полный WB_FIN_TTL (час)
     finally:
         with _WB_FIN_LOCK:
             _WB_FIN_INFLIGHT.discard(company)
@@ -3794,8 +3795,9 @@ def wb_fin_cache(company):
             WB_FIN_CACHE[company] = base
             if company not in _WB_FIN_INFLIGHT:
                 threading.Thread(target=_wb_fin_refresh, args=(company,), daemon=True).start()
-    elif (time.time() - cur.get("t", 0) > WB_FIN_TTL and time.time() >= cur.get("next_try", 0)
-          and company not in _WB_FIN_INFLIGHT):
+    elif company not in _WB_FIN_INFLIGHT and time.time() >= cur.get("next_try", 0) and (
+            cur.get("error") or time.time() - cur.get("t", 0) > WB_FIN_TTL):
+        # ошибка (напр. временная 503 от WB) — повторяем раньше обычного TTL, не ждём час
         threading.Thread(target=_wb_fin_refresh, args=(company,), daemon=True).start()
     return WB_FIN_CACHE.get(company) or {"by_day": {}}
 
