@@ -635,7 +635,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.33.0<br>Чип «🔒 Окно закрыто» + авто-возврат: клиент из «Отказано»/«Купить позже» снова написал → в «Новую заявку»
+      Штурвал v4.34.0<br>Без двойного учёта: закрытое окно IG убрано из «В обработке»/«Новой заявки» (человек в одном месте)
   </aside>
 
   <!-- MAIN -->
@@ -4246,7 +4246,15 @@
   }
   let dragChat=null, COCKPIT_CHATS=[], ckCurId=null, ckCurName='', ckView='Новая заявка', LAST_CHAT_ERR='', ckSearch='';
   function ckDoSearch(v){ ckSearch=(v||'').trim().toLowerCase(); renderLeft(); }
-  function newLeadsCount(){ return COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка'); }).length; }
+  function _clKey(nm){ return (nm||'').trim().toLowerCase(); }
+  let _igClosedCache=null, _igClosedTs=0;
+  function igClosedNameSet(){
+    const now=Date.now();
+    if(_igClosedCache && now-_igClosedTs<3000) return _igClosedCache;   // лёгкий кэш
+    const set=new Set(); igClosedList().forEach(c=>{ if(c.name) set.add(_clKey(c.name)); });
+    _igClosedCache=set; _igClosedTs=now; return set;
+  }
+  function newLeadsCount(){ const cl=igClosedNameSet(); return COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка') && !cl.has(_clKey(c.name)); }).length; }
   function igWinList(){
     // Instagram-переписки, где последнее сообщение было 5-7 дней назад — окно ответа (7 дней) скоро закроется
     const now=Date.now()/1000, lo=now-7*86400, hi=now-5*86400;
@@ -4264,7 +4272,8 @@
   }
   function renderFunnel(){
     const fb=document.getElementById('funnelbar'); if(!fb) return;
-    const _norm=CRM_STATUSES.map(st=>({st:st,lbl:st,cls:'',n:(st==='Новая заявка')?newLeadsCount():CRM.deals.filter(d=>d.status===st).length}));
+    const _clSet=igClosedNameSet();
+    const _norm=CRM_STATUSES.map(st=>({st:st,lbl:st,cls:'',n:(st==='Новая заявка')?newLeadsCount():CRM.deals.filter(d=>d.status===st && !_clSet.has(_clKey((getClient(d.client_id)||{}).name))).length}));
     const _spec=[{st:'Купить позже',lbl:'Купить позже',cls:'later',n:CRM.deals.filter(d=>d.status==='Купить позже').length},
                  {st:'Отказ',lbl:'Отказано',cls:'reject',n:CRM.deals.filter(d=>d.status==='Отказ').length},
                  {st:'__igwin',lbl:'⏳ Окно IG',cls:'igwin',n:igWinList().length},
@@ -4553,13 +4562,15 @@
           items.push({name:cl.name,sub:d.status,chatId:null,ts:0,unread:false});
       });
     } else if(ckView==='Новая заявка'){
-      items=COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка'); }).map(c=>({name:c.name,sub:(c.time||'')+' · '+(c.status||'новый'),chatId:c.id,ts:c.ts||0,unread:!!c.unread,channel:c.channel||'ig'}));
+      const _cl=igClosedNameSet();
+      items=COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка') && !_cl.has(_clKey(c.name)); }).map(c=>({name:c.name,sub:(c.time||'')+' · '+(c.status||'новый'),chatId:c.id,ts:c.ts||0,unread:!!c.unread,channel:c.channel||'ig'}));
     } else if(ckView==='__igwin'){
       items=igWinList().map(c=>{ const days=Math.floor((Date.now()/1000-(c.ts||0))/86400); return {name:c.name,sub:'⏳ писал '+days+' дн. назад — успей ответить до 7 дней',chatId:c.id,ts:c.ts||0,unread:!!c.unread,channel:'ig'}; });
     } else if(ckView==='__igclosed'){
       items=igClosedList().map(c=>{ const days=Math.floor((Date.now()/1000-(c.ts||0))/86400); const d=findDealByName(c.name); return {name:c.name,sub:'🔒 окно закрыто · молчит '+days+' дн.'+(d?(' · '+d.status):''),chatId:c.id,ts:c.ts||0,unread:!!c.unread,channel:'ig'}; });
     } else {
-      items=CRM.deals.filter(d=>d.status===ckView).map(d=>{ const cl=getClient(d.client_id); const chat=COCKPIT_CHATS.find(x=>x.name&&cl.name&&x.name.toLowerCase()===cl.name.toLowerCase()); return {name:cl.name||'Без имени',sub:fmt(dealAmount(d)),chatId:chat?chat.id:null,ts:chat?(chat.ts||0):0,unread:chat?!!chat.unread:false,channel:chat?(chat.channel||'ig'):''}; });
+      const _cl=igClosedNameSet();
+      items=CRM.deals.filter(d=>d.status===ckView && !_cl.has(_clKey((getClient(d.client_id)||{}).name))).map(d=>{ const cl=getClient(d.client_id); const chat=COCKPIT_CHATS.find(x=>x.name&&cl.name&&x.name.toLowerCase()===cl.name.toLowerCase()); return {name:cl.name||'Без имени',sub:fmt(dealAmount(d)),chatId:chat?chat.id:null,ts:chat?(chat.ts||0):0,unread:chat?!!chat.unread:false,channel:chat?(chat.channel||'ig'):''}; });
     }
     // один клиент — одна строка (страховка от дублей): оставляем самый «полезный» вариант
     (function(){ const by=new Map();
