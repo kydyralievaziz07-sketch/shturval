@@ -3715,26 +3715,41 @@ def wb_sales_sums(company):
 # отдельно (WB её не знает), поэтому «прибыль» в смысле маржи всё равно не считаем.
 WB_FIN_CACHE = {}
 WB_FIN_TTL = 3600          # отчёт формируется у WB раз в сутки — часа достаточно
-WB_FIN_DAYS = 31           # месяц — большой диапазон рискует не влезть в таймаут прокси
+WB_FIN_DAYS = 14           # ответ WB на этот отчёт ОГРОМНЫЙ (~67 МБ за 31 день, ~60 сек скачивания!) —
+                            # короче диапазон = меньше риск для памяти/таймаута сервера
 _WB_FIN_INFLIGHT = set()   # company, для которых фоновый пересчёт уже идёт (не дублировать)
 _WB_FIN_LOCK = threading.Lock()
+_WB_FIN_FIELDS = ("ppvz_sales_commission", "delivery_rub", "storage_fee", "penalty",
+                   "deduction", "acceptance", "additional_payment", "ppvz_for_pay", "retail_amount")
 
-def _wb_fetch_finance(company):
+def _wb_fetch_finance_by_day(company):
+    """ВАЖНО: сырые строки (десятки тысяч, десятки МБ) НЕ храним и не кэшируем — сразу же,
+    построчно, складываем в маленькую сводку по дням (rr_dt → суммы). Иначе список из 28к+
+    строк годами копится в памяти процесса и рискует уронить сервер по памяти (уже роняло)."""
     date_to = time.strftime("%Y-%m-%d", time.gmtime())
     date_from = time.strftime("%Y-%m-%d", time.gmtime(time.time() - WB_FIN_DAYS * 86400))
-    rows = []
+    by_day = {}
     rrd_id = 0
-    for _ in range(100):     # защита от бесконечной пагинации
+    for _ in range(20):     # защита от бесконечной пагинации
         path = ("/api/v5/supplier/reportDetailByPeriod?dateFrom=%s&dateTo=%s&limit=100000&rrdid=%d"
                 % (date_from, date_to, rrd_id))
         page = wb_request(company, "stats", path)
         if not page:
             break
-        rows.extend(page)
-        if len(page) < 100000:
-            break
-        rrd_id = page[-1].get("rrd_id", 0)
-    return rows
+        for r in page:
+            d = (r.get("rr_dt") or r.get("date_from") or "")[:10]
+            if not d:
+                continue
+            agg = by_day.setdefault(d, dict.fromkeys(_WB_FIN_FIELDS, 0.0))
+            for f in _WB_FIN_FIELDS:
+                agg[f] += _num(r.get(f))
+        page_len = len(page)
+        last_rrd = page[-1].get("rrd_id", 0)
+        del page                # отпустить сырые строки этой страницы сразу же
+        if page_len < 100000 or not last_rrd or last_rrd == rrd_id:
+            break                # последняя страница — дальше данных нет
+        rrd_id = last_rrd
+    return by_day
 
 def _wb_fin_refresh(company):
     cur0 = WB_FIN_CACHE.get(company) or {}
@@ -3745,43 +3760,36 @@ def _wb_fin_refresh(company):
             return          # уже считается в другом потоке — не дублируем тяжёлый запрос
         _WB_FIN_INFLIGHT.add(company)
     try:
-        rows = _wb_fetch_finance(company)
-        WB_FIN_CACHE[company] = {"t": time.time(), "rows": rows}
-        _wb_backup_save("wb_fin_" + company, {"rows": rows})
+        by_day = _wb_fetch_finance_by_day(company)
+        WB_FIN_CACHE[company] = {"t": time.time(), "by_day": by_day}
+        _wb_backup_save("wb_fin_" + company, {"by_day": by_day})
     except WBRateLimited as e:
-        cur = WB_FIN_CACHE.get(company) or {"rows": []}
+        cur = WB_FIN_CACHE.get(company) or {"by_day": {}}
         cur["t"] = time.time(); cur["error"] = str(e)
         cur["next_try"] = time.time() + e.retry_after + 5
         WB_FIN_CACHE[company] = cur
         _wb_next_try_save("wb_fin_wait_" + company, cur["next_try"])
     except Exception as e:
-        cur = WB_FIN_CACHE.get(company) or {"rows": []}
+        cur = WB_FIN_CACHE.get(company) or {"by_day": {}}
         cur["t"] = time.time(); cur["error"] = str(e)
         WB_FIN_CACHE[company] = cur
     finally:
         with _WB_FIN_LOCK:
             _WB_FIN_INFLIGHT.discard(company)
 
-WB_FIN_ENABLED = False   # ВРЕМЕННО отключено: первый расчёт клал сервис (502 даже на /api/health,
-                          # задело и Бизмарт) — расследуется, включим когда причина понятна и проверена
-
 def wb_fin_cache(company):
-    if not WB_FIN_ENABLED:
-        return {"rows": [], "disabled": True}
     cur = WB_FIN_CACHE.get(company)
     if cur is None:
         b = _wb_backup_load("wb_fin_" + company)
         wait_until = _wb_next_try_load("wb_fin_wait_" + company)
-        base = {"t": 0.0, "rows": (b or {}).get("rows") or [], "from_backup": bool(b)}
+        base = {"t": 0.0, "by_day": (b or {}).get("by_day") or {}, "from_backup": bool(b)}
         if wait_until and time.time() < wait_until:
             base["next_try"] = wait_until
             base["error"] = "Wildberries временно ограничила частоту запросов"
             WB_FIN_CACHE[company] = base
         else:
-            # Отчёт за 62 дня с пагинацией — тяжёлый (может занять больше времени, чем
-            # держит прокси Render, 502). Первый расчёт ВСЕГДА в фоне, не блокируя ответ —
-            # даже если нет ни памяти, ни снимка в базе (в отличие от sales/orders — там
-            # ответ WB маленький и укладывается в один быстрый запрос).
+            # Ответ WB на этот отчёт огромный (десятки МБ) — первый расчёт ВСЕГДА в фоне,
+            # не блокируя ответ, даже если нет ни памяти, ни снимка в базе.
             base["computing"] = not bool(b)
             WB_FIN_CACHE[company] = base
             if company not in _WB_FIN_INFLIGHT:
@@ -3789,26 +3797,32 @@ def wb_fin_cache(company):
     elif (time.time() - cur.get("t", 0) > WB_FIN_TTL and time.time() >= cur.get("next_try", 0)
           and company not in _WB_FIN_INFLIGHT):
         threading.Thread(target=_wb_fin_refresh, args=(company,), daemon=True).start()
-    return WB_FIN_CACHE.get(company) or {"rows": []}
+    return WB_FIN_CACHE.get(company) or {"by_day": {}}
 
-def wb_finance_overview(company, days=30):
+def wb_finance_overview(company, days=14):
     """Разбивка удержаний WB за период: комиссия, логистика, хранение, штрафы, доплаты,
     и реальная сумма к выплате (то, что придёт на счёт). delivery_rub у WB — всегда в
-    рублях (переводим); остальные суммы уже в валюте отчёта (сом для этого продавца)."""
+    рублях (переводим); остальные суммы уже в валюте отчёта (сом для этого продавца).
+    Суммируем по УЖЕ агрегированным дням (by_day) — не по сырым строкам."""
     cache = wb_fin_cache(company)
-    rows = cache.get("rows") or []
+    by_day = cache.get("by_day") or {}
     cutoff = time.strftime("%Y-%m-%d", time.gmtime(time.time() - days * 86400))
-    rows = [r for r in rows if (r.get("rr_dt") or r.get("date_from") or "") >= cutoff]
     _rate = rub_to_kgs()
-    commission = sum(_num(r.get("ppvz_sales_commission")) for r in rows)
-    logistics = sum(_num(r.get("delivery_rub")) for r in rows) * _rate
-    storage = sum(_num(r.get("storage_fee")) for r in rows)
-    penalty = sum(_num(r.get("penalty")) for r in rows)
-    deduction = sum(_num(r.get("deduction")) for r in rows)
-    acceptance = sum(_num(r.get("acceptance")) for r in rows)
-    additional = sum(_num(r.get("additional_payment")) for r in rows)
-    payout = sum(_num(r.get("ppvz_for_pay")) for r in rows)
-    retail = sum(_num(r.get("retail_amount")) for r in rows)
+    tot = dict.fromkeys(_WB_FIN_FIELDS, 0.0)
+    for d, agg in by_day.items():
+        if d < cutoff:
+            continue
+        for f in _WB_FIN_FIELDS:
+            tot[f] += agg.get(f, 0.0)
+    commission = tot["ppvz_sales_commission"]
+    logistics = tot["delivery_rub"] * _rate
+    storage = tot["storage_fee"]
+    penalty = tot["penalty"]
+    deduction = tot["deduction"]
+    acceptance = tot["acceptance"]
+    additional = tot["additional_payment"]
+    payout = tot["ppvz_for_pay"]
+    retail = tot["retail_amount"]
     res = {
         "period_days": days,
         "retail_amount": round(retail),
@@ -3823,13 +3837,11 @@ def wb_finance_overview(company, days=30):
         "note": "Расходы — реальные удержания Wildberries из финансового отчёта о реализации. "
                 "Себестоимость товара сюда не входит (WB её не знает).",
     }
-    if cache.get("error") and not rows:
+    if cache.get("error") and not by_day:
         res["error"] = cache["error"]
-    if cache.get("computing") and not rows:
+    if cache.get("computing") and not by_day:
         res["computing"] = True
         res["note"] = "Считаю отчёт за период — первый раз занимает пару минут. Обновите страницу чуть позже."
-    if cache.get("disabled"):
-        res["note"] = "Разбивка расходов WB временно отключена — чиним причину, чтобы не мешать другим кабинетам."
     return res
 
 # --- Wildberries: реклама (продвижение внутри поиска WB — read-only обзор) ---
@@ -7840,11 +7852,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"period_days": 30, "retail_amount": 0, "commission": 0,
                                          "logistics": 0, "storage": 0, "penalty": 0, "payout": 0})
             try:
-                days = int(parse_qs(urlparse(self.path).query).get("days", ["30"])[0])
+                days = int(parse_qs(urlparse(self.path).query).get("days", ["14"])[0])
             except ValueError:
-                days = 30
+                days = 14
             try:
-                return self._send(200, wb_finance_overview(_co, max(1, min(days, 31))))
+                return self._send(200, wb_finance_overview(_co, max(1, min(days, WB_FIN_DAYS))))
             except Exception as e:
                 return self._send(200, {"error": str(e)})
         if self.path.startswith("/api/ads/"):
