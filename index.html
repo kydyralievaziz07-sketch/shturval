@@ -357,6 +357,9 @@
   .fchip.igwin{background:rgba(48,158,216,.10);border-color:rgba(48,158,216,.4)}
   .fchip.igwin .fc-c{color:#309ED8}
   .fchip.igwin.active{border-color:#309ED8;background:rgba(48,158,216,.20)}
+  .fchip.igclosed{background:rgba(150,150,160,.10);border-color:rgba(150,150,160,.4)}
+  .fchip.igclosed .fc-c{color:#9aa0aa}
+  .fchip.igclosed.active{border-color:#9aa0aa;background:rgba(150,150,160,.20)}
   .cockpit{display:grid;grid-template-columns:340px 1fr;gap:12px;height:calc(100vh - 200px);min-height:460px}
   .ck-chats{border:1px solid var(--line);border-radius:12px;overflow-y:auto;background:var(--panel);min-height:0}
   .ck-convo{border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;background:var(--bg);min-height:0;overflow:hidden}
@@ -632,7 +635,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.32.0<br>Шаблон-«догонялка» для Instagram (📋 в чате) + стадия «Купить позже» + список «Окно IG»
+      Штурвал v4.33.0<br>Чип «🔒 Окно закрыто» + авто-возврат: клиент из «Отказано»/«Купить позже» снова написал → в «Новую заявку»
   </aside>
 
   <!-- MAIN -->
@@ -4249,12 +4252,23 @@
     const now=Date.now()/1000, lo=now-7*86400, hi=now-5*86400;
     return (COCKPIT_CHATS||[]).filter(c=>(c.channel||'ig')==='ig' && c.ts && c.ts>=lo && c.ts<hi);
   }
+  function igClosedList(){
+    // Instagram-переписки, где окно уже ЗАКРЫТО (клиент молчит >7 дней) и есть активная сделка — ответить нельзя
+    const now=Date.now()/1000, cut=now-7*86400;
+    const term=['Клиент получил товар','Отказ','Купить позже'];
+    return (COCKPIT_CHATS||[]).filter(c=>{
+      if((c.channel||'ig')!=='ig' || !c.ts || c.ts>=cut) return false;
+      const d=findDealByName(c.name);
+      return !!d && term.indexOf(d.status)<0;
+    });
+  }
   function renderFunnel(){
     const fb=document.getElementById('funnelbar'); if(!fb) return;
     const _norm=CRM_STATUSES.map(st=>({st:st,lbl:st,cls:'',n:(st==='Новая заявка')?newLeadsCount():CRM.deals.filter(d=>d.status===st).length}));
     const _spec=[{st:'Купить позже',lbl:'Купить позже',cls:'later',n:CRM.deals.filter(d=>d.status==='Купить позже').length},
                  {st:'Отказ',lbl:'Отказано',cls:'reject',n:CRM.deals.filter(d=>d.status==='Отказ').length},
-                 {st:'__igwin',lbl:'⏳ Окно IG',cls:'igwin',n:igWinList().length}];
+                 {st:'__igwin',lbl:'⏳ Окно IG',cls:'igwin',n:igWinList().length},
+                 {st:'__igclosed',lbl:'🔒 Окно закрыто',cls:'igclosed',n:igClosedList().length}];
     fb.innerHTML=_norm.concat(_spec).map(r=>'<div class="fchip'+(r.st===ckView?' active':'')+(r.cls?' '+r.cls:'')+'" data-status="'+esc(r.st)+'"><div class="fc-n">'+esc(r.lbl)+'</div><div class="fc-c">'+r.n+'</div></div>').join('');
     fb.querySelectorAll('.fchip').forEach(ch=>{
       ch.addEventListener('click',()=>setView(ch.dataset.status));
@@ -4487,8 +4501,20 @@
   function autoClassify(){
     if(!AUTO_ON) return; let changed=false;
     COCKPIT_CHATS.forEach(c=>{
-      const sug=c.stage; if(!sug) return;                          // ещё не проанализирован
       let d=findDealByName(c.name);
+      // Клиент снова написал в «Отказано»/«Купить позже» → возвращаем его в «Новую заявку»
+      if(d && (d.status==='Отказ'||d.status==='Купить позже')){
+        const lastIn=c.unread?((c.ts||0)*1000):0;                 // клиент написал последним = новое сообщение
+        if(!d.parked_at){ d.parked_at=Date.now(); changed=true; } // базовая отметка «когда отложили»
+        else if(lastIn && lastIn>d.parked_at){
+          d.status='Новая заявка'; d.manual=false; d.auto=true;
+          delete d.paid_at; delete d.reject_reason; delete d.parked_at;
+          logActivity(d.client_id,d.id,'системное','↩️ Клиент снова написал → вернули в «Новую заявку»');
+          changed=true;
+        }
+        return;
+      }
+      const sug=c.stage; if(!sug) return;                          // ещё не проанализирован
       if(d&&d.manual) return;                                      // вручную перемещённые не трогаем
       if(sug==='В обработке'){                                       // ответил живой менеджер
         if(!d) d=ensureDeal(c.name,'В обработке');
@@ -4530,6 +4556,8 @@
       items=COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка'); }).map(c=>({name:c.name,sub:(c.time||'')+' · '+(c.status||'новый'),chatId:c.id,ts:c.ts||0,unread:!!c.unread,channel:c.channel||'ig'}));
     } else if(ckView==='__igwin'){
       items=igWinList().map(c=>{ const days=Math.floor((Date.now()/1000-(c.ts||0))/86400); return {name:c.name,sub:'⏳ писал '+days+' дн. назад — успей ответить до 7 дней',chatId:c.id,ts:c.ts||0,unread:!!c.unread,channel:'ig'}; });
+    } else if(ckView==='__igclosed'){
+      items=igClosedList().map(c=>{ const days=Math.floor((Date.now()/1000-(c.ts||0))/86400); const d=findDealByName(c.name); return {name:c.name,sub:'🔒 окно закрыто · молчит '+days+' дн.'+(d?(' · '+d.status):''),chatId:c.id,ts:c.ts||0,unread:!!c.unread,channel:'ig'}; });
     } else {
       items=CRM.deals.filter(d=>d.status===ckView).map(d=>{ const cl=getClient(d.client_id); const chat=COCKPIT_CHATS.find(x=>x.name&&cl.name&&x.name.toLowerCase()===cl.name.toLowerCase()); return {name:cl.name||'Без имени',sub:fmt(dealAmount(d)),chatId:chat?chat.id:null,ts:chat?(chat.ts||0):0,unread:chat?!!chat.unread:false,channel:chat?(chat.channel||'ig'):''}; });
     }
@@ -4555,6 +4583,8 @@
         box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">⏳ Чаты Instagram/WhatsApp временно недоступны — сервер ненадолго ограничил запросы. Это пройдёт само, заявки скоро появятся. Можно ничего не делать.</div>';
       } else if(ckView==='__igwin'){
         box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">Нет переписок Instagram, у которых окно закрывается (5-7 дней). Здесь появятся те, кому скоро нельзя будет ответить — успевай написать.</div>';
+      } else if(ckView==='__igclosed'){
+        box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">Нет сделок Instagram с закрытым окном. Здесь копятся те, кому уже нельзя ответить (клиент молчит &gt;7 дней) — чтобы не мешались в «В обработке». Их можно двигать в «Купить позже» или «Отказано», либо ждать, пока клиент напишет снова.</div>';
       } else {
         box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">В стадии «'+esc(ckView)+'» пока пусто</div>';
       }
@@ -7318,7 +7348,7 @@
     function hi(x,y){ const el=document.elementFromPoint(x,y); const chip=el&&el.closest?el.closest('.fchip'):null; document.querySelectorAll('.fchip').forEach(c=>c.classList.toggle('drop',c===chip)); }
   }
   function dropChatToStage(status){
-    if(status==='__igwin') return;   // это фильтр, не стадия
+    if(status==='__igwin'||status==='__igclosed') return;   // это фильтры, не стадии
     if(!dragChat) return; const nm=dragChat.name; dragChat=null;
     const d=ensureDeal(nm,status);
     if(status==='Отказ'){ pendingReject=d.id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; }
