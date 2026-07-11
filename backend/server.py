@@ -1498,7 +1498,15 @@ def _convos_view(view):
     if not supa_on():
         return []
     try:
-        return _supa("GET", view, "?company_id=eq.%s&order=ts.desc&limit=5000" % _q(COMPANY_ID)) or []
+        out = []; off = 0
+        while True:                                   # PostgREST отдаёт максимум 1000 строк — берём страницами
+            page = _supa("GET", view,
+                         "?company_id=eq.%s&order=ts.desc&limit=1000&offset=%d" % (_q(COMPANY_ID), off)) or []
+            out.extend(page)
+            if len(page) < 1000 or off >= 40000:
+                break
+            off += 1000
+        return out
     except Exception:
         return None
 
