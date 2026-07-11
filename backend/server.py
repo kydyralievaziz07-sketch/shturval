@@ -82,15 +82,36 @@ def load_secret():
     cfg["TG_CHANNEL_BIZMART"] = env("TG_CHANNEL_BIZMART")  # @канал или -100xxx Telegram
     cfg["TG_BOT_USERNAME"] = env("TG_BOT_USERNAME")       # @username бота (для показа)
     cfg["TG_WEBHOOK_SECRET"] = env("TG_WEBHOOK_SECRET")   # секрет вебхука Telegram (fail-closed при заданном)
+    # Название компании для этого деплоя (мульти-тенант: bizmart / freeways / joru...)
+    cfg["BRAND_NAME"] = env("BRAND_NAME") or "Штурвал"
     return cfg
 
 CFG = load_secret()
 BASE = "https://{}.amocrm.ru/api/v4".format(CFG.get("AMO_SUBDOMAIN", ""))
 
+# --- фронтенд для деплоев без отдельного статического хостинга (Freeways/Valbreeze) ---
+# Бизмарт продолжает раздаваться через GitHub Pages (index.html в корне репозитория,
+# не трогаем). Этот backend/index.html — та же панель, но со своим адресом сервера
+# (ONEC_CLOUD=location.origin), чтобы новый деплой общался сам с собой.
+_INDEX_HTML_CACHE = None
+def _index_html():
+    global _INDEX_HTML_CACHE
+    if _INDEX_HTML_CACHE is None:
+        path = os.path.join(HERE, "index.html")
+        try:
+            with open(path, encoding="utf-8") as f:
+                html = f.read()
+        except Exception:
+            html = "<h1>Штурвал</h1><p>index.html не найден рядом с server.py</p>"
+        brand = CFG.get("BRAND_NAME") or "Штурвал"
+        html = re.sub(r"<title>.*?</title>", "<title>%s</title>" % brand, html, count=1, flags=re.S)
+        _INDEX_HTML_CACHE = html.encode("utf-8")
+    return _INDEX_HTML_CACHE
+
 # --- пользователи и роли ---
 # каждый пользователь: пароль -> {name, sections}. sections=["all"] = видит всё.
 # разделы: dash, crm, chats, prod, sales, clients, market, analytics, fin, ai, set
-COMPANY_ID = "bizmart"   # компания по умолчанию; у пользователя может быть своя (мульти-тенант)
+COMPANY_ID = (os.environ.get("COMPANY_ID", "").strip() or "bizmart")   # компания этого деплоя (мульти-тенант: bizmart/freeways/joru)
 def load_users():
     """Возвращает два индекса:
       users     — по паролю (обратная совместимость: вход только по паролю);
@@ -135,6 +156,10 @@ def load_users():
     # Перекрывают/дополняют записи из env. active=false → сотрудник «убран» (скрыт).
     try:
         # грузим сотрудников ВСЕХ компаний (мульти-тенант): каждого помечаем его компанией
+        # TODO(split): после того как shturval-freeways/valbreeze подтверждённо заведены —
+        # включить фильтр "&company_id=eq.%s" % urllib.parse.quote(COMPANY_ID), чтобы каждый
+        # деплой видел только свою компанию (сейчас временно не включаем, чтобы не оборвать
+        # логины Freeways/Joru на shturval-backend до переезда на свои сервисы).
         rows = _supa("GET", "employees", "?select=*")
         for u in (rows or []):
             login = (u.get("login") or "").strip()
@@ -1331,17 +1356,24 @@ def ig_store_event(evt):
             if not msg:
                 continue
             if msg.get("is_echo"):
-                # ИСХОДЯЩЕЕ от нас. sender=наш аккаунт, recipient=клиент. Если это НЕ эхо нашего бота —
-                # значит ответил оператор (через приложение Instagram/др.) → сохраняем как ответ человека,
-                # и бот в этом диалоге дальше молчит (передача человеку).
+                # ИСХОДЯЩЕЕ от нас. sender=наш аккаунт, recipient=клиент. Если это НЕ эхо нашего бота
+                # и не эхо нашей же отправки (по mid) — значит ответил оператор из приложения Instagram →
+                # сохраняем как ответ человека (в т.ч. голосовые/фото), бот дальше молчит (передача человеку).
                 acct = str((m.get("sender") or {}).get("id", ""))
                 cust = str((m.get("recipient") or {}).get("id", ""))
                 etext = msg.get("text", "")
-                if etext and cust and not _igbot_is_own_echo(cust, etext):
+                emid = msg.get("mid", "")
+                has_media = bool(msg.get("attachments"))
+                if _ig_mid_seen(emid):                       # наша же отправка / повтор вебхука → пропускаем
+                    continue
+                if cust and (etext or has_media) and not (etext and _igbot_is_own_echo(cust, etext)):
+                    _ig_mark_mid(emid)
+                    eraw = dict(m); eraw["by"] = "human"     # raw=m хранит attachments → голос/фото видны
                     _inbox_save("ig_inbox",
                                 {"company_id": COMPANY_ID, "sender_id": acct, "recipient_id": cust,
-                                 "text": etext, "ts": int(m.get("timestamp") or time.time() * 1000),
-                                 "direction": "out", "raw": {"by": "human"}})
+                                 "mid": emid, "text": etext,
+                                 "ts": int(m.get("timestamp") or time.time() * 1000),
+                                 "direction": "out", "raw": eraw})
                 continue
             sender = str((m.get("sender") or {}).get("id", ""))
             recipient = str((m.get("recipient") or {}).get("id", ""))  # наш аккаунт
@@ -1590,11 +1622,13 @@ def ig_thread(account_id, customer_id):
 def ig_reply(account_id, customer_id, text, by="human"):
     """Ответить клиенту с нужного аккаунта и сохранить в историю.
     by='human' (ручной ответ оператора) → ИИ-бот делает паузу в этом диалоге."""
-    ig_send(customer_id, text, account_id)
+    resp = ig_send(customer_id, text, account_id) or {}
+    mid = str((resp or {}).get("message_id", "") or "")
+    _ig_mark_mid(mid)
     try:
         _supa("POST", "ig_inbox", "",
               {"company_id": COMPANY_ID, "sender_id": str(account_id),
-               "recipient_id": str(customer_id), "text": text,
+               "recipient_id": str(customer_id), "text": text, "mid": mid,
                "ts": int(time.time() * 1000), "direction": "out", "raw": {"by": by}})
     except Exception:
         pass
@@ -1681,11 +1715,13 @@ def _ig_outmedia_put(data, mime):
 
 def ig_reply_media(account_id, customer_id, media_url, mtype, mime="", by="human"):
     """Оператор отправил клиенту медиа в Instagram: отправить и сохранить в историю (чтобы отрисовалось)."""
-    resp = ig_send_media(customer_id, media_url, mtype, account_id)
+    resp = ig_send_media(customer_id, media_url, mtype, account_id) or {}
+    _mid = str((resp or {}).get("message_id", "") or "")
+    _ig_mark_mid(_mid)
     try:
         _supa("POST", "ig_inbox", "",
               {"company_id": COMPANY_ID, "sender_id": str(account_id),
-               "recipient_id": str(customer_id), "text": "", "mid": "",
+               "recipient_id": str(customer_id), "text": "", "mid": _mid,
                "ts": int(time.time() * 1000), "direction": "out",
                "raw": {"by": by, "message": {"attachments": [
                    {"type": mtype, "payload": {"url": media_url}}]}}})
@@ -1953,6 +1989,18 @@ def _igbot_generate(history, settings):
     _igbot_log_error("Ответ Claude", last_err or "нет ответа")
     return None
 
+_ig_sent_mids = {}   # mid нашей отправки / обработанного эха -> ts (защита от дублей эха)
+def _ig_mark_mid(mid):
+    if not mid:
+        return
+    now = time.time()
+    _ig_sent_mids[str(mid)] = now
+    if len(_ig_sent_mids) > 4000:            # чистим старьё, чтобы не рос бесконечно
+        for k, t in list(_ig_sent_mids.items()):
+            if now - t > 1800:
+                _ig_sent_mids.pop(k, None)
+def _ig_mid_seen(mid):
+    return bool(mid) and str(mid) in _ig_sent_mids
 _bot_sent = {}   # (customer, text) -> ts: что бот отправлял (чтобы отличить эхо бота от ответа человека)
 def _igbot_mark_sent(customer, text):
     now = time.time()
@@ -7105,6 +7153,18 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, {"error": "не найдено"})
 
     def do_GET(self):
+        # Свой фронтенд для деплоев без отдельного статического хостинга (Freeways/Valbreeze).
+        if self.path == "/" or self.path.startswith("/index.html"):
+            data = _index_html()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            try:
+                self.wfile.write(data)
+            except Exception:
+                pass
+            return
         if self.path.startswith("/api/health"):
             ok = bool(CFG.get("AMO_TOKEN")) and bool(CFG.get("AMO_SUBDOMAIN"))
             return self._send(200, {"ok": ok, "account": CFG.get("AMO_SUBDOMAIN")})
