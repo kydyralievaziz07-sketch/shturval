@@ -1492,21 +1492,53 @@ def ig_rows(limit=1000):
     except Exception:
         return []
 
+def _convos_view(view):
+    """Список диалогов из SQL-вью: по одной ПОСЛЕДНЕЙ записи на клиента, ВСЕ диалоги.
+    Возвращает [] (пусто), список строк, либо None если вью недоступна (тогда откат на старый способ)."""
+    if not supa_on():
+        return []
+    try:
+        return _supa("GET", view, "?company_id=eq.%s&order=ts.desc&limit=5000" % _q(COMPANY_ID)) or []
+    except Exception:
+        return None
+
+def _legacy_convo_rows(rows, pair_fn):
+    """Запасной способ (если вью недоступна): последняя запись на диалог из уже загруженных строк."""
+    seen = {}; out = []
+    for r in rows:
+        acc, cust = pair_fn(r)
+        k = acc + "|" + cust
+        if k in seen:
+            continue
+        seen[k] = 1
+        out.append({"account": acc, "customer": cust, "text": r.get("text"),
+                    "raw": r.get("raw"), "ts": r.get("ts"), "direction": r.get("direction")})
+    return out
+
+def _thread_rows(table, customer_id):
+    """Все сообщения диалога с конкретным клиентом — адресный запрос (без лимита последних 1000)."""
+    if not supa_on():
+        return []
+    try:
+        return _supa("GET", table,
+                     "?company_id=eq.%s&or=(sender_id.eq.%s,recipient_id.eq.%s)&order=ts.desc&limit=1000&select=*"
+                     % (_q(COMPANY_ID), _q(str(customer_id)), _q(str(customer_id)))) or []
+    except Exception:
+        return []
+
 def _build_ig_conversations():
     amap = ig_account_map()
-    rows = ig_rows()
-    convos = {}
-    for r in rows:                           # rows уже по убыванию времени — первый = последний
-        acc, cust = _ig_pair(r)
-        key = acc + "|" + cust
-        if key not in convos:
-            convos[key] = {"account_id": acc, "customer_id": cust,
-                           "account": (amap.get(acc) or {}).get("username", acc),
-                           "channel": "ig",
-                           "last_text": _ig_disp_text(r), "last_ts": int(r.get("ts") or 0),
-                           "last_dir": r.get("direction", "in"), "count": 0}
-        convos[key]["count"] += 1
-    out = sorted(convos.values(), key=lambda c: c["last_ts"], reverse=True)
+    vrows = _convos_view("ig_convos_v")
+    if vrows is None:
+        vrows = _legacy_convo_rows(ig_rows(), _ig_pair)
+    out = []
+    for r in vrows:
+        acc = str(r.get("account") or ""); cust = str(r.get("customer") or "")
+        out.append({"account_id": acc, "customer_id": cust,
+                    "account": (amap.get(acc) or {}).get("username", acc), "channel": "ig",
+                    "last_text": _ig_disp_text(r), "last_ts": int(r.get("ts") or 0),
+                    "last_dir": r.get("direction", "in"), "count": 0})
+    out.sort(key=lambda c: c["last_ts"], reverse=True)
     for c in out:
         nm = ig_customer_name(c["customer_id"]) or c["customer_id"]
         c["customer"] = nm
@@ -1534,9 +1566,9 @@ def ig_clients_base():
     return out
 
 def ig_thread(account_id, customer_id):
-    """Сообщения одного диалога по возрастанию времени."""
+    """Сообщения одного диалога по возрастанию времени (адресно, без лимита 1000)."""
     msgs = []
-    for r in ig_rows():
+    for r in _thread_rows("ig_inbox", customer_id):
         acc, cust = _ig_pair(r)
         if acc == str(account_id) and cust == str(customer_id):
             ts = int(r.get("ts") or 0)
@@ -2637,19 +2669,17 @@ def _wa_disp_text(r):
 
 def _build_wa_conversations():
     amap = wa_account_map()
-    rows = wa_rows()
-    convos = {}
-    for r in rows:                            # rows уже по убыванию времени — первый = последний
-        acc, cust = _wa_pair(r)
-        key = acc + "|" + cust
-        if key not in convos:
-            convos[key] = {"account_id": acc, "customer_id": cust,
-                           "account": (amap.get(acc) or {}).get("display", acc),
-                           "channel": "wa",
-                           "last_text": _wa_disp_text(r), "last_ts": int(r.get("ts") or 0),
-                           "last_dir": r.get("direction", "in"), "count": 0}
-        convos[key]["count"] += 1
-    out = sorted(convos.values(), key=lambda c: c["last_ts"], reverse=True)
+    vrows = _convos_view("wa_convos_v")
+    if vrows is None:
+        vrows = _legacy_convo_rows(wa_rows(), _wa_pair)
+    out = []
+    for r in vrows:
+        acc = str(r.get("account") or ""); cust = str(r.get("customer") or "")
+        out.append({"account_id": acc, "customer_id": cust,
+                    "account": (amap.get(acc) or {}).get("display", acc), "channel": "wa",
+                    "last_text": _wa_disp_text(r), "last_ts": int(r.get("ts") or 0),
+                    "last_dir": r.get("direction", "in"), "count": 0})
+    out.sort(key=lambda c: c["last_ts"], reverse=True)
     for c in out:
         c["customer"] = wa_customer_name(c["customer_id"]) or ("+" + c["customer_id"])
     return out
@@ -2672,7 +2702,7 @@ def wa_clients_base():
 def wa_thread(account_id, customer_id):
     """Сообщения одного диалога по возрастанию времени."""
     msgs = []; pair_rows = []
-    for r in wa_rows():
+    for r in _thread_rows("wa_inbox", customer_id):
         acc, cust = _wa_pair(r)
         if acc == str(account_id) and cust == str(customer_id):
             pair_rows.append(r)
@@ -2933,25 +2963,26 @@ def tg_rows(limit=1000):
         return []
 
 def _build_tg_conversations():
-    convos = {}
-    for r in tg_rows():
-        acc, cust = _tg_pair(r)
-        key = acc + "|" + cust
-        if key not in convos:
-            nm = _tg_name_from((r.get("raw") or {}).get("from")) or _tg_names.get(cust) or ""
-            convos[key] = {"account_id": acc, "customer_id": cust, "account": _tg_acct(),
-                           "channel": "tg", "last_text": r.get("text") or "",
-                           "last_ts": int(r.get("ts") or 0), "last_dir": r.get("direction", "in"),
-                           "count": 0, "customer": nm or ("id" + cust)}
-        convos[key]["count"] += 1
-    return sorted(convos.values(), key=lambda c: c["last_ts"], reverse=True)
+    vrows = _convos_view("tg_convos_v")
+    if vrows is None:
+        vrows = _legacy_convo_rows(tg_rows(), _tg_pair)
+    out = []
+    for r in vrows:
+        acc = str(r.get("account") or ""); cust = str(r.get("customer") or "")
+        nm = _tg_name_from((r.get("raw") or {}).get("from")) or _tg_names.get(cust) or ""
+        out.append({"account_id": acc, "customer_id": cust, "account": _tg_acct(),
+                    "channel": "tg", "last_text": r.get("text") or "",
+                    "last_ts": int(r.get("ts") or 0), "last_dir": r.get("direction", "in"),
+                    "count": 0, "customer": nm or ("id" + cust)})
+    out.sort(key=lambda c: c["last_ts"], reverse=True)
+    return out
 
 def tg_conversations():
     return cached("tg_convos", 5, _build_tg_conversations)
 
 def tg_thread(account_id, customer_id):
     msgs = []
-    for r in tg_rows():
+    for r in _thread_rows("tg_inbox", customer_id):
         acc, cust = _tg_pair(r)
         if acc == str(account_id) and cust == str(customer_id):
             ts = int(r.get("ts") or 0)
