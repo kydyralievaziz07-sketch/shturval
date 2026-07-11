@@ -11,6 +11,12 @@ services:
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python server.py"
     envVars:
+      # --- Мульти-тенант (какая это компания) ---
+      - key: COMPANY_ID
+        sync: false
+      - key: BRAND_NAME
+        sync: false
+
       # --- AUTH ---
       - key: SITE_PASSWORD
         sync: false
@@ -101,4 +107,52 @@ services:
       - key: AMO_SUBDOMAIN
         sync: false
       - key: AMO_TOKEN
+        sync: false
+
+  # --- Freeways (аренда авто) — отдельный дашборд, тот же код, своя компания ---
+  - type: web
+    name: shturval-freeways
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python server.py"
+    envVars:
+      - key: COMPANY_ID
+        sync: false
+      - key: BRAND_NAME
+        sync: false
+      - key: SITE_PASSWORD
+        sync: false
+      - key: OWNER_LOGIN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      # GOOGLE_SA_JSON/RENT_SHEET_ID не нужны: рент — самостоятельная система на Supabase,
+      # таблица Google использовалась только для разового импорта в прошлом (см. server.py).
+
+  # --- Valbreeze (маркетплейс Wildberries, аккаунт Joru) — отдельный дашборд ---
+  - type: web
+    name: shturval-valbreeze
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python server.py"
+    envVars:
+      - key: COMPANY_ID
+        sync: false
+      - key: BRAND_NAME
+        sync: false
+      - key: SITE_PASSWORD
+        sync: false
+      - key: OWNER_LOGIN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: WB_TOKEN_JORU
         sync: false
