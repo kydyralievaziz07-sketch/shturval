@@ -3709,7 +3709,9 @@ def wb_sales_sums(company):
 # отдельно (WB её не знает), поэтому «прибыль» в смысле маржи всё равно не считаем.
 WB_FIN_CACHE = {}
 WB_FIN_TTL = 3600          # отчёт формируется у WB раз в сутки — часа достаточно
-WB_FIN_DAYS = 62           # ~2 месяца
+WB_FIN_DAYS = 31           # месяц — большой диапазон рискует не влезть в таймаут прокси
+_WB_FIN_INFLIGHT = set()   # company, для которых фоновый пересчёт уже идёт (не дублировать)
+_WB_FIN_LOCK = threading.Lock()
 
 def _wb_fetch_finance(company):
     date_to = time.strftime("%Y-%m-%d", time.gmtime())
@@ -3732,6 +3734,10 @@ def _wb_fin_refresh(company):
     cur0 = WB_FIN_CACHE.get(company) or {}
     if time.time() < cur0.get("next_try", 0):
         return
+    with _WB_FIN_LOCK:
+        if company in _WB_FIN_INFLIGHT:
+            return          # уже считается в другом потоке — не дублируем тяжёлый запрос
+        _WB_FIN_INFLIGHT.add(company)
     try:
         rows = _wb_fetch_finance(company)
         WB_FIN_CACHE[company] = {"t": time.time(), "rows": rows}
@@ -3746,6 +3752,9 @@ def _wb_fin_refresh(company):
         cur = WB_FIN_CACHE.get(company) or {"rows": []}
         cur["t"] = time.time(); cur["error"] = str(e)
         WB_FIN_CACHE[company] = cur
+    finally:
+        with _WB_FIN_LOCK:
+            _WB_FIN_INFLIGHT.discard(company)
 
 def wb_fin_cache(company):
     cur = WB_FIN_CACHE.get(company)
@@ -3764,8 +3773,10 @@ def wb_fin_cache(company):
             # ответ WB маленький и укладывается в один быстрый запрос).
             base["computing"] = not bool(b)
             WB_FIN_CACHE[company] = base
-            threading.Thread(target=_wb_fin_refresh, args=(company,), daemon=True).start()
-    elif time.time() - cur.get("t", 0) > WB_FIN_TTL and time.time() >= cur.get("next_try", 0):
+            if company not in _WB_FIN_INFLIGHT:
+                threading.Thread(target=_wb_fin_refresh, args=(company,), daemon=True).start()
+    elif (time.time() - cur.get("t", 0) > WB_FIN_TTL and time.time() >= cur.get("next_try", 0)
+          and company not in _WB_FIN_INFLIGHT):
         threading.Thread(target=_wb_fin_refresh, args=(company,), daemon=True).start()
     return WB_FIN_CACHE.get(company) or {"rows": []}
 
@@ -7572,7 +7583,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 days = 30
             try:
-                return self._send(200, wb_finance_overview(_co, max(1, min(days, 62))))
+                return self._send(200, wb_finance_overview(_co, max(1, min(days, 31))))
             except Exception as e:
                 return self._send(200, {"error": str(e)})
         if self.path.startswith("/api/ads/"):
