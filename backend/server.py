@@ -89,28 +89,25 @@ def load_secret():
 CFG = load_secret()
 BASE = "https://{}.amocrm.ru/api/v4".format(CFG.get("AMO_SUBDOMAIN", ""))
 
-# --- один сервис, разные кабинеты по пути (одна ссылка на все компании) ---
-# У КАЖДОЙ компании — свой файл, полностью независимый от других (правка одной
-# компании не задевает другую); <title>/бренд уже прописаны прямо в самом файле.
-# Бизмарт также продолжает раздаваться через GitHub Pages отдельной ссылкой (не трогаем),
-# путь /bizmart и / на этом сервисе — для полноты, отдают тот же файл.
-_PATH_TO_FILE = {
-    "/": "index.html", "/bizmart": "index.html", "/index.html": "index.html",
-    "/freeways": "index_freeways.html",
-    "/valbreeze": "index_joru.html",
-    "/guzigold": "index_guzigold.html",
-}
-_INDEX_HTML_CACHE = {}
-def _index_html(path):
-    fname = _PATH_TO_FILE.get(path, "index.html")
-    if fname not in _INDEX_HTML_CACHE:
+# --- КАЖДАЯ компания — отдельный Render-деплой (свой URL, свой процесс, свой COMPANY_ID) ---
+# Бизмарт продолжает раздаваться через GitHub Pages/Vercel (index.html в корне репозитория,
+# не трогаем). У каждой ОСТАЛЬНОЙ компании — свой файл backend/index_<COMPANY_ID>.html,
+# полностью независимый от других (правка одной компании не задевает другую и физически
+# не может её задеть — на её деплое этого файла просто нет). <title>/бренд уже прописаны
+# прямо в самом файле каждой компании.
+_INDEX_HTML_CACHE = None
+def _index_html():
+    global _INDEX_HTML_CACHE
+    if _INDEX_HTML_CACHE is None:
+        per_company = os.path.join(HERE, "index_%s.html" % COMPANY_ID)
+        path = per_company if os.path.exists(per_company) else os.path.join(HERE, "index.html")
         try:
-            with open(os.path.join(HERE, fname), encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 html = f.read()
         except Exception:
-            html = "<h1>Штурвал</h1><p>%s не найден рядом с server.py</p>" % fname
-        _INDEX_HTML_CACHE[fname] = html.encode("utf-8")
-    return _INDEX_HTML_CACHE[fname]
+            html = "<h1>Штурвал</h1><p>index.html не найден рядом с server.py</p>"
+        _INDEX_HTML_CACHE = html.encode("utf-8")
+    return _INDEX_HTML_CACHE
 
 # --- пользователи и роли ---
 # каждый пользователь: пароль -> {name, sections}. sections=["all"] = видит всё.
@@ -167,9 +164,10 @@ def load_users():
     # --- сотрудники, заведённые руководителем из интерфейса (таблица employees) ---
     # Перекрывают/дополняют записи из env. active=false → сотрудник «убран» (скрыт).
     try:
-        # грузим сотрудников ВСЕХ компаний (мульти-тенант, один общий процесс на все кабинеты):
-        # каждого помечаем его компанией; разделение — по company_id на уровне данных, не логина.
-        rows = _supa("GET", "employees", "?select=*")
+        # грузим сотрудников ТОЛЬКО своей компании (каждый деплой — своя компания). Это и
+        # есть реальная изоляция логинов: логин Guzi Gold физически не существует в процессе
+        # Бизмарта и наоборот, даже если кто-то случайно откроет чужую ссылку.
+        rows = _supa("GET", "employees", "?select=*&company_id=eq.%s" % urllib.parse.quote(COMPANY_ID))
         for u in (rows or []):
             login = (u.get("login") or "").strip()
             if not login:
@@ -7600,9 +7598,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, {"error": "не найдено"})
 
     def do_GET(self):
-        # Одна ссылка — разные кабинеты компаний по пути (см. _PATH_TO_FILE выше).
-        if self.path in _PATH_TO_FILE:
-            data = _index_html(self.path)
+        # Свой фронтенд для деплоев без отдельного статического хостинга (не-Бизмарт компании).
+        if self.path == "/" or self.path.startswith("/index.html"):
+            data = _index_html()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
