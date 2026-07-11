@@ -3752,8 +3752,9 @@
       km('Выручка '+lbl,sales)+km('Прибыль '+lbl,profit)+km('Средний чек',avg);
     renderMoney();
     const cap=document.getElementById('dash-sales-cap');
-    if(cap) cap.innerHTML=_dashRange?('🛒 Продажи '+esc(_dashRange.from)+' … '+esc(_dashRange.to)+' — из 1С')
-                                    :('🛒 Продажи '+lbl+' — из <b>1С</b> (касса)');
+    const _dsrc=isBizmart()?'1С':'Wildberries';
+    if(cap) cap.innerHTML=_dashRange?('🛒 Продажи '+esc(_dashRange.from)+' … '+esc(_dashRange.to)+' — из '+_dsrc)
+                                    :('🛒 Продажи '+lbl+' — из <b>'+_dsrc+(isBizmart()?'</b> (касса)':'</b>'));
   }
   function dashSetRange(){
     const f=(document.getElementById('dash-from')||{}).value, t=(document.getElementById('dash-to')||{}).value;
