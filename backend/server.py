@@ -115,6 +115,11 @@ def _index_html():
 # каждый пользователь: пароль -> {name, sections}. sections=["all"] = видит всё.
 # разделы: dash, crm, chats, prod, sales, clients, market, analytics, fin, ai, set
 COMPANY_ID = (os.environ.get("COMPANY_ID", "").strip() or "bizmart")   # компания этого деплоя (мульти-тенант: bizmart/freeways/joru)
+# «Бизмарт» как ЛИТЕРАЛ (не COMPANY_ID!) — интеграции 1С/Meta-реклама принадлежат
+# конкретно Бизмарту, а не «компании по умолчанию для этого деплоя». На отдельном
+# сервисе (Valbreeze/joru) COMPANY_ID тоже равен "joru" — сравнение с COMPANY_ID
+# там дало бы обратный результат (company==COMPANY_ID) и включило бы 1С вместо WB.
+BIZMART_ID = "bizmart"
 def load_users():
     """Возвращает два индекса:
       users     — по паролю (обратная совместимость: вход только по паролю);
@@ -269,6 +274,7 @@ SECTION_OF = [
     ("/api/ads", "ads"),
     ("/api/wbads", "wbads"),
     ("/api/wborders", "sales"),
+    ("/api/wbfinance", "fin"),
 ]
 
 # Исправления для бота (обучение). Хранится в памяти процесса + дозапись в файл.
@@ -3672,6 +3678,106 @@ def wb_sales_sums(company):
             "week": {"sales": net(lambda d: d >= wk), "profit": 0},
             "month": {"sales": net(lambda d: (d or "")[:7] == mo), "profit": 0}}
 
+# --- Wildberries: финансовый отчёт о реализации (комиссия, логистика, хранение, штрафы) ---
+# Единственный источник, где WB реально показывает СВОИ удержания — раньше «Расходы»
+# могли показать только выручку (forPay), здесь же видно, ЧТО именно WB вычел и сколько
+# реально придёт на счёт (ppvz_for_pay). Себестоимость товара сюда не входит — это
+# отдельно (WB её не знает), поэтому «прибыль» в смысле маржи всё равно не считаем.
+WB_FIN_CACHE = {}
+WB_FIN_TTL = 3600          # отчёт формируется у WB раз в сутки — часа достаточно
+WB_FIN_DAYS = 62           # ~2 месяца
+
+def _wb_fetch_finance(company):
+    date_to = time.strftime("%Y-%m-%d", time.gmtime())
+    date_from = time.strftime("%Y-%m-%d", time.gmtime(time.time() - WB_FIN_DAYS * 86400))
+    rows = []
+    rrd_id = 0
+    for _ in range(100):     # защита от бесконечной пагинации
+        path = ("/api/v5/supplier/reportDetailByPeriod?dateFrom=%s&dateTo=%s&limit=100000&rrdid=%d"
+                % (date_from, date_to, rrd_id))
+        page = wb_request(company, "stats", path)
+        if not page:
+            break
+        rows.extend(page)
+        if len(page) < 100000:
+            break
+        rrd_id = page[-1].get("rrd_id", 0)
+    return rows
+
+def _wb_fin_refresh(company):
+    cur0 = WB_FIN_CACHE.get(company) or {}
+    if time.time() < cur0.get("next_try", 0):
+        return
+    try:
+        rows = _wb_fetch_finance(company)
+        WB_FIN_CACHE[company] = {"t": time.time(), "rows": rows}
+        _wb_backup_save("wb_fin_" + company, {"rows": rows})
+    except WBRateLimited as e:
+        cur = WB_FIN_CACHE.get(company) or {"rows": []}
+        cur["t"] = time.time(); cur["error"] = str(e)
+        cur["next_try"] = time.time() + e.retry_after + 5
+        WB_FIN_CACHE[company] = cur
+        _wb_next_try_save("wb_fin_wait_" + company, cur["next_try"])
+    except Exception as e:
+        cur = WB_FIN_CACHE.get(company) or {"rows": []}
+        cur["t"] = time.time(); cur["error"] = str(e)
+        WB_FIN_CACHE[company] = cur
+
+def wb_fin_cache(company):
+    cur = WB_FIN_CACHE.get(company)
+    if cur is None:
+        b = _wb_backup_load("wb_fin_" + company)
+        wait_until = _wb_next_try_load("wb_fin_wait_" + company)
+        base = {"t": 0.0, "rows": (b or {}).get("rows") or [], "from_backup": bool(b)}
+        if wait_until and time.time() < wait_until:
+            base["next_try"] = wait_until
+            base["error"] = "Wildberries временно ограничила частоту запросов"
+            WB_FIN_CACHE[company] = base
+        elif b and b.get("rows"):
+            WB_FIN_CACHE[company] = base
+            threading.Thread(target=_wb_fin_refresh, args=(company,), daemon=True).start()
+        else:
+            _wb_fin_refresh(company)
+    elif time.time() - cur.get("t", 0) > WB_FIN_TTL and time.time() >= cur.get("next_try", 0):
+        threading.Thread(target=_wb_fin_refresh, args=(company,), daemon=True).start()
+    return WB_FIN_CACHE.get(company) or {"rows": []}
+
+def wb_finance_overview(company, days=30):
+    """Разбивка удержаний WB за период: комиссия, логистика, хранение, штрафы, доплаты,
+    и реальная сумма к выплате (то, что придёт на счёт). delivery_rub у WB — всегда в
+    рублях (переводим); остальные суммы уже в валюте отчёта (сом для этого продавца)."""
+    cache = wb_fin_cache(company)
+    rows = cache.get("rows") or []
+    cutoff = time.strftime("%Y-%m-%d", time.gmtime(time.time() - days * 86400))
+    rows = [r for r in rows if (r.get("rr_dt") or r.get("date_from") or "") >= cutoff]
+    _rate = rub_to_kgs()
+    commission = sum(_num(r.get("ppvz_sales_commission")) for r in rows)
+    logistics = sum(_num(r.get("delivery_rub")) for r in rows) * _rate
+    storage = sum(_num(r.get("storage_fee")) for r in rows)
+    penalty = sum(_num(r.get("penalty")) for r in rows)
+    deduction = sum(_num(r.get("deduction")) for r in rows)
+    acceptance = sum(_num(r.get("acceptance")) for r in rows)
+    additional = sum(_num(r.get("additional_payment")) for r in rows)
+    payout = sum(_num(r.get("ppvz_for_pay")) for r in rows)
+    retail = sum(_num(r.get("retail_amount")) for r in rows)
+    res = {
+        "period_days": days,
+        "retail_amount": round(retail),
+        "commission": round(commission),
+        "logistics": round(logistics),
+        "storage": round(storage),
+        "penalty": round(penalty),
+        "deduction": round(deduction),
+        "acceptance": round(acceptance),
+        "additional_payment": round(additional),
+        "payout": round(payout),
+        "note": "Расходы — реальные удержания Wildberries из финансового отчёта о реализации. "
+                "Себестоимость товара сюда не входит (WB её не знает).",
+    }
+    if cache.get("error") and not rows:
+        res["error"] = cache["error"]
+    return res
+
 # --- Wildberries: реклама (продвижение внутри поиска WB — read-only обзор) ---
 WB_HOSTS["advert"] = "https://advert-api.wildberries.ru"
 WB_ADS_CACHE = {}
@@ -3817,7 +3923,7 @@ def get_goods(company=None):
     Ждать (~50 сек) приходится только при самой первой загрузке, когда кэша ещё нет.
     Компания, отличная от Бизмарта (например, joru/Wildberries), идёт по СВОЕЙ, полностью
     отдельной ветке (см. wb_get_goods) — общий кэш/1С этой веткой не трогается."""
-    if company and company != COMPANY_ID:
+    if company and company != BIZMART_ID:
         return wb_get_goods(company)
     if _goods["goods"] is not None:
         if time.time() >= _goods.get("next_try", 0) and not _goods["refreshing"]:
@@ -3843,7 +3949,7 @@ def get_goods(company=None):
         return _goods["goods"]
 
 def get_categories(company=None):
-    if company and company != COMPANY_ID:
+    if company and company != BIZMART_ID:
         return wb_get_categories(company)
     if _goods["cats"] is None:
         try:
@@ -4079,7 +4185,7 @@ def build_inventory(company=None):
         "low": low_out,
         "updated": time.strftime("%H:%M:%S"),
     }
-    if company and company != COMPANY_ID:
+    if company and company != BIZMART_ID:
         # WB не отдаёт закупочную цену — cost_value/margin_value были бы враньём
         # (0 закупки → «наценка» = вся розница). Честно помечаем как неизвестные.
         _inv_res["cost_value"] = None
@@ -4101,7 +4207,7 @@ def build_inventory(company=None):
 def get_inventory(company=None):
     """Сводка склада, устойчивая к сбоям 1С: при ошибке отдаёт последний снимок из базы.
     Для НЕ-Бизмарт компаний (WB) — свой кэш-ключ, без общего файлового снимка 1С."""
-    if company and company != COMPANY_ID:
+    if company and company != BIZMART_ID:
         return cached("inventory_%s" % company, 120, lambda: build_inventory(company))
     try:
         return cached("inventory", 120, build_inventory)
@@ -4167,7 +4273,7 @@ def search_products(q, page, per=50, cat=None, in_stock=False, scat=None, compan
             "qty": int(_num(x.get("QUANTITY"))),
         })
     res = {"total": total, "page": page, "per": per, "items": out}
-    if not (company and company != COMPANY_ID) and _goods.get("from_backup"):
+    if not (company and company != BIZMART_ID) and _goods.get("from_backup"):
         res["stale"] = True
         if _goods.get("t"):
             res["updated"] = time.strftime("%d.%m %H:%M", time.localtime(_goods["t"]))
@@ -5517,14 +5623,14 @@ def expenses_view(company=None):
             c = (r.get("category") or "Без категории")
             cat[c] = cat.get(c, 0) + _num(r.get("amount"))
     by_cat = [{"category": k, "amount": round(v)} for k, v in sorted(cat.items(), key=lambda i: -i[1])]
-    ss = sales_sums() if co == COMPANY_ID else wb_sales_sums(co)
+    ss = sales_sums() if co == BIZMART_ID else wb_sales_sums(co)
     periods = {}
     for p in ("today", "week", "month"):
         periods[p] = {"sales": ss[p]["sales"], "profit": ss[p]["profit"],
                       "expense": e[p], "net": round(ss[p]["profit"] - e[p])}
     # ПО МЕСЯЦАМ — для анализа сезонности (выручка/прибыль/расходы/чистая по каждому месяцу).
     mrev = {}
-    if supa_on() and co == COMPANY_ID:
+    if supa_on() and co == BIZMART_ID:
         try:
             sd = _supa("GET", "sales_daily",
                        "?company_id=eq.%s&select=date,sales,profit&order=date.asc" % _q(co))
@@ -5550,7 +5656,7 @@ def expenses_view(company=None):
     # когда строк за месяц больше 200). Итоговые суммы всё равно берём из periods (по ВСЕМ строкам).
     res = {"expenses": rows[:10000], "by_category": by_cat, "periods": periods,
            "by_month": by_month, "total_count": len(rows)}
-    if co != COMPANY_ID:
+    if co != BIZMART_ID:
         res["note"] = _WB_NOTE
     return res
 
@@ -6730,7 +6836,7 @@ class Handler(BaseHTTPRequestHandler):
             if not title:
                 return self._send(400, {"ok": False, "error": "Нужно название товара"})
             _co = (self._user() or {}).get("company") or COMPANY_ID
-            if _co != COMPANY_ID:
+            if _co != BIZMART_ID:
                 return self._send(200, {"ok": False,
                     "error": "Добавление товара для Wildberries пока не подключено — карточки создаются в кабинете WB, здесь появятся автоматически."})
             payload = {
@@ -7360,7 +7466,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 return self._send(200, get_inventory(_co))
             except Exception as e:
-                src = "1С" if _co == COMPANY_ID else "Wildberries"
+                src = "1С" if _co == BIZMART_ID else "Wildberries"
                 return self._send(200, {"error": "Нет связи с %s: %s" % (src, e)})
         if self.path.startswith("/api/assortment"):
             from urllib.parse import urlparse, parse_qs
@@ -7369,7 +7475,7 @@ class Handler(BaseHTTPRequestHandler):
                 days = int(parse_qs(urlparse(self.path).query).get("days", ["30"])[0])
             except ValueError:
                 days = 30
-            if _co != COMPANY_ID:
+            if _co != BIZMART_ID:
                 try:
                     return self._send(200, wb_assortment(_co, days))
                 except Exception as e:
@@ -7385,7 +7491,7 @@ class Handler(BaseHTTPRequestHandler):
                 days = int(parse_qs(urlparse(self.path).query).get("days", ["14"])[0])
             except ValueError:
                 days = 14
-            if _co != COMPANY_ID:
+            if _co != BIZMART_ID:
                 try:
                     return self._send(200, wb_sales_history(_co, max(1, min(days, 400))))
                 except Exception as e:
@@ -7395,7 +7501,7 @@ class Handler(BaseHTTPRequestHandler):
             from urllib.parse import urlparse, parse_qs
             _co = (self._user() or {}).get("company") or COMPANY_ID
             date = (parse_qs(urlparse(self.path).query).get("date", [""])[0] or "").strip()
-            if _co != COMPANY_ID:
+            if _co != BIZMART_ID:
                 try:
                     return self._send(200, wb_sales_day(_co, date))
                 except Exception as e:
@@ -7419,10 +7525,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"has_token": True, "error": str(e), "groups": []})
         if self.path.startswith("/api/wborders"):
             _co = (self._user() or {}).get("company") or COMPANY_ID
-            if _co == COMPANY_ID:
+            if _co == BIZMART_ID:
                 return self._send(200, {"today": {}, "week": {}, "month": {}})
             try:
                 return self._send(200, wb_orders_overview(_co))
+            except Exception as e:
+                return self._send(200, {"error": str(e)})
+        if self.path.startswith("/api/wbfinance"):
+            from urllib.parse import urlparse, parse_qs
+            _co = (self._user() or {}).get("company") or COMPANY_ID
+            if _co == BIZMART_ID:
+                return self._send(200, {"period_days": 30, "retail_amount": 0, "commission": 0,
+                                         "logistics": 0, "storage": 0, "penalty": 0, "payout": 0})
+            try:
+                days = int(parse_qs(urlparse(self.path).query).get("days", ["30"])[0])
+            except ValueError:
+                days = 30
+            try:
+                return self._send(200, wb_finance_overview(_co, max(1, min(days, 62))))
             except Exception as e:
                 return self._send(200, {"error": str(e)})
         if self.path.startswith("/api/ads/"):
@@ -7485,7 +7605,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, search_products(q, max(1, page), cat=cat, in_stock=in_stock,
                                                         scat=scat, company=_co))
             except Exception as e:
-                src = "1С" if _co == COMPANY_ID else "Wildberries"
+                src = "1С" if _co == BIZMART_ID else "Wildberries"
                 return self._send(200, {"error": "Нет связи с %s: %s" % (src, e), "items": [], "total": 0})
         if self.path.startswith("/api/ig/clients"):
             try:
