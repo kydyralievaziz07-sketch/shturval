@@ -635,7 +635,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.36.0<br>Показ настоящей причины ошибки Instagram (было «400 bad request») → понятное объяснение «окно закрыто» и т.п.
+      Штурвал v4.37.0<br>«Окно закрыто» = ВСЕ, кому нельзя написать (вкл. отказ/покупателей); базы дублируются в «Окно закрыто», активные стадии — нет
   </aside>
 
   <!-- MAIN -->
@@ -4260,20 +4260,24 @@
     const now=Date.now()/1000, lo=now-7*86400, hi=now-5*86400;
     return (COCKPIT_CHATS||[]).filter(c=>(c.channel||'ig')==='ig' && c.ts && c.ts>=lo && c.ts<hi);
   }
+  // стадии, где закрытое окно НЕ должно дублироваться (активная работа). В базах (покупатели/отказ) — двойная запись разрешена
+  const ACTIVE_DEDUP=['Новая заявка','В обработке','Ожидает оплаты','Готов к отправке','В пути'];
   function igClosedList(){
-    // Instagram-переписки, где окно уже ЗАКРЫТО (клиент молчит >7 дней) и есть активная сделка — ответить нельзя
+    // ВСЕ Instagram-клиенты, кому нельзя написать (окно >7 дней) и у кого есть сделка — любой стадии
     const now=Date.now()/1000, cut=now-7*86400;
-    const term=['Клиент получил товар','Отказ','Купить позже'];
     return (COCKPIT_CHATS||[]).filter(c=>{
       if((c.channel||'ig')!=='ig' || !c.ts || c.ts>=cut) return false;
-      const d=findDealByName(c.name);
-      return !!d && term.indexOf(d.status)<0;
+      return !!findDealByName(c.name);
     });
   }
   function renderFunnel(){
     const fb=document.getElementById('funnelbar'); if(!fb) return;
     const _clSet=igClosedNameSet();
-    const _norm=CRM_STATUSES.map(st=>({st:st,lbl:st,cls:'',n:(st==='Новая заявка')?newLeadsCount():CRM.deals.filter(d=>d.status===st && !_clSet.has(_clKey((getClient(d.client_id)||{}).name))).length}));
+    const _norm=CRM_STATUSES.map(st=>{ let n;
+      if(st==='Новая заявка') n=newLeadsCount();
+      else if(ACTIVE_DEDUP.indexOf(st)>=0) n=CRM.deals.filter(d=>d.status===st && !_clSet.has(_clKey((getClient(d.client_id)||{}).name))).length;
+      else n=CRM.deals.filter(d=>d.status===st).length;   // базы (Клиент получил товар) — без вычета, двойная запись ок
+      return {st:st,lbl:st,cls:'',n:n}; });
     const _spec=[{st:'Купить позже',lbl:'Купить позже',cls:'later',n:CRM.deals.filter(d=>d.status==='Купить позже').length},
                  {st:'Отказ',lbl:'Отказано',cls:'reject',n:CRM.deals.filter(d=>d.status==='Отказ').length},
                  {st:'__igwin',lbl:'⏳ Окно IG',cls:'igwin',n:igWinList().length},
@@ -4569,8 +4573,8 @@
     } else if(ckView==='__igclosed'){
       items=igClosedList().map(c=>{ const days=Math.floor((Date.now()/1000-(c.ts||0))/86400); const d=findDealByName(c.name); return {name:c.name,sub:'🔒 окно закрыто · молчит '+days+' дн.'+(d?(' · '+d.status):''),chatId:c.id,ts:c.ts||0,unread:!!c.unread,channel:'ig'}; });
     } else {
-      const _cl=igClosedNameSet();
-      items=CRM.deals.filter(d=>d.status===ckView && !_cl.has(_clKey((getClient(d.client_id)||{}).name))).map(d=>{ const cl=getClient(d.client_id); const chat=COCKPIT_CHATS.find(x=>x.name&&cl.name&&x.name.toLowerCase()===cl.name.toLowerCase()); return {name:cl.name||'Без имени',sub:fmt(dealAmount(d)),chatId:chat?chat.id:null,ts:chat?(chat.ts||0):0,unread:chat?!!chat.unread:false,channel:chat?(chat.channel||'ig'):''}; });
+      const _cl=igClosedNameSet(); const _dd=ACTIVE_DEDUP.indexOf(ckView)>=0;
+      items=CRM.deals.filter(d=>d.status===ckView && !(_dd && _cl.has(_clKey((getClient(d.client_id)||{}).name)))).map(d=>{ const cl=getClient(d.client_id); const chat=COCKPIT_CHATS.find(x=>x.name&&cl.name&&x.name.toLowerCase()===cl.name.toLowerCase()); return {name:cl.name||'Без имени',sub:fmt(dealAmount(d)),chatId:chat?chat.id:null,ts:chat?(chat.ts||0):0,unread:chat?!!chat.unread:false,channel:chat?(chat.channel||'ig'):''}; });
     }
     // один клиент — одна строка (страховка от дублей): оставляем самый «полезный» вариант
     (function(){ const by=new Map();
