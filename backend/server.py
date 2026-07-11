@@ -5748,7 +5748,8 @@ def expenses_view(company=None):
     res = {"expenses": rows[:10000], "by_category": by_cat, "periods": periods,
            "by_month": by_month, "total_count": len(rows)}
     if co != BIZMART_ID and co not in GG_CATALOG_COMPANIES:
-        res["note"] = _WB_NOTE
+        res["note"] = ("«Расходы» включают и то, что вы внесли вручную, и реальные удержания "
+                        "Wildberries (комиссия/логистика/хранение/штрафы). " + _WB_NOTE)
     return res
 
 # ================== GUZI GOLD: самостоятельный склад ювелирки (без 1С/WB) ==================
