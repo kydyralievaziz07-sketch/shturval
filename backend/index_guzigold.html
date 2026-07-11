@@ -2002,6 +2002,9 @@
     USER={name:(d&&d.name)||'', sections:(d&&Array.isArray(d.sections))?d.sections:['all'],
           role:(d&&d.role)||'', department:(d&&d.department)||'', plan_day:(d&&d.plan_day)||0, owner:!!(d&&d.owner),
           company:(d&&d.company)||'bizmart'};
+    // Заголовок вкладки — по компании залогиненного (сервис может обслуживать несколько
+    // компаний одной ниши, поэтому бренд не хардкожен в <title>, а ставится тут).
+    try{ document.title=(d&&d.company)?(d.company.charAt(0).toUpperCase()+d.company.slice(1)):'Штурвал'; }catch(e){}
     // СМЕНА АККАУНТА → сбросить кэши данных в памяти, чтобы не показывались чужие (старые) данные
     try{
       var _who=(getLg()||'').toLowerCase()+'|'+((d&&d.name)||'');

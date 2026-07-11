@@ -89,17 +89,19 @@ def load_secret():
 CFG = load_secret()
 BASE = "https://{}.amocrm.ru/api/v4".format(CFG.get("AMO_SUBDOMAIN", ""))
 
-# --- КАЖДАЯ компания — отдельный Render-деплой (свой URL, свой процесс, свой COMPANY_ID) ---
-# Бизмарт продолжает раздаваться через GitHub Pages/Vercel (index.html в корне репозитория,
-# не трогаем). У каждой ОСТАЛЬНОЙ компании — свой файл backend/index_<COMPANY_ID>.html,
-# полностью независимый от других (правка одной компании не задевает другую и физически
-# не может её задеть — на её деплое этого файла просто нет). <title>/бренд уже прописаны
-# прямо в самом файле каждой компании.
+# --- Каждый ДЕПЛОЙ — либо одна компания, либо целая «ниша» одинаковых по типу компаний ---
+# (см. NICHE_COMPANIES ниже). Бизмарт продолжает раздаваться через GitHub Pages/Vercel
+# (index.html в корне репозитория, не трогаем). У каждого шаблона — свой файл
+# backend/index_<имя>.html, полностью независимый от других (правка одного шаблона не
+# задевает другой и физически не может задеть — на чужом деплое этого файла просто нет).
+# Бренд в шапке — динамический, выставляется JS после логина по имени компании пользователя
+# (см. applyUser в самих файлах), не хардкожен в <title>.
 _INDEX_HTML_CACHE = None
 def _index_html():
     global _INDEX_HTML_CACHE
     if _INDEX_HTML_CACHE is None:
-        per_company = os.path.join(HERE, "index_%s.html" % COMPANY_ID)
+        fname = "index_%s.html" % (NICHE_TEMPLATE or COMPANY_ID)
+        per_company = os.path.join(HERE, fname)
         path = per_company if os.path.exists(per_company) else os.path.join(HERE, "index.html")
         try:
             with open(path, encoding="utf-8") as f:
@@ -113,6 +115,12 @@ def _index_html():
 # каждый пользователь: пароль -> {name, sections}. sections=["all"] = видит всё.
 # разделы: dash, crm, chats, prod, sales, clients, market, analytics, fin, ai, set
 COMPANY_ID = (os.environ.get("COMPANY_ID", "").strip() or "bizmart")   # компания этого деплоя (мульти-тенант: bizmart/freeways/joru)
+# «Ниша» — несколько бизнесов одного типа делят один сервер (экономия на хостинге при
+# масштабировании). Если задано — этот деплой обслуживает СПИСОК компаний, а не одну.
+# Не задано → обычное поведение «1 деплой = 1 компания» (совместимость, Бизмарт/Valbreeze).
+_NICHE_RAW = os.environ.get("NICHE_COMPANIES", "").strip()
+NICHE_COMPANIES = [c.strip() for c in _NICHE_RAW.split(",") if c.strip()] if _NICHE_RAW else [COMPANY_ID]
+NICHE_TEMPLATE = os.environ.get("NICHE_TEMPLATE", "").strip()   # какой index_<...>.html отдавать всем компаниям ниши
 # «Бизмарт» как ЛИТЕРАЛ (не COMPANY_ID!) — интеграции 1С/Meta-реклама принадлежат
 # конкретно Бизмарту, а не «компании по умолчанию для этого деплоя». На отдельном
 # сервисе (Valbreeze/joru) COMPANY_ID тоже равен "joru" — сравнение с COMPANY_ID
@@ -164,10 +172,11 @@ def load_users():
     # --- сотрудники, заведённые руководителем из интерфейса (таблица employees) ---
     # Перекрывают/дополняют записи из env. active=false → сотрудник «убран» (скрыт).
     try:
-        # грузим сотрудников ТОЛЬКО своей компании (каждый деплой — своя компания). Это и
-        # есть реальная изоляция логинов: логин Guzi Gold физически не существует в процессе
-        # Бизмарта и наоборот, даже если кто-то случайно откроет чужую ссылку.
-        rows = _supa("GET", "employees", "?select=*&company_id=eq.%s" % urllib.parse.quote(COMPANY_ID))
+        # грузим сотрудников ТОЛЬКО компаний этого деплоя (одна — обычный режим, несколько —
+        # ниша). Это и есть реальная изоляция логинов: чужой логин физически не существует
+        # в процессе, который его компанию не обслуживает, даже если открыть чужую ссылку.
+        _co_list = ",".join(urllib.parse.quote(c) for c in NICHE_COMPANIES)
+        rows = _supa("GET", "employees", "?select=*&company_id=in.(%s)" % _co_list)
         for u in (rows or []):
             login = (u.get("login") or "").strip()
             if not login:
