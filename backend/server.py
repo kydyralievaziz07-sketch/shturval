@@ -1397,6 +1397,18 @@ def ig_store_event(evt):
                 threading.Thread(target=igbot_handle,
                                  args=(sender, recipient, msg.get("text", "")), daemon=True).start()
 
+def _ig_err_msg(detail):
+    """Человекочитаемое сообщение об ошибке из ответа Meta (а не голое «400 bad request»)."""
+    try:
+        e = (json.loads(detail).get("error") or {})
+        m = e.get("error_user_msg") or e.get("message") or ""
+        code = e.get("code")
+        if m:
+            return (("[%s] " % code) if code else "") + m
+    except Exception:
+        pass
+    return (detail or "неизвестная ошибка")[:250]
+
 def ig_send(recipient_id, text, from_account_id=None):
     """Отправить сообщение в Instagram. from_account_id = НАШ аккаунт (тот, на который писал клиент)."""
     token = ig_token_for(from_account_id) if from_account_id else CFG.get("IG_TOKEN", "")
@@ -1419,11 +1431,17 @@ def ig_send(recipient_id, text, from_account_id=None):
             pass
         # Вне 24 часов Instagram блокирует обычный ответ. Официальный режим «ответ живого
         # агента» (HUMAN_AGENT) продлевает окно до 7 дней — пробуем повтором.
-        if e.code in (400, 403) and _re.search(r"24|outside|window|reengag|re-engag|allowed", detail, _re.I):
+        if e.code in (400, 403) and _re.search(r"24|outside|window|reengag|re-engag|allowed|human_agent", detail, _re.I):
             tagged = {"recipient": {"id": recipient_id}, "messaging_type": "MESSAGE_TAG",
                       "tag": "HUMAN_AGENT", "message": {"text": text}}
-            return _post(tagged)                  # окно до 7 дней
-        raise
+            try:
+                return _post(tagged)              # окно до 7 дней
+            except urllib.error.HTTPError as e2:
+                d2 = ""
+                try: d2 = e2.read().decode()
+                except Exception: pass
+                raise RuntimeError(_ig_err_msg(d2))
+        raise RuntimeError(_ig_err_msg(detail))
 
 # имена клиентов по их IGSID. Кэш в памяти + таблица ig_names (БЕЗ живых запросов в момент загрузки).
 _ig_names = {}
@@ -1711,11 +1729,17 @@ def ig_send_media(recipient_id, media_url, mtype="image", from_account_id=None):
             detail = e.read().decode()
         except Exception:
             pass
-        if e.code in (400, 403) and _re.search(r"24|outside|window|reengag|re-engag|allowed", detail, _re.I):
+        if e.code in (400, 403) and _re.search(r"24|outside|window|reengag|re-engag|allowed|human_agent", detail, _re.I):
             tagged = {"recipient": {"id": recipient_id}, "messaging_type": "MESSAGE_TAG",
                       "tag": "HUMAN_AGENT", "message": {"attachment": attach}}
-            return _post(tagged)                  # окно до 7 дней
-        raise
+            try:
+                return _post(tagged)              # окно до 7 дней
+            except urllib.error.HTTPError as e2:
+                d2 = ""
+                try: d2 = e2.read().decode()
+                except Exception: pass
+                raise RuntimeError(_ig_err_msg(d2))
+        raise RuntimeError(_ig_err_msg(detail))
 
 # исходящие медиа держим в памяти под случайным токеном — Meta скачивает их по публичной ссылке,
 # и фронт проигрывает отправленное голосовое из этого же хранилища.
