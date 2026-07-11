@@ -89,15 +89,18 @@ def load_secret():
 CFG = load_secret()
 BASE = "https://{}.amocrm.ru/api/v4".format(CFG.get("AMO_SUBDOMAIN", ""))
 
-# --- фронтенд для деплоев без отдельного статического хостинга (Freeways/Valbreeze) ---
+# --- фронтенд для деплоев без отдельного статического хостинга (не-Бизмарт компании) ---
 # Бизмарт продолжает раздаваться через GitHub Pages (index.html в корне репозитория,
-# не трогаем). Этот backend/index.html — та же панель, но со своим адресом сервера
-# (ONEC_CLOUD=location.origin), чтобы новый деплой общался сам с собой.
+# не трогаем). У КАЖДОЙ остальной компании — СВОЙ файл backend/index_<COMPANY_ID>.html,
+# полностью независимый от других (правка одной компании не задевает другую). Если для
+# компании ещё нет своего файла (новая, только что созданная) — используется общий
+# backend/index.html как стартовый шаблон-заготовка.
 _INDEX_HTML_CACHE = None
 def _index_html():
     global _INDEX_HTML_CACHE
     if _INDEX_HTML_CACHE is None:
-        path = os.path.join(HERE, "index.html")
+        per_company = os.path.join(HERE, "index_%s.html" % COMPANY_ID)
+        path = per_company if os.path.exists(per_company) else os.path.join(HERE, "index.html")
         try:
             with open(path, encoding="utf-8") as f:
                 html = f.read()
