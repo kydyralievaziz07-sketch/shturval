@@ -1741,14 +1741,11 @@
     rentclients:{icon:'🧑',label:'Клиенты'}, rentcalendar:{icon:'📆',label:'Календарь'}
   };
   const MODULES=[
-    {key:'crm',  icon:'🧲', label:'CRM',     tabs:['crmdash','deals','tasks','clients','iginbox','wainbox']},
-    {key:'mkt',  icon:'📣', label:'Реклама', tabs:['ads','adsreport','adsanalysis','wbads']},
     {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','assort','report','analytics','supl','fin','exp']},
-    {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','renttasks','rentnotes','rentcars','rentlist','rentalert','rentexp','renthanded','rentanalysis','rentplan','rentclients','rentcalendar']},
-    {key:'team', icon:'👥', label:'Команда', tabs:['myday','hr']},
+    {key:'mkt',  icon:'📣', label:'Реклама', tabs:['ads','adsreport','adsanalysis','wbads']},
     {key:'ai',   icon:'🤖', label:'ИИ',      tabs:['ai','sim']}
   ];
-  let curModule='crm', curTab='dash';
+  let curModule='shop', curTab='dash';
   function rentBrand(){ return 'Авто Рент'; }
   function modLabel(m){ return m.label; }
   function tabVisible(tab){
@@ -2024,7 +2021,7 @@
     // первый доступный модуль и его первая вкладка
     const firstMod=MODULES.find(moduleVisible);
     if(firstMod){ curModule=firstMod.key; const t=firstMod.tabs.filter(tabVisible); curTab=t[0]||'set'; }
-    else { curModule='crm'; curTab='set'; }
+    else { curModule='shop'; curTab='set'; }
     renderTopNav(); renderSubmenu(); openTab(curTab);
     const bell=document.getElementById('bell-btn');
     if(bell){
