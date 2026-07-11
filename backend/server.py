@@ -3757,11 +3757,14 @@ def wb_fin_cache(company):
             base["next_try"] = wait_until
             base["error"] = "Wildberries временно ограничила частоту запросов"
             WB_FIN_CACHE[company] = base
-        elif b and b.get("rows"):
+        else:
+            # Отчёт за 62 дня с пагинацией — тяжёлый (может занять больше времени, чем
+            # держит прокси Render, 502). Первый расчёт ВСЕГДА в фоне, не блокируя ответ —
+            # даже если нет ни памяти, ни снимка в базе (в отличие от sales/orders — там
+            # ответ WB маленький и укладывается в один быстрый запрос).
+            base["computing"] = not bool(b)
             WB_FIN_CACHE[company] = base
             threading.Thread(target=_wb_fin_refresh, args=(company,), daemon=True).start()
-        else:
-            _wb_fin_refresh(company)
     elif time.time() - cur.get("t", 0) > WB_FIN_TTL and time.time() >= cur.get("next_try", 0):
         threading.Thread(target=_wb_fin_refresh, args=(company,), daemon=True).start()
     return WB_FIN_CACHE.get(company) or {"rows": []}
@@ -3800,6 +3803,9 @@ def wb_finance_overview(company, days=30):
     }
     if cache.get("error") and not rows:
         res["error"] = cache["error"]
+    if cache.get("computing") and not rows:
+        res["computing"] = True
+        res["note"] = "Считаю отчёт за период — первый раз занимает пару минут. Обновите страницу чуть позже."
     return res
 
 # --- Wildberries: реклама (продвижение внутри поиска WB — read-only обзор) ---
