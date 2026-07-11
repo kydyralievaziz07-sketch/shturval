@@ -626,7 +626,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.29.0<br>Исправлен подсчёт «Расходы за месяц»: раньше учитывались только последние 200 записей — теперь итог считается по всем строкам</div>
+      Штурвал v4.28.0<br>Прикрепление: можно выбрать несколько фото/видео из галереи и отправить все разом (пульт, WhatsApp, карточка сделки)</div>
   </aside>
 
   <!-- MAIN -->
@@ -790,7 +790,7 @@
           <div id="wa-source" style="display:none"></div>
           <div class="msgs" id="wa-msgs"></div>
           <div class="replybox">
-            <input type="file" id="wa-file" style="display:none" onchange="if(this.files[0]){waSendFile(this.files[0]);this.value='';}">
+            <input type="file" id="wa-file" multiple accept="image/*,video/*,application/pdf" style="display:none" onchange="if(this.files.length){sendFilesSeq(this.files,waSendFile);this.value='';}">
             <button class="btn" title="Прикрепить файл, фото или видео" onclick="document.getElementById('wa-file').click()">📎</button>
             <button class="btn" id="wa-mic" title="Записать голосовое" onclick="waToggleVoice()">🎤</button>
             <input id="wa-reply" placeholder="Ответить клиенту в WhatsApp…" onkeydown="if(event.key==='Enter')waSend()">
@@ -841,7 +841,7 @@
           <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 4px 4px"><span id="ck-upd" style="font-size:11px;color:var(--muted)"></span><button class="btn ghost" style="padding:2px 10px;font-size:12px" onclick="if(ckCurId)loadConvoMsgs(ckCurId,false)" title="Обновить переписку вручную">↻ обновить</button></div>
           <div class="msgs" id="ck-msgs"></div>
           <div id="ck-warn" style="display:none;font-size:12px;padding:6px 10px;margin:0 4px;border-radius:8px"></div>
-          <div class="replybox"><input id="ck-reply" placeholder="Ответить клиенту…" onkeydown="if(event.key==='Enter')ckSend()"><input type="file" id="ck-file" style="display:none" onchange="if(this.files[0]){ckSendFile(this.files[0]);this.value='';}"><button class="btn ghost" title="Прикрепить фото, видео или файл" onclick="document.getElementById('ck-file').click()">📎</button><button class="btn ghost" onclick="openTpl('ck-reply')" title="Шаблоны ответов">📋</button><button class="btn ghost" onclick="openBotFix()" title="Отметить, что бот ответил неправильно">⚠️<span class="btn-lbl"> Бот ошибся</span></button><button class="btn ghost" id="ck-mic" title="Записать голосовое" onclick="igToggleVoice('ck')">🎤</button><button class="btn" onclick="ckSend()"><span class="btn-ico">➤</span><span class="btn-lbl">Отправить</span></button></div>
+          <div class="replybox"><input id="ck-reply" placeholder="Ответить клиенту…" onkeydown="if(event.key==='Enter')ckSend()"><input type="file" id="ck-file" multiple accept="image/*,video/*,application/pdf" style="display:none" onchange="if(this.files.length){sendFilesSeq(this.files,ckSendFile);this.value='';}"><button class="btn ghost" title="Прикрепить фото, видео или файл" onclick="document.getElementById('ck-file').click()">📎</button><button class="btn ghost" onclick="openTpl('ck-reply')" title="Шаблоны ответов">📋</button><button class="btn ghost" onclick="openBotFix()" title="Отметить, что бот ответил неправильно">⚠️<span class="btn-lbl"> Бот ошибся</span></button><button class="btn ghost" id="ck-mic" title="Записать голосовое" onclick="igToggleVoice('ck')">🎤</button><button class="btn" onclick="ckSend()"><span class="btn-ico">➤</span><span class="btn-lbl">Отправить</span></button></div>
         </div>
       </div>
     </section>
@@ -5462,6 +5462,10 @@
   }
   // Отправка с окном отмены: 6 секунд можно нажать «отменить» — сообщение уйдёт только после.
   let ckPendingSend=null;
+  async function sendFilesSeq(files, fn){
+    const arr=Array.from(files||[]);
+    for(let i=0;i<arr.length;i++){ try{ await fn(arr[i]); }catch(e){} }
+  }
   async function ckSendFile(file){
     if(!file) return;
     if(!ckCurId){ alert('Сначала выбери чат клиента слева.'); return; }
@@ -7381,7 +7385,7 @@
       const msgs=(md.msgs||[]).map(m=>bubbleHTML(m,'',chat.account_id)).join('');
       box.innerHTML='<div class="msgs" style="max-height:220px;background:var(--bg);border-radius:10px;padding:10px;margin-bottom:8px">'+(msgs||'<span style="color:var(--muted)">Нет сообщений</span>')+'</div>'+
         '<div style="display:flex;gap:8px;align-items:center">'+
-        '<input type="file" id="dl-file" style="display:none" onchange="if(this.files[0]){dealSendFile(this.files[0],\''+cid+'\');this.value=\'\';}">'+
+        '<input type="file" id="dl-file" multiple accept="image/*,video/*,application/pdf" style="display:none" onchange="if(this.files.length){sendFilesSeq(this.files,function(f){return dealSendFile(f,\''+cid+'\');});this.value=\'\';}">'+
         '<button class="btn ghost" title="Прикрепить фото, видео или файл" onclick="document.getElementById(\'dl-file\').click()">📎</button>'+
         '<input id="dl-reply" placeholder="Ответить клиенту…" style="flex:1"><button class="btn ghost" onclick="openTpl(\'dl-reply\')" title="Шаблоны ответов">📋</button><button class="btn" onclick="dealReply(\''+cid+'\')">→</button></div>';
       const mb=box.querySelector('.msgs'); if(mb){ igHydrateMedia(mb); ckHydrateWaMedia(mb); mb.scrollTop=mb.scrollHeight; }
