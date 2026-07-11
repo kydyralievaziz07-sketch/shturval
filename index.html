@@ -632,7 +632,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.31.0<br>Новая стадия «Купить позже» + список «⏳ Окно IG» (кому скоро нельзя ответить, 5-7 дней)
+      Штурвал v4.32.0<br>Шаблон-«догонялка» для Instagram (📋 в чате) + стадия «Купить позже» + список «Окно IG»
   </aside>
 
   <!-- MAIN -->
@@ -2736,10 +2736,13 @@
     {id:'t2',title:'Уточняю наличие',text:'Секунду, уточняю наличие и цену 🙏'},
     {id:'t3',title:'Доставка',text:'Доставка по городу — сегодня/завтра. Подскажите адрес и удобное время?'},
     {id:'t4',title:'Оплата',text:'Оплатить можно переводом или картой. Отправить реквизиты?'},
-    {id:'t5',title:'Спасибо за заказ',text:'Спасибо за заказ! 🎉 Передали на сборку, скоро свяжемся по доставке.'}
+    {id:'t5',title:'Спасибо за заказ',text:'Спасибо за заказ! 🎉 Передали на сборку, скоро свяжемся по доставке.'},
+    {id:'reengage3',title:'Догонялка (Instagram)',text:'Добрый день! 🙌 Напоминаем о себе — если ещё нужен товар или помощь с выбором, напишите, всё подберём. Bizmart 💙'}
   ];
   let TEMPLATES=(function(){ try{ const s=JSON.parse(localStorage.getItem('shturval_templates')); return (s&&s.length)?s:TPL_DEFAULTS.slice(); }catch(_){ return TPL_DEFAULTS.slice(); } })();
   function tplPersist(){ try{ localStorage.setItem('shturval_templates',JSON.stringify(TEMPLATES)); }catch(_){} }
+  (function(){ if(Array.isArray(TEMPLATES)&&!TEMPLATES.some(t=>t.id==='reengage3')){ TEMPLATES.push({id:'reengage3',title:'Догонялка (Instagram)',text:'Добрый день! 🙌 Напоминаем о себе — если ещё нужен товар или помощь с выбором, напишите, всё подберём. Bizmart 💙'}); try{ localStorage.setItem('shturval_templates',JSON.stringify(TEMPLATES)); }catch(_){} } })();
+
   let tplTarget='ck-reply';
   function openTpl(targetId){ tplTarget=targetId||'ck-reply'; document.getElementById('tpl-title').value=''; document.getElementById('tpl-text').value=''; renderTplList(); document.getElementById('tplbg').classList.add('open'); }
   function closeTpl(){ document.getElementById('tplbg').classList.remove('open'); }
