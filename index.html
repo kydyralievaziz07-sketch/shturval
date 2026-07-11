@@ -3026,6 +3026,31 @@
     else loadInventory();
     loadExpenses();
     const st=document.getElementById('fin-status'); if(st){ st.style.borderStyle='solid'; st.style.borderColor='#39d98a'; st.innerHTML='🟢 <b>Финансы</b> · продажи из '+(isBizmart()?'1С':'Wildberries')+' минус твои расходы. Период — кнопками сверху.'; }
+    const stockCap=document.getElementById('fin-stock-cap');
+    if(stockCap) stockCap.textContent=isBizmart()?'📦 Склад сейчас (из 1С) — сколько денег «лежит» в товаре':'📦 Склад сейчас (Wildberries) — сколько денег «лежит» в товаре';
+    const wbCard=document.getElementById('fin-wb-card');
+    if(wbCard){ wbCard.style.display=isBizmart()?'none':''; if(!isBizmart()) loadWbFinance(); }
+  }
+  async function loadWbFinance(){
+    const box=document.getElementById('fin-wb-body'); if(!box) return;
+    box.innerHTML='⏳ Загрузка…';
+    let d=null;
+    try{ const r=await apiFetch('/api/wbfinance?days=14',{},ONEC_BASE); d=await r.json(); }
+    catch(e){ box.innerHTML='<span style="color:var(--muted);font-size:13px">🔴 Нет связи с сервером.</span>'; return; }
+    if(!d){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Нет данных.</span>'; return; }
+    if(d.computing){ box.innerHTML='<span style="color:var(--muted);font-size:13px">⏳ '+esc(d.note||'Считаю отчёт…')+'</span>'; return; }
+    if(d.error && !d.retail_amount){ box.innerHTML='<span style="color:var(--muted);font-size:13px">⚠️ '+esc(d.error)+'</span>'; return; }
+    const km=(l,s,c)=>'<div class="card kpi"><div class="label">'+l+'</div><div class="value"'+(c?' style="color:'+c+'"':'')+'><span class="money" data-som="'+(s||0)+'">'+fmt(s||0)+'</span></div></div>';
+    box.innerHTML='<div class="kpis">'+
+      km('Выручка',d.retail_amount)+
+      km('Комиссия WB',d.commission,'#ffb84d')+
+      km('Логистика',d.logistics,'#ffb84d')+
+      km('Хранение',d.storage,'#ffb84d')+
+      km('Штрафы',d.penalty,'#ff6b6b')+
+      km('Удержания (прочее)',d.deduction,'#ffb84d')+
+      km('К выплате на счёт',d.payout,'#39d98a')+
+      '</div><div class="note" style="margin-top:12px">'+esc(d.note||'')+'</div>';
+    renderMoney();
   }
   // отдельная вкладка «Расходы» — только ввод и список (без выручки/прибыли)
   function renderExpPage(){ loadExpenses(); }
