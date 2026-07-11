@@ -235,6 +235,32 @@
   .bubble.out{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:4px}
   .replybox{padding:12px;border-top:1px solid var(--line);display:flex;gap:8px;background:var(--panel)}
   .replybox input{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 14px;color:var(--text);font-family:inherit}
+  /* WhatsApp-стиль строки ответа в пульте */
+  .ckrb{position:relative;display:flex;align-items:center;gap:8px}
+  .ckrb #ck-reply{flex:1 1 auto;min-width:0;transition:opacity .18s}
+  .ckrb .ckrb-att{flex:0 0 auto}
+  .ckrb-main{flex:0 0 auto;min-width:46px;height:44px;border:none;border-radius:50%;background:var(--accent);color:#fff;font-size:20px;cursor:pointer;transition:transform .15s,background .2s,opacity .18s;-webkit-user-select:none;user-select:none;touch-action:none}
+  .ckrb-main:active{transform:scale(1.12)}
+  .ckrb-main.rec-on{background:#ff4d4d}
+  .ckrb-hint{position:absolute;left:0;right:0;bottom:100%;text-align:center;font-size:12px;color:var(--muted);padding:5px;opacity:0;transform:translateY(6px);transition:opacity .2s,transform .2s;pointer-events:none}
+  .ckrb.rec:not(.locked) .ckrb-hint{opacity:1;transform:translateY(0)}
+  .ckrb-rec{position:absolute;inset:0;display:flex;align-items:center;gap:10px;padding:0 6px;background:var(--panel);border-radius:12px;opacity:0;transform:translateY(6px);pointer-events:none;transition:opacity .22s,transform .22s}
+  .ckrb.rec .ckrb-rec{opacity:1;transform:translateY(0);pointer-events:auto}
+  .ckrb.rec > :not(.ckrb-rec):not(.ckrb-hint){opacity:0;pointer-events:none;transition:opacity .18s}
+  .ckrb-del,.ckrb-recsend{flex:0 0 auto;border:none;background:none;font-size:22px;cursor:pointer;padding:6px;border-radius:50%;transition:transform .15s}
+  .ckrb-del:active,.ckrb-recsend:active{transform:scale(1.15)}
+  .ckrb-del{color:#ff6b6b;display:none}
+  .ckrb.locked .ckrb-del{display:inline-block}
+  .ckrb-recsend{color:var(--accent)}
+  .ckrb-dot{width:11px;height:11px;border-radius:50%;background:#ff4d4d;flex:0 0 auto;animation:ckblink 1s ease-in-out infinite}
+  @keyframes ckblink{0%,100%{opacity:1}50%{opacity:.25}}
+  .ckrb-time{font-variant-numeric:tabular-nums;font-size:14px;color:var(--text);min-width:40px;flex:0 0 auto}
+  .ckrb-wave{flex:1 1 auto;display:flex;align-items:center;gap:3px;height:26px;overflow:hidden;min-width:0}
+  .ckrb-wave i{flex:1 1 auto;background:var(--accent);border-radius:3px;height:6px;animation:ckwave 1.1s ease-in-out infinite}
+  .ckrb-wave i:nth-child(3n){animation-duration:.75s}
+  .ckrb-wave i:nth-child(3n+1){animation-duration:.95s;animation-delay:.15s}
+  .ckrb-wave i:nth-child(4n){animation-delay:.3s}
+  @keyframes ckwave{0%,100%{height:5px;opacity:.5}50%{height:22px;opacity:1}}
 
   /* ====== WhatsApp-режим: раздел на всю высоту, страница НЕ скроллится — скроллят только список и переписка ====== */
   body.tab-wa .main{overflow:hidden;display:flex;flex-direction:column;padding:0}
@@ -635,7 +661,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.37.0<br>«Окно закрыто» = ВСЕ, кому нельзя написать (вкл. отказ/покупателей); базы дублируются в «Окно закрыто», активные стадии — нет
+      Штурвал v4.38.0<br>Строка ответа как в WhatsApp: 📎 слева, поле без подписи, справа ➤/🎤 (зажать=запись, вверх=блок), волна + отправить/удалить; шаблоны и «бот ошибся» — к «обновить»
   </aside>
 
   <!-- MAIN -->
@@ -847,10 +873,10 @@
         <div class="ck-chats" id="cockpit-chats"></div>
         <div class="ck-convo">
           <div class="ck-head" id="ck-head">← Выберите клиента в списке слева</div>
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 4px 4px"><span id="ck-upd" style="font-size:11px;color:var(--muted)"></span><button class="btn ghost" style="padding:2px 10px;font-size:12px" onclick="if(ckCurId)loadConvoMsgs(ckCurId,false)" title="Обновить переписку вручную">↻ обновить</button></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 4px 4px"><span id="ck-upd" style="font-size:11px;color:var(--muted)"></span><span style="display:flex;gap:6px"><button class="btn ghost" style="padding:2px 8px;font-size:12px" onclick="openTpl('ck-reply')" title="Шаблоны ответов">📋</button><button class="btn ghost" style="padding:2px 8px;font-size:12px" onclick="openBotFix()" title="Бот ответил неправильно">⚠️</button><button class="btn ghost" style="padding:2px 10px;font-size:12px" onclick="if(ckCurId)loadConvoMsgs(ckCurId,false)" title="Обновить переписку вручную">↻ обновить</button></span></div>
           <div class="msgs" id="ck-msgs"></div>
           <div id="ck-warn" style="display:none;font-size:12px;padding:6px 10px;margin:0 4px;border-radius:8px"></div>
-          <div class="replybox"><input id="ck-reply" placeholder="Ответить клиенту…" onkeydown="if(event.key==='Enter')ckSend()"><input type="file" id="ck-file" multiple accept="image/*,video/*,application/pdf" style="display:none" onchange="if(this.files.length){sendFilesSeq(this.files,ckSendFile);this.value='';}"><button class="btn ghost" title="Прикрепить фото, видео или файл" onclick="document.getElementById('ck-file').click()">📎</button><button class="btn ghost" onclick="openTpl('ck-reply')" title="Шаблоны ответов">📋</button><button class="btn ghost" onclick="openBotFix()" title="Отметить, что бот ответил неправильно">⚠️<span class="btn-lbl"> Бот ошибся</span></button><button class="btn ghost" id="ck-mic" title="Записать голосовое" onclick="igToggleVoice('ck')">🎤</button><button class="btn" onclick="ckSend()"><span class="btn-ico">➤</span><span class="btn-lbl">Отправить</span></button></div>
+          <div class="replybox ckrb" id="ck-replybox"><input type="file" id="ck-file" multiple accept="image/*,video/*,application/pdf" style="display:none" onchange="if(this.files.length){sendFilesSeq(this.files,ckSendFile);this.value='';}"><button class="btn ghost ckrb-att" title="Прикрепить фото, видео или файл" onclick="document.getElementById('ck-file').click()">📎</button><input id="ck-reply" placeholder="" onkeydown="if(event.key==='Enter')ckSend()" oninput="ckRbUpdate()"><button class="ckrb-main" id="ck-sendmic" title="Отправить · удерживай для голосового, веди вверх — заблокировать" onpointerdown="ckMicDown(event)" onclick="ckMicClick()">🎤</button><div class="ckrb-hint" id="ckrb-hint">↑ веди вверх — заблокировать запись · отпусти — отправить</div><div class="ckrb-rec" id="ckrb-rec"><button class="ckrb-del" title="Удалить голосовое" onclick="ckRecCancel()">🗑</button><span class="ckrb-dot"></span><span class="ckrb-time" id="ckrb-time">0:00</span><div class="ckrb-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><button class="ckrb-recsend" title="Отправить голосовое" onclick="ckRecStopSend()">➤</button></div></div>
         </div>
       </div>
     </section>
@@ -1151,8 +1177,15 @@
         <div class="card"><h3 style="margin:0 0 10px">📊 Выручка · прибыль · расходы по месяцам</h3><div id="fin-chart-bars"><span style="color:var(--muted);font-size:13px">—</span></div></div>
         <div class="card"><h3 style="margin:0 0 10px">🥧 Доля выручки по месяцам</h3><div id="fin-chart-donut"><span style="color:var(--muted);font-size:13px">—</span></div></div>
       </div>
-      <div style="font-size:12px;color:var(--muted);margin:20px 0 8px">📦 Склад сейчас (из 1С) — сколько денег «лежит» в товаре</div>
+      <div style="font-size:12px;color:var(--muted);margin:20px 0 8px" id="fin-stock-cap">📦 Склад сейчас (из 1С) — сколько денег «лежит» в товаре</div>
       <div class="kpis" id="fin-stock"></div>
+      <div class="card" id="fin-wb-card" style="margin-top:18px;display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+          <h3 style="margin:0">🧾 Расходы Wildberries <span style="font-size:12px;color:var(--muted);font-weight:400">— реальные удержания за 14 дней</span></h3>
+          <button class="btn ghost" style="font-size:12px;padding:6px 12px" onclick="loadWbFinance()">🔄 Обновить</button>
+        </div>
+        <div id="fin-wb-body">Загрузка…</div>
+      </div>
       <div class="card" style="margin-top:18px">
         <h3>💡 Что это значит</h3>
         <div class="note"><b>Выручка</b> — сколько продали (из касс 1С). <b>Прибыль с товара</b> — выручка минус закуп проданного. <b>Расходы</b> — то, что ты сам внёс (аренда, зарплаты, прочее). <b>Чистая прибыль = прибыль с товара − расходы</b> — сколько реально осталось.
@@ -5245,6 +5278,7 @@
   function waFloatTo16(f){ const o=new Int16Array(f.length); for(let i=0;i<f.length;i++){ let s=Math.max(-1,Math.min(1,f[i])); o[i]=s<0?s*0x8000:s*0x7FFF; } return o; }
   // ——— Голосовые в Instagram (как в WhatsApp). scope='ig' — раздел Instagram, scope='ck' — чат в сделке.
   let igMR=null, igMRChunks=[], igMRStream=null, igMRStart=0, igMRTimer=null, igMRBtn=null, igMRScope='ig', igMRCancel=false;
+  let ckRecActive=false, ckRecLocked=false, ckStartY=0, ckWaveTimer=null;
   function igVoiceTarget(scope){
     if(scope==='ck'){ if(!ckCurId) return null; const p=String(ckCurId).split('|'); return {account_id:p[0]||'',customer_id:p[1]||''}; }
     return igCur?{account_id:igCur.account_id,customer_id:igCur.customer_id}:null;
@@ -5279,6 +5313,10 @@
     else { igFinishVoice(); }
   }
   async function igFinishVoice(){
+    var _crb=document.getElementById('ck-replybox'); if(_crb){ _crb.classList.remove('rec','locked'); }
+    var _csm=document.getElementById('ck-sendmic'); if(_csm) _csm.classList.remove('rec-on');
+    if(ckWaveTimer){ clearInterval(ckWaveTimer); ckWaveTimer=null; } ckRecActive=false; ckRecLocked=false;
+    if(typeof ckRbUpdate==='function') try{ ckRbUpdate(); }catch(e){}
     ['ck','ig'].forEach(function(sc){ var c=document.getElementById(sc+'-mic-cancel'); if(c) c.remove(); });
     if(igMRCancel){ igMRCancel=false; if(igMRTimer){ clearInterval(igMRTimer); igMRTimer=null; } try{ igMRStream.getTracks().forEach(function(t){t.stop();}); }catch(e){} if(igMRBtn){ igMRBtn.textContent='🎤'; igMRBtn.style.color=''; igMRBtn.title='Записать голосовое'; } return; }
     const btn=igMRBtn; if(igMRTimer){ clearInterval(igMRTimer); igMRTimer=null; }
@@ -5334,7 +5372,8 @@
       '</span>'+
       (ckCurName?'<span style="display:flex;align-items:center;gap:5px;font-size:13px">💰 <input type="number" value="'+(deal?Math.round(dealAmount(deal)):0)+'" placeholder="сумма счёта" style="width:120px;padding:5px 8px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text)" onchange="setAmount(this.value)"> сом</span>':'');
   }
-  function setAmount(v){ if(!ckCurName) return; const d=ensureDeal(ckCurName); d.amount=parseFloat(v)||0; crmPersist(); renderFunnel(); renderCrmStats(); renderCrmDash(); renderLeft(); }
+  function setAmount(v){ if(typeof ckRbUpdate==='function') try{ ckRbUpdate(); }catch(e){}
+    if(!ckCurName) return; const d=ensureDeal(ckCurName); d.amount=parseFloat(v)||0; crmPersist(); renderFunnel(); renderCrmStats(); renderCrmDash(); renderLeft(); }
   let convoAutoTimer=null;
   function nowHM(){ const d=new Date(); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)+':'+('0'+d.getSeconds()).slice(-2); }
   // ——— Медиа Instagram: прямые CDN-ссылки браузер не тянет (CORS/срок), поэтому качаем
@@ -5576,10 +5615,49 @@
       else { const t=document.getElementById('ckf-tmp'); if(t){ t.innerHTML=label+' ⚠️ не доставлено'; t.style.background='var(--red)'; } alert('⚠️ '+sendErrText(d.error||'не удалось отправить')); }
     }catch(e){ const t=document.getElementById('ckf-tmp'); if(t){ t.innerHTML=label+' ⚠️'; t.style.background='var(--red)'; } }
   }
+  function ckRbUpdate(){
+    var inp=document.getElementById('ck-reply'), b=document.getElementById('ck-sendmic');
+    if(!inp||!b||ckRecActive) return;
+    var hasText=inp.value.trim().length>0;
+    b.textContent=hasText?'\u27A4':'\uD83C\uDFA4';
+    b.title=hasText?'Отправить':'Голосовое: удерживай, веди вверх — заблокировать';
+  }
+  function ckMicClick(){ var inp=document.getElementById('ck-reply'); if(inp && inp.value.trim() && !ckRecActive){ ckSend(); } }
+  function ckMicDown(e){
+    var inp=document.getElementById('ck-reply');
+    if(inp && inp.value.trim()) return;                 // есть текст → обычная «Отправить»
+    if(e && e.preventDefault) e.preventDefault();
+    ckStartY=(e && e.clientY!=null)?e.clientY:0; ckRecLocked=false;
+    ckRecStart();
+    var mv=function(ev){ if(!ckRecActive||ckRecLocked) return; var y=(ev.clientY!=null)?ev.clientY:0; if(ckStartY && ckStartY-y>55){ ckRecLocked=true; var rb=document.getElementById('ck-replybox'); if(rb) rb.classList.add('locked'); } };
+    var up=function(){ document.removeEventListener('pointermove',mv,true); document.removeEventListener('pointerup',up,true); if(!ckRecLocked){ ckRecStopSend(); } };
+    document.addEventListener('pointermove',mv,true); document.addEventListener('pointerup',up,true);
+  }
+  async function ckRecStart(){
+    if(ckRecActive) return;
+    if(!igVoiceTarget('ck')){ alert('Сначала выбери диалог.'); return; }
+    if(!navigator.mediaDevices || !window.MediaRecorder){ alert('Браузер не поддерживает запись голосовых.'); return; }
+    try{ igMRStream=await navigator.mediaDevices.getUserMedia({audio:true}); }
+    catch(e){ alert('Нет доступа к микрофону. Разреши доступ в браузере.'); return; }
+    igMRScope='ck'; igMRBtn=null; igMRCancel=false;
+    var mime=''; ['audio/mp4','audio/ogg;codecs=opus','audio/webm;codecs=opus','audio/webm'].forEach(function(t){ if(!mime && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) mime=t; });
+    igMRChunks=[];
+    try{ igMR = mime ? new MediaRecorder(igMRStream,{mimeType:mime}) : new MediaRecorder(igMRStream); }
+    catch(e){ try{ igMR=new MediaRecorder(igMRStream); }catch(e2){ alert('Запись недоступна в этом браузере.'); return; } }
+    igMR.ondataavailable=function(e){ if(e.data&&e.data.size) igMRChunks.push(e.data); };
+    igMR.onstop=function(){ igFinishVoice(); };
+    igMR.start(); igMRStart=Date.now(); ckRecActive=true;
+    var rb=document.getElementById('ck-replybox'); if(rb){ rb.classList.add('rec'); rb.classList.remove('locked'); }
+    var b=document.getElementById('ck-sendmic'); if(b) b.classList.add('rec-on');
+    if(ckWaveTimer) clearInterval(ckWaveTimer);
+    ckWaveTimer=setInterval(function(){ var sc=Math.floor((Date.now()-igMRStart)/1000); var t=document.getElementById('ckrb-time'); if(t) t.textContent='0:'+(sc<10?'0'+sc:sc); },250);
+  }
+  function ckRecStopSend(){ if(igMR && igMR.state==='recording'){ try{ igMR.stop(); }catch(e){ igFinishVoice(); } } else { igFinishVoice(); } }
+  function ckRecCancel(){ igMRCancel=true; if(igMR && igMR.state==='recording'){ try{ igMR.stop(); }catch(e){ igFinishVoice(); } } else { igFinishVoice(); } }
   async function ckSend(){
     const inp=document.getElementById('ck-reply'); const t=inp.value.trim(); if(!t) return;
     if(!ckCurId){ alert('Сначала выбери чат в списке слева.'); return; }
-    inp.value='';
+    inp.value=''; if(typeof ckRbUpdate==='function') ckRbUpdate();
     const box=document.getElementById('ck-msgs'); const bid='b'+Date.now(); const hm=nowHM().slice(0,5);
     const idAtSend=ckCurId, nameAtSend=ckCurName;
     const undoLink=function(n){ return hm+' · <a href="#" onclick="ckCancelSend(\''+bid+'\');return false" style="color:#ffd27a;text-decoration:none">отменить ('+n+')</a>'; };
