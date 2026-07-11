@@ -156,3 +156,25 @@ services:
         sync: false
       - key: WB_TOKEN_JORU
         sync: false
+
+  # --- Guzi Gold (ювелирка, свой склад на Supabase, без 1С/WB) — отдельный дашборд ---
+  - type: web
+    name: shturval-guzigold
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python server.py"
+    envVars:
+      - key: COMPANY_ID
+        sync: false
+      - key: BRAND_NAME
+        sync: false
+      - key: SITE_PASSWORD
+        sync: false
+      - key: OWNER_LOGIN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
