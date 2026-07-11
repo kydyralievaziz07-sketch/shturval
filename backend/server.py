@@ -1681,18 +1681,32 @@ def ig_media_download(url, account_id=None):
     return data, mime
 
 def ig_send_media(recipient_id, media_url, mtype="image", from_account_id=None):
-    """Отправить медиа-вложение в Instagram по публичной ссылке (Meta сама её скачивает)."""
+    """Отправить медиа-вложение в Instagram по публичной ссылке (Meta сама её скачивает).
+    Вне 24ч, как и текст, повторяем с тегом HUMAN_AGENT (официальный режим живого агента, окно до 7 дней)."""
     token = ig_token_for(from_account_id) if from_account_id else CFG.get("IG_TOKEN", "")
     if not token:
         raise RuntimeError("Instagram пока не подключён (нет токена).")
     url = IG_GRAPH + "/me/messages?access_token=" + _q(token)
-    body = json.dumps({"recipient": {"id": recipient_id},
-                       "message": {"attachment": {"type": mtype,
-                                   "payload": {"url": media_url, "is_reusable": False}}}}).encode()
-    req = urllib.request.Request(url, data=body, method="POST",
-                                 headers={"Content-Type": "application/json", "User-Agent": "Shturval/1.0"})
-    with urllib.request.urlopen(req, timeout=40) as r:
-        return json.loads(r.read().decode() or "{}")
+    attach = {"type": mtype, "payload": {"url": media_url, "is_reusable": False}}
+    def _post(payload):
+        req = urllib.request.Request(url, data=json.dumps(payload).encode(), method="POST",
+                                     headers={"Content-Type": "application/json", "User-Agent": "Shturval/1.0"})
+        with urllib.request.urlopen(req, timeout=40) as r:
+            return json.loads(r.read().decode() or "{}")
+    base = {"recipient": {"id": recipient_id}, "message": {"attachment": attach}}
+    try:
+        return _post(base)                       # обычная отправка (окно 24 часа)
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode()
+        except Exception:
+            pass
+        if e.code in (400, 403) and _re.search(r"24|outside|window|reengag|re-engag|allowed", detail, _re.I):
+            tagged = {"recipient": {"id": recipient_id}, "messaging_type": "MESSAGE_TAG",
+                      "tag": "HUMAN_AGENT", "message": {"attachment": attach}}
+            return _post(tagged)                  # окно до 7 дней
+        raise
 
 # исходящие медиа держим в памяти под случайным токеном — Meta скачивает их по публичной ссылке,
 # и фронт проигрывает отправленное голосовое из этого же хранилища.
