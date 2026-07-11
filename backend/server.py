@@ -89,27 +89,28 @@ def load_secret():
 CFG = load_secret()
 BASE = "https://{}.amocrm.ru/api/v4".format(CFG.get("AMO_SUBDOMAIN", ""))
 
-# --- фронтенд для деплоев без отдельного статического хостинга (не-Бизмарт компании) ---
-# Бизмарт продолжает раздаваться через GitHub Pages (index.html в корне репозитория,
-# не трогаем). У КАЖДОЙ остальной компании — СВОЙ файл backend/index_<COMPANY_ID>.html,
-# полностью независимый от других (правка одной компании не задевает другую). Если для
-# компании ещё нет своего файла (новая, только что созданная) — используется общий
-# backend/index.html как стартовый шаблон-заготовка.
-_INDEX_HTML_CACHE = None
-def _index_html():
-    global _INDEX_HTML_CACHE
-    if _INDEX_HTML_CACHE is None:
-        per_company = os.path.join(HERE, "index_%s.html" % COMPANY_ID)
-        path = per_company if os.path.exists(per_company) else os.path.join(HERE, "index.html")
+# --- один сервис, разные кабинеты по пути (одна ссылка на все компании) ---
+# У КАЖДОЙ компании — свой файл, полностью независимый от других (правка одной
+# компании не задевает другую); <title>/бренд уже прописаны прямо в самом файле.
+# Бизмарт также продолжает раздаваться через GitHub Pages отдельной ссылкой (не трогаем),
+# путь /bizmart и / на этом сервисе — для полноты, отдают тот же файл.
+_PATH_TO_FILE = {
+    "/": "index.html", "/bizmart": "index.html", "/index.html": "index.html",
+    "/freeways": "index_freeways.html",
+    "/valbreeze": "index_joru.html",
+    "/guzigold": "index_guzigold.html",
+}
+_INDEX_HTML_CACHE = {}
+def _index_html(path):
+    fname = _PATH_TO_FILE.get(path, "index.html")
+    if fname not in _INDEX_HTML_CACHE:
         try:
-            with open(path, encoding="utf-8") as f:
+            with open(os.path.join(HERE, fname), encoding="utf-8") as f:
                 html = f.read()
         except Exception:
-            html = "<h1>Штурвал</h1><p>index.html не найден рядом с server.py</p>"
-        brand = CFG.get("BRAND_NAME") or "Штурвал"
-        html = re.sub(r"<title>.*?</title>", "<title>%s</title>" % brand, html, count=1, flags=re.S)
-        _INDEX_HTML_CACHE = html.encode("utf-8")
-    return _INDEX_HTML_CACHE
+            html = "<h1>Штурвал</h1><p>%s не найден рядом с server.py</p>" % fname
+        _INDEX_HTML_CACHE[fname] = html.encode("utf-8")
+    return _INDEX_HTML_CACHE[fname]
 
 # --- пользователи и роли ---
 # каждый пользователь: пароль -> {name, sections}. sections=["all"] = видит всё.
@@ -166,11 +167,8 @@ def load_users():
     # --- сотрудники, заведённые руководителем из интерфейса (таблица employees) ---
     # Перекрывают/дополняют записи из env. active=false → сотрудник «убран» (скрыт).
     try:
-        # грузим сотрудников ВСЕХ компаний (мульти-тенант): каждого помечаем его компанией
-        # TODO(split): после того как shturval-freeways/valbreeze подтверждённо заведены —
-        # включить фильтр "&company_id=eq.%s" % urllib.parse.quote(COMPANY_ID), чтобы каждый
-        # деплой видел только свою компанию (сейчас временно не включаем, чтобы не оборвать
-        # логины Freeways/Joru на shturval-backend до переезда на свои сервисы).
+        # грузим сотрудников ВСЕХ компаний (мульти-тенант, один общий процесс на все кабинеты):
+        # каждого помечаем его компанией; разделение — по company_id на уровне данных, не логина.
         rows = _supa("GET", "employees", "?select=*")
         for u in (rows or []):
             login = (u.get("login") or "").strip()
@@ -3846,6 +3844,25 @@ def wb_finance_overview(company, days=14):
         res["note"] = "Считаю отчёт за период — первый раз занимает пару минут. Обновите страницу чуть позже."
     return res
 
+def wb_fin_fees_sums(company):
+    """Реальные удержания WB (комиссия+логистика+хранение+штрафы+прочее, БЕЗ выплаты)
+    по периодам — чтобы попасть в общую строку «Расходы» вверху Финансов, а не только
+    в отдельную карточку. Данные есть только за WB_FIN_DAYS дней — за пределами этого
+    окна «месяц» будет недосчитан (честно, а не выдумано)."""
+    by_day = wb_fin_cache(company).get("by_day") or {}
+    today = _today_str(); wk = _days_ago(6); mo = today[:7]
+    _rate = rub_to_kgs()
+    cost_fields = ("ppvz_sales_commission", "storage_fee", "penalty", "deduction")
+    def fees_for(d):
+        agg = by_day.get(d)
+        if not agg:
+            return 0.0
+        return sum(agg.get(f, 0.0) for f in cost_fields) + agg.get("delivery_rub", 0.0) * _rate
+    def total(pred):
+        return round(sum(fees_for(d) for d in by_day if pred(d)))
+    return {"today": total(lambda d: d == today), "week": total(lambda d: d >= wk),
+            "month": total(lambda d: (d or "")[:7] == mo)}
+
 # --- Wildberries: реклама (продвижение внутри поиска WB — read-only обзор) ---
 WB_HOSTS["advert"] = "https://advert-api.wildberries.ru"
 WB_ADS_CACHE = {}
@@ -5685,6 +5702,12 @@ def expenses_view(company=None):
     e = {"today": esum(lambda d: d == today),
          "week": esum(lambda d: d >= wk),
          "month": esum(lambda d: (d or "")[:7] == mo)}
+    if co != BIZMART_ID and co not in GG_CATALOG_COMPANIES:
+        # реальные удержания WB (комиссия/логистика/хранение/штрафы) — тоже расходы,
+        # прибавляем к тому, что владелец внёс вручную, чтобы «Расходы» вверху были полными
+        wb_fees = wb_fin_fees_sums(co)
+        for p in ("today", "week", "month"):
+            e[p] = round(e[p] + wb_fees.get(p, 0))
     cat = {}
     for r in rows:
         if (r.get("date", "") or "")[:7] == mo:
@@ -7576,9 +7599,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, {"error": "не найдено"})
 
     def do_GET(self):
-        # Свой фронтенд для деплоев без отдельного статического хостинга (Freeways/Valbreeze).
-        if self.path == "/" or self.path.startswith("/index.html"):
-            data = _index_html()
+        # Одна ссылка — разные кабинеты компаний по пути (см. _PATH_TO_FILE выше).
+        if self.path in _PATH_TO_FILE:
+            data = _index_html(self.path)
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
