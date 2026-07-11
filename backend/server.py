@@ -5391,7 +5391,7 @@ def expenses_view(company=None):
     if supa_on():
         try:
             rows = _supa("GET", "expenses",
-                         "?company_id=eq.%s&select=*&order=date.desc,id.desc" % _q(co))
+                         "?company_id=eq.%s&select=*&order=date.desc,id.desc&limit=10000" % _q(co))
         except Exception:
             rows = []
     today = _today_str(); wk = _days_ago(6); mo = today[:7]
@@ -5435,7 +5435,9 @@ def expenses_view(company=None):
         sv = mrev.get(mm, {"sales": 0.0, "profit": 0.0}); ev = mexp.get(mm, 0.0)
         by_month.append({"month": mm, "sales": round(sv["sales"]), "profit": round(sv["profit"]),
                          "expense": round(ev), "net": round(sv["profit"] - ev)})
-    res = {"expenses": rows[:200], "by_category": by_cat, "periods": periods,
+    # Список отдаём шире (было 200 — из-за этого фронт недосчитывал «Расходы за месяц»,
+    # когда строк за месяц больше 200). Итоговые суммы всё равно берём из periods (по ВСЕМ строкам).
+    res = {"expenses": rows[:10000], "by_category": by_cat, "periods": periods,
            "by_month": by_month, "total_count": len(rows)}
     if co != COMPANY_ID:
         res["note"] = _WB_NOTE

@@ -626,7 +626,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.28.2<br>Кнопка уведомлений в Настройках: переключается между «Включить» и «Выключить»; при выключении пуш-уведомления и звук замолкают</div>
+      Штурвал v4.29.0<br>Исправлен подсчёт «Расходы за месяц»: раньше учитывались только последние 200 записей — теперь итог считается по всем строкам</div>
   </aside>
 
   <!-- MAIN -->
@@ -2949,7 +2949,9 @@
     ['fin-cats-period','fin-exp-period','exp-cats-period','exp-list-period'].forEach(id=>{const el=document.getElementById(id); if(el) el.textContent='— '+finPLabel[finPeriod];});
     // итог для отдельной вкладки «Расходы» (без выручки/прибыли — можно дать сотруднику)
     const et=document.getElementById('exp-total');
-    if(et){ const total=list.reduce((s,x)=>s+(+x.amount||0),0);
+    if(et){ // итог берём из серверного periods (считается по ВСЕМ строкам), а не из урезанного списка
+      const sp=(_expData.periods||{})[finPeriod]||{};
+      const total=(sp.expense!=null)?sp.expense:list.reduce((s,x)=>s+(+x.amount||0),0);
       et.innerHTML='<div class="card kpi"><div class="label">Расходы '+finPLabel[finPeriod]+'</div><div class="value" style="color:#ffb84d"><span class="money" data-som="'+total+'">'+fmt(total)+'</span></div></div>'
         +'<div class="card kpi"><div class="label">Записей</div><div class="value">'+list.length+'</div></div>'; }
     renderMoney();
