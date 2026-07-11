@@ -351,6 +351,12 @@
   .fchip.reject{background:rgba(220,80,80,.08);border-color:rgba(220,80,80,.35)}
   .fchip.reject .fc-c{color:#e06666}
   .fchip.reject.active{border-color:#e06666;background:rgba(220,80,80,.16)}
+  .fchip.later{background:rgba(241,188,55,.10);border-color:rgba(241,188,55,.4)}
+  .fchip.later .fc-c{color:#e0a516}
+  .fchip.later.active{border-color:#e0a516;background:rgba(241,188,55,.20)}
+  .fchip.igwin{background:rgba(48,158,216,.10);border-color:rgba(48,158,216,.4)}
+  .fchip.igwin .fc-c{color:#309ED8}
+  .fchip.igwin.active{border-color:#309ED8;background:rgba(48,158,216,.20)}
   .cockpit{display:grid;grid-template-columns:340px 1fr;gap:12px;height:calc(100vh - 200px);min-height:460px}
   .ck-chats{border:1px solid var(--line);border-radius:12px;overflow-y:auto;background:var(--panel);min-height:0}
   .ck-convo{border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;background:var(--bg);min-height:0;overflow:hidden}
@@ -626,7 +632,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.30.0<br>Фото/голосовые в Instagram уходят и вне 24ч + свои сообщения из приложения теперь видны в CRM
+      Штурвал v4.31.0<br>Новая стадия «Купить позже» + список «⏳ Окно IG» (кому скоро нельзя ответить, 5-7 дней)
   </aside>
 
   <!-- MAIN -->
@@ -4235,9 +4241,18 @@
   let dragChat=null, COCKPIT_CHATS=[], ckCurId=null, ckCurName='', ckView='Новая заявка', LAST_CHAT_ERR='', ckSearch='';
   function ckDoSearch(v){ ckSearch=(v||'').trim().toLowerCase(); renderLeft(); }
   function newLeadsCount(){ return COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка'); }).length; }
+  function igWinList(){
+    // Instagram-переписки, где последнее сообщение было 5-7 дней назад — окно ответа (7 дней) скоро закроется
+    const now=Date.now()/1000, lo=now-7*86400, hi=now-5*86400;
+    return (COCKPIT_CHATS||[]).filter(c=>(c.channel||'ig')==='ig' && c.ts && c.ts>=lo && c.ts<hi);
+  }
   function renderFunnel(){
     const fb=document.getElementById('funnelbar'); if(!fb) return;
-    fb.innerHTML=CRM_STATUSES.concat(['Отказ']).map(st=>{ const n=(st==='Новая заявка')?newLeadsCount():CRM.deals.filter(d=>d.status===st).length; const lbl=(st==='Отказ')?'Отказано':st; const rj=(st==='Отказ'); return '<div class="fchip'+(st===ckView?' active':'')+(rj?' reject':'')+'" data-status="'+esc(st)+'"><div class="fc-n">'+esc(lbl)+'</div><div class="fc-c">'+n+'</div></div>'; }).join('');
+    const _norm=CRM_STATUSES.map(st=>({st:st,lbl:st,cls:'',n:(st==='Новая заявка')?newLeadsCount():CRM.deals.filter(d=>d.status===st).length}));
+    const _spec=[{st:'Купить позже',lbl:'Купить позже',cls:'later',n:CRM.deals.filter(d=>d.status==='Купить позже').length},
+                 {st:'Отказ',lbl:'Отказано',cls:'reject',n:CRM.deals.filter(d=>d.status==='Отказ').length},
+                 {st:'__igwin',lbl:'⏳ Окно IG',cls:'igwin',n:igWinList().length}];
+    fb.innerHTML=_norm.concat(_spec).map(r=>'<div class="fchip'+(r.st===ckView?' active':'')+(r.cls?' '+r.cls:'')+'" data-status="'+esc(r.st)+'"><div class="fc-n">'+esc(r.lbl)+'</div><div class="fc-c">'+r.n+'</div></div>').join('');
     fb.querySelectorAll('.fchip').forEach(ch=>{
       ch.addEventListener('click',()=>setView(ch.dataset.status));
       ch.addEventListener('dragover',e=>{ e.preventDefault(); ch.classList.add('drop'); });
@@ -4510,6 +4525,8 @@
       });
     } else if(ckView==='Новая заявка'){
       items=COCKPIT_CHATS.filter(c=>{ const d=findDealByName(c.name); return (!d||d.status==='Новая заявка'); }).map(c=>({name:c.name,sub:(c.time||'')+' · '+(c.status||'новый'),chatId:c.id,ts:c.ts||0,unread:!!c.unread,channel:c.channel||'ig'}));
+    } else if(ckView==='__igwin'){
+      items=igWinList().map(c=>{ const days=Math.floor((Date.now()/1000-(c.ts||0))/86400); return {name:c.name,sub:'⏳ писал '+days+' дн. назад — успей ответить до 7 дней',chatId:c.id,ts:c.ts||0,unread:!!c.unread,channel:'ig'}; });
     } else {
       items=CRM.deals.filter(d=>d.status===ckView).map(d=>{ const cl=getClient(d.client_id); const chat=COCKPIT_CHATS.find(x=>x.name&&cl.name&&x.name.toLowerCase()===cl.name.toLowerCase()); return {name:cl.name||'Без имени',sub:fmt(dealAmount(d)),chatId:chat?chat.id:null,ts:chat?(chat.ts||0):0,unread:chat?!!chat.unread:false,channel:chat?(chat.channel||'ig'):''}; });
     }
@@ -4533,6 +4550,8 @@
         box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">По запросу «'+esc(ckSearch)+'» клиентов не найдено</div>';
       } else if(ckView==='Новая заявка' && LAST_CHAT_ERR){
         box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">⏳ Чаты Instagram/WhatsApp временно недоступны — сервер ненадолго ограничил запросы. Это пройдёт само, заявки скоро появятся. Можно ничего не делать.</div>';
+      } else if(ckView==='__igwin'){
+        box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">Нет переписок Instagram, у которых окно закрывается (5-7 дней). Здесь появятся те, кому скоро нельзя будет ответить — успевай написать.</div>';
       } else {
         box.innerHTML='<div style="padding:14px;color:var(--muted);font-size:13px">В стадии «'+esc(ckView)+'» пока пусто</div>';
       }
@@ -7296,6 +7315,7 @@
     function hi(x,y){ const el=document.elementFromPoint(x,y); const chip=el&&el.closest?el.closest('.fchip'):null; document.querySelectorAll('.fchip').forEach(c=>c.classList.toggle('drop',c===chip)); }
   }
   function dropChatToStage(status){
+    if(status==='__igwin') return;   // это фильтр, не стадия
     if(!dragChat) return; const nm=dragChat.name; dragChat=null;
     const d=ensureDeal(nm,status);
     if(status==='Отказ'){ pendingReject=d.id; const sel=document.getElementById('reject-reason'); sel.innerHTML=REJECT_REASONS.map(r=>'<option>'+esc(r)+'</option>').join(''); document.getElementById('rejectbg').classList.add('open'); return; }
@@ -7336,7 +7356,7 @@
       (dlAcc?'<div style="font-size:12px;color:var(--accent);margin-top:8px">📷 пишет на аккаунт <b>@'+esc(dlAcc)+'</b></div>':'')+
       '<div class="row" style="margin-top:8px"><div><label>Клиент</label><input value="'+esc(c.name)+'" placeholder="Имя клиента" oninput="updClient(\'name\',this.value)"></div>'+
       '<div><label>Телефон</label><input value="'+esc(c.phone||'')+'" placeholder="+996…" oninput="updClient(\'phone\',this.value)"></div></div>'+
-      '<div class="row"><div><label>Статус</label><select onchange="updStatus(this.value)">'+CRM_STATUSES.map(s=>'<option '+(s===d.status?'selected':'')+'>'+esc(s)+'</option>').join('')+'<option value="Отказ"'+(d.status==='Отказ'?' selected':'')+'>Отказано</option></select></div>'+
+      '<div class="row"><div><label>Статус</label><select onchange="updStatus(this.value)">'+CRM_STATUSES.map(s=>'<option '+(s===d.status?'selected':'')+'>'+esc(s)+'</option>').join('')+'<option value="Купить позже"'+(d.status==='Купить позже'?' selected':'')+'>Купить позже</option><option value="Отказ"'+(d.status==='Отказ'?' selected':'')+'>Отказано</option></select></div>'+
       '<div><label>Ответственный</label><input value="'+esc(d.owner||'')+'" oninput="updDeal(\'owner\',this.value)"></div></div>'+
       (d.handled_by?'<div style="margin-top:10px;font-size:13px;color:#4a9d5b;background:rgba(74,157,91,.1);border:1px solid rgba(74,157,91,.3);border-radius:8px;padding:7px 10px">✅ Обработал клиента: <b>'+esc(d.handled_by)+'</b>'+(d.handled_at?' <span style="color:var(--muted);font-weight:400">· '+fmtDT(d.handled_at)+'</span>':'')+'</div>':'')+
       '<label style="margin-top:12px">📝 Комментарий</label><textarea placeholder="Заметки по заказу…" oninput="updDeal(\'comment\',this.value)" style="width:100%;min-height:56px;resize:vertical;box-sizing:border-box">'+esc(d.comment||'')+'</textarea>'+
