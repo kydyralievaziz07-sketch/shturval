@@ -1313,12 +1313,14 @@ def build_chat_messages(cid):
 IG_GRAPH = "https://graph.instagram.com/v21.0"
 
 def ig_accounts():
-    """Все подключённые Instagram-аккаунты компании: {ig_id, username, token}."""
+    """Все подключённые Instagram-аккаунты компаний ЭТОГО деплоя (одна компания — обычный
+    режим, несколько — ниша, см. NICHE_COMPANIES): {ig_id, username, token, company_id}."""
     if not supa_on():
         return []
     try:
+        _co_list = ",".join(_q(c) for c in NICHE_COMPANIES)
         return _supa("GET", "ig_accounts",
-                     "?company_id=eq.%s&select=*" % _q(COMPANY_ID)) or []
+                     "?company_id=in.(%s)&select=*" % _co_list) or []
     except Exception:
         return []
 
@@ -1389,15 +1391,19 @@ def ig_store_event(evt):
                 if cust and (etext or has_media) and not (etext and _igbot_is_own_echo(cust, etext)):
                     _ig_mark_mid(emid)
                     eraw = dict(m); eraw["by"] = "human"     # raw=m хранит attachments → голос/фото видны
+                    _co = (ig_account_map().get(acct) or {}).get("company_id") or COMPANY_ID
                     _inbox_save("ig_inbox",
-                                {"company_id": COMPANY_ID, "sender_id": acct, "recipient_id": cust,
+                                {"company_id": _co, "sender_id": acct, "recipient_id": cust,
                                  "mid": emid, "text": etext,
                                  "ts": int(m.get("timestamp") or time.time() * 1000),
                                  "direction": "out", "raw": eraw})
                 continue
             sender = str((m.get("sender") or {}).get("id", ""))
             recipient = str((m.get("recipient") or {}).get("id", ""))  # наш аккаунт
-            row = {"company_id": COMPANY_ID, "sender_id": sender, "recipient_id": recipient,
+            # чей это аккаунт — резолвим по recipient (нашей странице), а не берём COMPANY_ID
+            # процесса вслепую: в нише один процесс может обслуживать несколько компаний.
+            _co = (ig_account_map().get(recipient) or {}).get("company_id") or COMPANY_ID
+            row = {"company_id": _co, "sender_id": sender, "recipient_id": recipient,
                    "mid": msg.get("mid", ""), "text": msg.get("text", ""),
                    "ts": int(m.get("timestamp") or 0), "direction": "in", "raw": m}
             _inbox_save("ig_inbox", row)
@@ -2429,13 +2435,15 @@ def ig_broadcast(text, account=None, max_age_hours=24, limit=500):
 WA_GRAPH = "https://graph.facebook.com/v21.0"
 
 def wa_accounts():
-    """Все подключённые WhatsApp-номера компании: {phone_id, display, token}.
+    """Все подключённые WhatsApp-номера компаний ЭТОГО деплоя (см. NICHE_COMPANIES):
+    {phone_id, display, token, company_id}.
     Если в БД пусто, но номер задан в окружении (WA_PHONE_ID) — показываем его (одиночный режим)."""
     rows = []
     if supa_on():
         try:
+            _co_list = ",".join(_q(c) for c in NICHE_COMPANIES)
             rows = _supa("GET", "wa_accounts",
-                         "?company_id=eq.%s&select=*" % _q(COMPANY_ID)) or []
+                         "?company_id=in.(%s)&select=*" % _co_list) or []
         except Exception:
             rows = []
     if not rows and CFG.get("WA_PHONE_ID"):
@@ -2750,7 +2758,10 @@ def wa_store_event(evt):
                 elif mtype == "interactive":
                     inter = msg.get("interactive") or {}
                     text = (inter.get("button_reply") or inter.get("list_reply") or {}).get("title", "")
-                row = {"company_id": COMPANY_ID, "sender_id": sender, "recipient_id": phone_id,
+                # чей это номер — резолвим по phone_id, а не берём COMPANY_ID процесса вслепую:
+                # в нише один процесс может обслуживать несколько компаний.
+                _co = (wa_account_map().get(phone_id) or {}).get("company_id") or COMPANY_ID
+                row = {"company_id": _co, "sender_id": sender, "recipient_id": phone_id,
                        "mid": msg.get("id", ""), "text": text,
                        "ts": int(str(msg.get("timestamp") or "0") or 0) * 1000,
                        "direction": "in", "raw": msg}
@@ -3939,11 +3950,38 @@ def wb_ads_overview(company):
 # --- 1С (Yaros DataGate): товары, остатки, цены ---
 import base64
 
-def yaros_get(path):
+_COMPANY_CFG_CACHE = {}
+def company_cfg(company=None):
+    """Настройки конкретной компании (1С/реклама Meta) — сначала таблица `companies` в
+    базе (компания заведена туда явно), иначе CFG/env (обратная совместимость: Бизмарт
+    сегодня без строки в `companies`, значит поведение не меняется ни на бит)."""
+    co = company or COMPANY_ID
+    if co not in _COMPANY_CFG_CACHE:
+        row = {}
+        if supa_on():
+            try:
+                rows = _supa("GET", "companies", "?id=eq.%s&select=*" % _q(co))
+                row = rows[0] if rows else {}
+            except Exception:
+                row = {}
+        _COMPANY_CFG_CACHE[co] = {
+            "yaros_url": row.get("yaros_url") or CFG.get("YAROS_URL", ""),
+            "yaros_login": row.get("yaros_login") or CFG.get("YAROS_LOGIN", ""),
+            "yaros_pass": row.get("yaros_pass") or CFG.get("YAROS_PASS", ""),
+            "yaros_create_url": row.get("yaros_create_url") or CFG.get("YAROS_CREATE_URL", ""),
+            "meta_ads_token": row.get("meta_ads_token") or CFG.get("META_ADS_TOKEN", ""),
+            "meta_ad_account": row.get("meta_ad_account") or CFG.get("META_AD_ACCOUNT", ""),
+            "meta_page_id": row.get("meta_page_id") or CFG.get("META_PAGE_ID", ""),
+            "meta_ig_id": row.get("meta_ig_id") or CFG.get("META_IG_ID", ""),
+        }
+    return _COMPANY_CFG_CACHE[co]
+
+def yaros_get(path, company=None):
     """GET к 1С с Basic-авторизацией. Каталог большой (~20 МБ), поэтому таймаут щедрый."""
-    url = CFG.get("YAROS_URL", "").rstrip("/") + path
+    cc = company_cfg(company)
+    url = cc["yaros_url"].rstrip("/") + path
     auth = base64.b64encode(
-        (CFG.get("YAROS_LOGIN", "") + ":" + CFG.get("YAROS_PASS", "")).encode("utf-8")
+        (cc["yaros_login"] + ":" + cc["yaros_pass"]).encode("utf-8")
     ).decode("ascii")
     req = urllib.request.Request(url, headers={
         "Authorization": "Basic " + auth,
@@ -4316,13 +4354,14 @@ def build_categories(company=None):
     items.sort(key=lambda i: i["title"])
     return {"categories": items}
 
-def yaros_create_good(payload):
+def yaros_create_good(payload, company=None):
     """Создать товар в 1С. Работает, когда задан YAROS_CREATE_URL (метод от 1С-программиста)."""
-    url = CFG.get("YAROS_CREATE_URL", "").strip()
+    cc = company_cfg(company)
+    url = cc["yaros_create_url"].strip()
     if not url:
         return {"ok": False, "pending": True,
                 "error": "Добавление в 1С ещё не подключено — ждём метод записи от 1С-программиста."}
-    auth = base64.b64encode((CFG.get("YAROS_LOGIN", "") + ":" + CFG.get("YAROS_PASS", "")).encode()).decode()
+    auth = base64.b64encode((cc["yaros_login"] + ":" + cc["yaros_pass"]).encode()).decode()
     req = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
                                  headers={"Authorization": "Basic " + auth,
                                           "Content-Type": "application/json",
@@ -5974,10 +6013,11 @@ PLACEMENTS = [
     ("fb_video", "facebook", "video_feeds", "Facebook — видеолента"),
 ]
 
-def _ads_cfg():
-    return {"token": CFG.get("META_ADS_TOKEN", ""), "act": CFG.get("META_AD_ACCOUNT", ""),
-            "page": CFG.get("META_PAGE_ID", ""),
-            "ig": CFG.get("META_IG_ID", "") or CFG.get("IG_ACCOUNT_ID", "")}
+def _ads_cfg(company=None):
+    cc = company_cfg(company)
+    return {"token": cc["meta_ads_token"], "act": cc["meta_ad_account"],
+            "page": cc["meta_page_id"],
+            "ig": cc["meta_ig_id"] or CFG.get("IG_ACCOUNT_ID", "")}
 
 def ads_on():
     c = _ads_cfg(); return bool(c["token"] and c["act"])
