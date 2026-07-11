@@ -635,7 +635,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.34.0<br>Без двойного учёта: закрытое окно IG убрано из «В обработке»/«Новой заявки» (человек в одном месте)
+      Штурвал v4.35.0<br>Кнопка ✕ «Отменить запись» голосового — можно стереть до отправки (в пульте и WhatsApp)
   </aside>
 
   <!-- MAIN -->
@@ -5159,7 +5159,7 @@
   // ——— Запись голосовых: MediaRecorder (на Safari даёт mp4 — проверено, работает).
   // На выходе приводим к MP3 (правильная длительность + WhatsApp принимает везде);
   // если конвертация не вышла — шлём исходный формат, если он принимается (mp4/ogg). ———
-  let waMR=null, waMRChunks=[], waMRStream=null, waMRStart=0, waMRTimer=null;
+  let waMR=null, waMRChunks=[], waMRStream=null, waMRStart=0, waMRTimer=null, waMRCancel=false;
   async function waToggleVoice(){
     const btn=document.getElementById('wa-mic');
     if(waMR && waMR.state==='recording'){ waMR.stop(); return; }
@@ -5175,11 +5175,25 @@
     catch(e){ try{ waMR=new MediaRecorder(waMRStream); }catch(e2){ alert('Запись недоступна в этом браузере.'); return; } }
     waMR.ondataavailable=function(e){ if(e.data&&e.data.size) waMRChunks.push(e.data); };
     waMR.onstop=function(){ waFinishVoice(btn); };
-    waMR.start(); waMRStart=Date.now();
+    waMR.start(); waMRStart=Date.now(); waMRCancel=false;
     btn.style.color='#ff4d4d'; btn.title='Остановить и отправить'; btn.textContent='⏹ 0:00';
+    if(btn.parentNode && !document.getElementById('wa-mic-cancel')){
+      var cx=document.createElement('button'); cx.className='btn ghost'; cx.id='wa-mic-cancel';
+      cx.title='Отменить запись (не отправлять)'; cx.textContent='✕'; cx.style.color='#ff8f8f';
+      cx.onclick=function(){ waCancelVoice(); };
+      btn.parentNode.insertBefore(cx, btn);
+    }
     waMRTimer=setInterval(function(){ var s=Math.floor((Date.now()-waMRStart)/1000); btn.textContent='⏹ 0:'+(s<10?'0'+s:s); },500);
   }
+  function waCancelVoice(){
+    waMRCancel=true;
+    var btn=document.getElementById('wa-mic');
+    if(waMR && waMR.state==='recording'){ try{ waMR.stop(); }catch(e){ waFinishVoice(btn); } }
+    else { waFinishVoice(btn); }
+  }
   async function waFinishVoice(btn){
+    var _cb=document.getElementById('wa-mic-cancel'); if(_cb) _cb.remove();
+    if(waMRCancel){ waMRCancel=false; if(waMRTimer){ clearInterval(waMRTimer); waMRTimer=null; } try{ waMRStream.getTracks().forEach(function(t){t.stop();}); }catch(e){} if(btn){ btn.textContent='🎤'; btn.style.color=''; btn.title='Записать голосовое'; } return; }
     if(waMRTimer){ clearInterval(waMRTimer); waMRTimer=null; }
     try{ waMRStream.getTracks().forEach(function(t){t.stop();}); }catch(e){}
     var dur=(Date.now()-waMRStart)/1000;
@@ -5226,7 +5240,7 @@
   }
   function waFloatTo16(f){ const o=new Int16Array(f.length); for(let i=0;i<f.length;i++){ let s=Math.max(-1,Math.min(1,f[i])); o[i]=s<0?s*0x8000:s*0x7FFF; } return o; }
   // ——— Голосовые в Instagram (как в WhatsApp). scope='ig' — раздел Instagram, scope='ck' — чат в сделке.
-  let igMR=null, igMRChunks=[], igMRStream=null, igMRStart=0, igMRTimer=null, igMRBtn=null, igMRScope='ig';
+  let igMR=null, igMRChunks=[], igMRStream=null, igMRStart=0, igMRTimer=null, igMRBtn=null, igMRScope='ig', igMRCancel=false;
   function igVoiceTarget(scope){
     if(scope==='ck'){ if(!ckCurId) return null; const p=String(ckCurId).split('|'); return {account_id:p[0]||'',customer_id:p[1]||''}; }
     return igCur?{account_id:igCur.account_id,customer_id:igCur.customer_id}:null;
@@ -5245,11 +5259,24 @@
     catch(e){ try{ igMR=new MediaRecorder(igMRStream); }catch(e2){ alert('Запись недоступна в этом браузере.'); return; } }
     igMR.ondataavailable=function(e){ if(e.data&&e.data.size) igMRChunks.push(e.data); };
     igMR.onstop=function(){ igFinishVoice(); };
-    igMR.start(); igMRStart=Date.now();
+    igMR.start(); igMRStart=Date.now(); igMRCancel=false;
     if(btn){ btn.style.color='#ff4d4d'; btn.title='Остановить и отправить'; btn.textContent='⏹ 0:00'; }
+    if(btn && btn.parentNode && !document.getElementById(scope+'-mic-cancel')){
+      var cx=document.createElement('button'); cx.className='btn ghost'; cx.id=scope+'-mic-cancel';
+      cx.title='Отменить запись (не отправлять)'; cx.textContent='✕'; cx.style.color='#ff8f8f';
+      cx.onclick=function(){ igCancelVoice(); };
+      btn.parentNode.insertBefore(cx, btn);
+    }
     igMRTimer=setInterval(function(){ var s=Math.floor((Date.now()-igMRStart)/1000); if(btn) btn.textContent='⏹ 0:'+(s<10?'0'+s:s); },500);
   }
+  function igCancelVoice(){
+    igMRCancel=true;
+    if(igMR && igMR.state==='recording'){ try{ igMR.stop(); }catch(e){ igFinishVoice(); } }
+    else { igFinishVoice(); }
+  }
   async function igFinishVoice(){
+    ['ck','ig'].forEach(function(sc){ var c=document.getElementById(sc+'-mic-cancel'); if(c) c.remove(); });
+    if(igMRCancel){ igMRCancel=false; if(igMRTimer){ clearInterval(igMRTimer); igMRTimer=null; } try{ igMRStream.getTracks().forEach(function(t){t.stop();}); }catch(e){} if(igMRBtn){ igMRBtn.textContent='🎤'; igMRBtn.style.color=''; igMRBtn.title='Записать голосовое'; } return; }
     const btn=igMRBtn; if(igMRTimer){ clearInterval(igMRTimer); igMRTimer=null; }
     try{ igMRStream.getTracks().forEach(function(t){t.stop();}); }catch(e){}
     var dur=(Date.now()-igMRStart)/1000;
