@@ -120,6 +120,9 @@ COMPANY_ID = (os.environ.get("COMPANY_ID", "").strip() or "bizmart")   # ком�
 # сервисе (Valbreeze/joru) COMPANY_ID тоже равен "joru" — сравнение с COMPANY_ID
 # там дало бы обратный результат (company==COMPANY_ID) и включило бы 1С вместо WB.
 BIZMART_ID = "bizmart"
+# Компании со своим складом на Supabase (без 1С и без Wildberries) — см. gg_* ниже.
+# При заведении новой такой компании достаточно дописать её company_id сюда.
+GG_CATALOG_COMPANIES = {"guzigold"}
 def load_users():
     """Возвращает два индекса:
       users     — по паролю (обратная совместимость: вход только по паролю);
@@ -275,6 +278,9 @@ SECTION_OF = [
     ("/api/wbads", "wbads"),
     ("/api/wborders", "sales"),
     ("/api/wbfinance", "fin"),
+    # Guzi Gold — самостоятельный склад ювелирки (без 1С/WB), см. gg_* ниже
+    ("/api/gg/products", "prod"), ("/api/gg/prices", "prod"),
+    ("/api/gg/sales", "sales"), ("/api/gg/analytics", "sales"),
 ]
 
 # Исправления для бота (обучение). Хранится в памяти процесса + дозапись в файл.
@@ -3756,7 +3762,12 @@ def _wb_fin_refresh(company):
         with _WB_FIN_LOCK:
             _WB_FIN_INFLIGHT.discard(company)
 
+WB_FIN_ENABLED = False   # ВРЕМЕННО отключено: первый расчёт клал сервис (502 даже на /api/health,
+                          # задело и Бизмарт) — расследуется, включим когда причина понятна и проверена
+
 def wb_fin_cache(company):
+    if not WB_FIN_ENABLED:
+        return {"rows": [], "disabled": True}
     cur = WB_FIN_CACHE.get(company)
     if cur is None:
         b = _wb_backup_load("wb_fin_" + company)
@@ -3817,6 +3828,8 @@ def wb_finance_overview(company, days=30):
     if cache.get("computing") and not rows:
         res["computing"] = True
         res["note"] = "Считаю отчёт за период — первый раз занимает пару минут. Обновите страницу чуть позже."
+    if cache.get("disabled"):
+        res["note"] = "Разбивка расходов WB временно отключена — чиним причину, чтобы не мешать другим кабинетам."
     return res
 
 # --- Wildberries: реклама (продвижение внутри поиска WB — read-only обзор) ---
@@ -5664,7 +5677,7 @@ def expenses_view(company=None):
             c = (r.get("category") or "Без категории")
             cat[c] = cat.get(c, 0) + _num(r.get("amount"))
     by_cat = [{"category": k, "amount": round(v)} for k, v in sorted(cat.items(), key=lambda i: -i[1])]
-    ss = sales_sums() if co == BIZMART_ID else wb_sales_sums(co)
+    ss = sales_sums() if co == BIZMART_ID else (gg_sales_sums(co) if co in GG_CATALOG_COMPANIES else wb_sales_sums(co))
     periods = {}
     for p in ("today", "week", "month"):
         periods[p] = {"sales": ss[p]["sales"], "profit": ss[p]["profit"],
@@ -5697,9 +5710,119 @@ def expenses_view(company=None):
     # когда строк за месяц больше 200). Итоговые суммы всё равно берём из periods (по ВСЕМ строкам).
     res = {"expenses": rows[:10000], "by_category": by_cat, "periods": periods,
            "by_month": by_month, "total_count": len(rows)}
-    if co != BIZMART_ID:
+    if co != BIZMART_ID and co not in GG_CATALOG_COMPANIES:
         res["note"] = _WB_NOTE
     return res
+
+# ================== GUZI GOLD: самостоятельный склад ювелирки (без 1С/WB) ==================
+def _gg_next_sku(co):
+    """Монотонный артикул на компанию: GG-P001, GG-P002... (тот же приём, что _rent_newid)."""
+    key = "gg_seq_" + co
+    seq = int(kv_load(key) or 0) + 1
+    kv_save(key, seq)
+    return "GG-P%03d" % seq
+
+def gg_prices(co):
+    return kv_load("gg_prices_" + co) or {"gold_per_g": 0, "silver_per_g": 0, "updated_at": 0}
+
+def gg_set_prices(co, gold, silver):
+    v = {"gold_per_g": _num(gold), "silver_per_g": _num(silver), "updated_at": int(time.time())}
+    kv_save("gg_prices_" + co, v)
+    return v
+
+def _gg_sale_price(prod, prices):
+    per_g = prices.get("gold_per_g") if prod.get("material") == "золото" else prices.get("silver_per_g")
+    return round(_num(prod.get("weight_g")) * _num(per_g))
+
+def gg_products_list(co, q=""):
+    if not supa_on():
+        return {"items": [], "count": 0, "prices": gg_prices(co)}
+    try:
+        rows = _supa("GET", "gg_products",
+                     "?company_id=eq.%s&active=eq.true&select=*&order=created_at.desc" % _q(co))
+    except Exception:
+        rows = []
+    ql = (q or "").strip().lower()
+    if ql:
+        rows = [r for r in rows if ql in (r.get("name", "") or "").lower()
+                or ql in (r.get("sku", "") or "").lower()]
+    prices = gg_prices(co)
+    out = []
+    for r in rows:
+        r = dict(r)
+        r["suggest_price"] = _gg_sale_price(r, prices)
+        out.append(r)
+    return {"items": out, "count": len(out), "prices": prices}
+
+def gg_analytics(co):
+    if not supa_on():
+        return {"by_category": [], "sold_by_category": []}
+    try:
+        prod = _supa("GET", "gg_products", "?company_id=eq.%s&active=eq.true&select=*" % _q(co))
+    except Exception:
+        prod = []
+    try:
+        sales = _supa("GET", "gg_sales", "?company_id=eq.%s&select=*" % _q(co))
+    except Exception:
+        sales = []
+    cats = {}
+    for p in prod:
+        c = p.get("category") or "—"
+        d = cats.setdefault(c, {"category": c, "items": 0, "qty": 0, "cost": 0.0})
+        d["items"] += 1
+        d["qty"] += int(p.get("qty") or 0)
+        d["cost"] += _num(p.get("purchase_price")) * int(p.get("qty") or 0)
+    sold = {}
+    for s in sales:
+        c = s.get("category") or "—"
+        d = sold.setdefault(c, {"category": c, "qty_sold": 0, "revenue": 0.0, "profit": 0.0})
+        qty = int(s.get("qty") or 0)
+        d["qty_sold"] += qty
+        d["revenue"] += _num(s.get("sale_price")) * qty
+        d["profit"] += (_num(s.get("sale_price")) - _num(s.get("cost_price"))) * qty
+    for v in cats.values():
+        v["cost"] = round(v["cost"])
+    for v in sold.values():
+        v["revenue"] = round(v["revenue"]); v["profit"] = round(v["profit"])
+    return {"by_category": sorted(cats.values(), key=lambda x: x["category"]),
+            "sold_by_category": sorted(sold.values(), key=lambda x: x["category"])}
+
+def gg_sales_sums(co):
+    """Выручка/прибыль по периодам — для «Финансы» (тот же формат, что sales_sums/wb_sales_sums)."""
+    today = _today_str(); wk = _days_ago(6); mo = today[:7]
+    rows = []
+    if supa_on():
+        try:
+            rows = _supa("GET", "gg_sales", "?company_id=eq.%s&select=*" % _q(co))
+        except Exception:
+            rows = []
+    def agg(pred):
+        sa = pr = 0.0
+        for r in rows:
+            if not pred(r.get("date", "")):
+                continue
+            qty = int(r.get("qty") or 0)
+            sa += _num(r.get("sale_price")) * qty
+            pr += (_num(r.get("sale_price")) - _num(r.get("cost_price"))) * qty
+        return round(sa), round(pr)
+    res = {}
+    for key, pred in (("today", lambda d: d == today), ("week", lambda d: d >= wk),
+                      ("month", lambda d: (d or "")[:7] == mo)):
+        sa, pr = agg(pred)
+        res[key] = {"sales": sa, "profit": pr}
+    return res
+
+def gg_sales_report(co, period=None):
+    if not supa_on():
+        return {"sales": [], "count": 0}
+    try:
+        rows = _supa("GET", "gg_sales",
+                     "?company_id=eq.%s&select=*&order=date.desc,id.desc&limit=2000" % _q(co))
+    except Exception:
+        rows = []
+    if period:
+        rows = [r for r in rows if (r.get("date", "") or "").startswith(period)]
+    return {"sales": rows, "count": len(rows)}
 
 
 # ====== РЫНОК: цены товаров на маркетплейсах (Wildberries) ======
@@ -7314,6 +7437,128 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True, "data": expenses_view(_co)})
             except Exception as e:
                 return self._send(200, {"ok": False, "error": str(e)})
+        if self.path.startswith("/api/gg/products"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            action = body.get("action")
+            _u = self._user() or {}
+            _co = _u.get("company") or COMPANY_ID
+            try:
+                if action == "add":
+                    name = (body.get("name") or "").strip()
+                    material = (body.get("material") or "").strip()
+                    category = (body.get("category") or "").strip()
+                    if not name or material not in ("золото", "серебро") or not category:
+                        return self._send(400, {"error": "нужны название, материал (золото/серебро) и категория"})
+                    photo_url = ""
+                    pb64 = body.get("photo_b64") or ""
+                    if pb64:
+                        try:
+                            if "," in pb64 and pb64[:5] == "data:":
+                                pb64 = pb64.split(",", 1)[1]
+                            raw = base64.b64decode(pb64)
+                            if len(raw) > 10 * 1024 * 1024:
+                                return self._send(200, {"ok": False, "error": "Фото больше 10 МБ — сожмите"})
+                            photo_url = _supa_upload(raw, body.get("photo_type") or "image/jpeg",
+                                                      body.get("photo_name") or "product.jpg")
+                        except Exception as ue:
+                            return self._send(200, {"ok": False, "error": "Не удалось загрузить фото: " + str(ue)})
+                    _supa("POST", "gg_products", "",
+                          {"company_id": _co, "sku": _gg_next_sku(_co), "name": name,
+                           "material": material, "category": category,
+                           "weight_g": _num(body.get("weight_g")),
+                           "purchase_price": _num(body.get("purchase_price")),
+                           "qty": int(_num(body.get("qty")) or 0), "photo_url": photo_url})
+                elif action == "edit":
+                    pid = body.get("id")
+                    if not pid:
+                        return self._send(400, {"error": "нужен товар"})
+                    patch = {}
+                    for k in ("name", "material", "category"):
+                        if body.get(k) is not None:
+                            patch[k] = (body.get(k) or "").strip()
+                    for k in ("weight_g", "purchase_price", "qty"):
+                        if body.get(k) is not None:
+                            patch[k] = _num(body.get(k))
+                    pb64 = body.get("photo_b64") or ""
+                    if pb64:
+                        try:
+                            if "," in pb64 and pb64[:5] == "data:":
+                                pb64 = pb64.split(",", 1)[1]
+                            raw = base64.b64decode(pb64)
+                            if len(raw) <= 10 * 1024 * 1024:
+                                patch["photo_url"] = _supa_upload(raw, body.get("photo_type") or "image/jpeg",
+                                                                   body.get("photo_name") or "product.jpg")
+                        except Exception:
+                            pass
+                    if patch:
+                        _supa("PATCH", "gg_products",
+                              "?id=eq.%s&company_id=eq.%s" % (pid, _q(_co)), patch)
+                elif action == "delete":
+                    pid = body.get("id")
+                    if not pid:
+                        return self._send(400, {"error": "нужен товар"})
+                    _supa("PATCH", "gg_products",
+                          "?id=eq.%s&company_id=eq.%s" % (pid, _q(_co)), {"active": False})
+                else:
+                    return self._send(400, {"error": "неизвестное действие"})
+                return self._send(200, {"ok": True, "data": gg_products_list(_co)})
+            except Exception as e:
+                return self._send(200, {"ok": False, "error": str(e)})
+        if self.path.startswith("/api/gg/prices"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            _u = self._user() or {}
+            if not ("all" in _u.get("sections", []) or _u.get("owner")):
+                return self._send(403, {"error": "Цену металла меняет только владелец"})
+            _co = _u.get("company") or COMPANY_ID
+            return self._send(200, {"ok": True, "data": gg_set_prices(
+                _co, body.get("gold_per_g"), body.get("silver_per_g"))})
+        if self.path.startswith("/api/gg/sales"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "плохой запрос"})
+            action = body.get("action")
+            _co = (self._user() or {}).get("company") or COMPANY_ID
+            try:
+                if action == "sell":
+                    pid = body.get("product_id")
+                    qty = int(_num(body.get("qty")) or 1)
+                    if not pid or qty <= 0:
+                        return self._send(400, {"error": "нужны товар и количество"})
+                    rows = _supa("GET", "gg_products",
+                                 "?id=eq.%s&company_id=eq.%s&select=*" % (pid, _q(_co)))
+                    prod = rows[0] if rows else None
+                    if not prod:
+                        return self._send(400, {"error": "Товар не найден"})
+                    if int(prod.get("qty") or 0) < qty:
+                        return self._send(400, {"error": "На складе меньше, чем указано"})
+                    sale_price = _num(body.get("sale_price"))
+                    if sale_price <= 0:
+                        sale_price = _gg_sale_price(prod, gg_prices(_co))
+                    day = (body.get("date") or "").strip()
+                    if not (len(day) == 10 and day[4] == "-"):
+                        day = _today_str()
+                    _supa("POST", "gg_sales", "",
+                          {"company_id": _co, "product_id": pid, "sku": prod.get("sku"),
+                           "name": prod.get("name"), "category": prod.get("category"),
+                           "qty": qty, "sale_price": sale_price,
+                           "cost_price": _num(prod.get("purchase_price")), "date": day})
+                    _supa("PATCH", "gg_products", "?id=eq.%s&company_id=eq.%s" % (pid, _q(_co)),
+                          {"qty": int(prod.get("qty") or 0) - qty})
+                else:
+                    return self._send(400, {"error": "неизвестное действие"})
+                return self._send(200, {"ok": True, "data": gg_sales_report(_co)})
+            except Exception as e:
+                return self._send(200, {"ok": False, "error": str(e)})
         self._send(404, {"error": "не найдено"})
 
     def do_GET(self):
@@ -7494,6 +7739,22 @@ class Handler(BaseHTTPRequestHandler):
             per = (parse_qs(urlparse(self.path).query).get("period", [""])[0] or "").strip()
             _co = (self._user() or {}).get("company") or COMPANY_ID
             return self._send(200, rent_build(per or None, _co))
+        if self.path.startswith("/api/gg/products"):
+            from urllib.parse import urlparse, parse_qs
+            q = (parse_qs(urlparse(self.path).query).get("q", [""])[0] or "").strip()
+            _co = (self._user() or {}).get("company") or COMPANY_ID
+            return self._send(200, gg_products_list(_co, q))
+        if self.path.startswith("/api/gg/prices"):
+            _co = (self._user() or {}).get("company") or COMPANY_ID
+            return self._send(200, gg_prices(_co))
+        if self.path.startswith("/api/gg/sales"):
+            from urllib.parse import urlparse, parse_qs
+            per = (parse_qs(urlparse(self.path).query).get("period", [""])[0] or "").strip()
+            _co = (self._user() or {}).get("company") or COMPANY_ID
+            return self._send(200, gg_sales_report(_co, per or None))
+        if self.path.startswith("/api/gg/analytics"):
+            _co = (self._user() or {}).get("company") or COMPANY_ID
+            return self._send(200, gg_analytics(_co))
         if self.path.startswith("/api/overview"):
             return self._send(200, get_overview())
         if self.path.startswith("/api/categories"):
