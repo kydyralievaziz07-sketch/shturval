@@ -3167,6 +3167,7 @@ WB_HOSTS = {
     "content": "https://content-api.wildberries.ru",
     "prices": "https://discounts-prices-api.wildberries.ru",
     "stats": "https://statistics-api.wildberries.ru",
+    "analytics": "https://seller-analytics-api.wildberries.ru",
 }
 WB_CACHE = {}          # company -> {"t": unix, "goods": [...], "cats": {...}}
 WB_TTL = 300
@@ -3233,7 +3234,7 @@ def wb_request(company, host, path, method="GET", body=None):
         "User-Agent": "Shturval/1.0",
     })
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=90) as r:   # отчёт остатков — тяжёлый (тысячи строк)
             return json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         if e.code == 429:
@@ -3289,12 +3290,18 @@ def _wb_fetch_raw(company):
                 g["PRICE"] = round(pmap.get(g.get("_nm"), 0.0) * _rate, 2)
         except Exception:
             pass       # без цен каталог всё равно полезен (названия/категории/остатки)
-        # Остатки НЕ тянем: старый метод (/api/v1/supplier/stocks) отключён самой WB и делит
-        # общий лимит запросов с продажами/заказами (тот же хост statistics-api) — только
-        # тратил впустую единственную доступную попытку. Актуальный метод остатков
-        # (/api/analytics/v1/stocks-report/wb-warehouses, отдельный хост) требует у ключа
-        # категорию «Аналитика» — у текущего токена её нет (403 "base token without secret").
-        # Включим, как только владелец добавит эту категорию ключу.
+        try:
+            # Актуальный метод остатков (старый /api/v1/supplier/stocks отключён самой WB).
+            # Отдельный хост (seller-analytics-api) — свой лимит запросов, не мешает продажам/заказам.
+            sdata = wb_request(company, "analytics", "/api/analytics/v1/stocks-report/wb-warehouses",
+                                method="POST", body={})
+            qmap = {}
+            for s in (sdata.get("data") or {}).get("items", []) or []:
+                qmap[s.get("nmId")] = qmap.get(s.get("nmId"), 0) + _num(s.get("quantity"))
+            for g in goods:
+                g["QUANTITY"] = qmap.get(g.get("_nm"), 0)
+        except Exception:
+            pass       # без остатков каталог всё равно полезен (названия/категории/цены)
     return goods, cats
 
 def _wb_refresh(company):
