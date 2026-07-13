@@ -626,7 +626,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.29.2<br>Аренда: дату начала нельзя менять после сохранения, конец — только продлевать вперёд
+      Штурвал v4.29.3<br>Ограничение дат аренды — только для сотрудников: у них начало заморожено, конец только вперёд; владелец правит свободно
   </aside>
 
   <!-- MAIN -->
@@ -8146,9 +8146,9 @@
     var title=(id?'✏️ Изменить ':'➕ Добавить ')+titleMap[type];
     var html='';
     if(type==='rental'){
-      var _rIsEdit=!!(id&&rec);
-      var _rStartAttr=_rIsEdit?' disabled':' onchange="rfSyncEndMin()"';
-      var _rEndMin=_rIsEdit?ruToIso(rec&&rec.end):ruToIso(rec&&rec.start);
+      var _rLock=!!(id&&rec)&&!rentIsOwner();
+      var _rStartAttr=_rLock?' disabled':' onchange="rfSyncEndMin()"';
+      var _rEndMin=_rLock?ruToIso(rec&&rec.end):ruToIso(rec&&rec.start);
       html=
         '<label>Машина (модель) *</label><select id="rf-model"><option value="">— выбрать —</option>'+_carOpts(rec&&rec.model)+'</select>'+
         '<label>Арендатор</label><input id="rf-renter" value="'+esc(rec&&rec.renter||'')+'" placeholder="имя">'+
@@ -8158,7 +8158,6 @@
         '<div class="row"><div><label>Цена/сутки, '+MUNIT()+' *</label><input type="number" inputmode="numeric" id="rf-price" value="'+((rec&&rec.price_raw)||'')+'" placeholder="0"></div>'+
         '<div><label>Получено, '+MUNIT()+'</label><input type="number" inputmode="numeric" id="rf-got" value="'+((rec&&rec.got_raw)||'')+'" placeholder="0"></div></div>'+
         '<label>Статус</label><select id="rf-status">'+_selOpts(['Активна','Завершена'],(rec&&rec.status)||'Активна')+'</select>'+
-        (_rIsEdit?'<div style="font-size:12px;color:#ffb84d;margin-top:8px">🔒 Дату начала менять нельзя. Дату конца можно только продлевать вперёд (не раньше '+isoToRu(_rEndMin)+').</div>':'')+
         '<div style="font-size:12px;color:var(--muted);margin-top:8px">Дни и сумма посчитаются сами: дни = конец − начало, сумма = дни × цена, долг = сумма − получено.</div>';
     } else if(type==='expense'){
       html=
@@ -8220,7 +8219,7 @@
       if(!p.model){ msg.textContent='Выберите машину.'; return; }
       if(!p.start||!p.end){ msg.textContent='Укажите даты начала и конца.'; return; }
       if(_isoE<_isoS){ msg.textContent='Дата конца не может быть раньше начала аренды.'; return; }
-      if(id){
+      if(id && !rentIsOwner()){
         var _rrec=(rentD().rentals||[]).filter(function(x){return x.id===id;})[0];
         if(_rrec){
           var _oS=ruToIso(_rrec.start), _oE=ruToIso(_rrec.end);
