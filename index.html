@@ -661,7 +661,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.39.0<br>В «Ассортименте» теперь можно выбрать период (день/неделя/месяц/квартал/год)
+      Штурвал v4.40.0<br>В аренде дату конца больше нельзя поставить раньше даты начала
   </aside>
 
   <!-- MAIN -->
@@ -8365,8 +8365,8 @@
         '<label>Машина (модель) *</label><select id="rf-model"><option value="">— выбрать —</option>'+_carOpts(rec&&rec.model)+'</select>'+
         '<label>Арендатор</label><input id="rf-renter" value="'+esc(rec&&rec.renter||'')+'" placeholder="имя">'+
         '<label>Телефон</label><input id="rf-phone" value="'+esc(rec&&rec.phone||'')+'" placeholder="необязательно">'+
-        '<div class="row"><div><label>Дата начала *</label><input type="date" id="rf-start" value="'+ruToIso(rec&&rec.start)+'"></div>'+
-        '<div><label>Дата конца *</label><input type="date" id="rf-end" value="'+ruToIso(rec&&rec.end)+'"></div></div>'+
+        '<div class="row"><div><label>Дата начала *</label><input type="date" id="rf-start" value="'+ruToIso(rec&&rec.start)+'" onchange="rfSyncEndMin()"></div>'+
+        '<div><label>Дата конца *</label><input type="date" id="rf-end" min="'+ruToIso(rec&&rec.start)+'" value="'+ruToIso(rec&&rec.end)+'"></div></div>'+
         '<div class="row"><div><label>Цена/сутки, '+MUNIT()+' *</label><input type="number" inputmode="numeric" id="rf-price" value="'+((rec&&rec.price_raw)||'')+'" placeholder="0"></div>'+
         '<div><label>Получено, '+MUNIT()+'</label><input type="number" inputmode="numeric" id="rf-got" value="'+((rec&&rec.got_raw)||'')+'" placeholder="0"></div></div>'+
         '<label>Статус</label><select id="rf-status">'+_selOpts(['Активна','Завершена'],(rec&&rec.status)||'Активна')+'</select>'+
@@ -8413,15 +8413,24 @@
     document.getElementById('rentbg').classList.add('open');
   }
   function closeRentForm(){ document.getElementById('rentbg').classList.remove('open'); }
+  // Конец аренды не может быть раньше начала: обновляем min у поля «конец» и сбрасываем его, если стал раньше начала
+  function rfSyncEndMin(){
+    var s=document.getElementById('rf-start'), e=document.getElementById('rf-end');
+    if(!s||!e) return;
+    e.min=s.value||'';
+    if(s.value && e.value && e.value < s.value) e.value='';
+  }
   function _v(id){ var el=document.getElementById(id); return el?el.value.trim():''; }
   function submitRentForm(type,id){
     var p={}, msg=document.getElementById('rf-msg');
     if(type==='rental'){
       p.model=_v('rf-model'); p.renter=_v('rf-renter'); p.phone=_v('rf-phone');
-      p.start=isoToRu(_v('rf-start')); p.end=isoToRu(_v('rf-end'));
+      var _isoS=_v('rf-start'), _isoE=_v('rf-end');
+      p.start=isoToRu(_isoS); p.end=isoToRu(_isoE);
       p.price=_v('rf-price'); p.got=_v('rf-got'); p.status=_v('rf-status');
       if(!p.model){ msg.textContent='Выберите машину.'; return; }
       if(!p.start||!p.end){ msg.textContent='Укажите даты начала и конца.'; return; }
+      if(_isoE<_isoS){ msg.textContent='Дата конца не может быть раньше начала аренды.'; return; }
     } else if(type==='expense'){
       p.date=isoToRu(_v('rf-date')); p.model=_v('rf-model'); p.cat=_v('rf-cat'); p.desc=_v('rf-desc'); p.sum=_v('rf-sum');
       if(!p.date){ msg.textContent='Укажите дату.'; return; }
