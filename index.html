@@ -661,7 +661,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.40.0<br>В аренде дату конца больше нельзя поставить раньше даты начала
+      Штурвал v4.41.0<br>Аренда: дату начала нельзя менять после сохранения, конец — только продлевать вперёд
   </aside>
 
   <!-- MAIN -->
@@ -8361,15 +8361,19 @@
     var title=(id?'✏️ Изменить ':'➕ Добавить ')+titleMap[type];
     var html='';
     if(type==='rental'){
+      var _rIsEdit=!!(id&&rec);
+      var _rStartAttr=_rIsEdit?' disabled':' onchange="rfSyncEndMin()"';
+      var _rEndMin=_rIsEdit?ruToIso(rec&&rec.end):ruToIso(rec&&rec.start);
       html=
         '<label>Машина (модель) *</label><select id="rf-model"><option value="">— выбрать —</option>'+_carOpts(rec&&rec.model)+'</select>'+
         '<label>Арендатор</label><input id="rf-renter" value="'+esc(rec&&rec.renter||'')+'" placeholder="имя">'+
         '<label>Телефон</label><input id="rf-phone" value="'+esc(rec&&rec.phone||'')+'" placeholder="необязательно">'+
-        '<div class="row"><div><label>Дата начала *</label><input type="date" id="rf-start" value="'+ruToIso(rec&&rec.start)+'" onchange="rfSyncEndMin()"></div>'+
-        '<div><label>Дата конца *</label><input type="date" id="rf-end" min="'+ruToIso(rec&&rec.start)+'" value="'+ruToIso(rec&&rec.end)+'"></div></div>'+
+        '<div class="row"><div><label>Дата начала *</label><input type="date" id="rf-start" value="'+ruToIso(rec&&rec.start)+'"'+_rStartAttr+'></div>'+
+        '<div><label>Дата конца *</label><input type="date" id="rf-end" min="'+_rEndMin+'" value="'+ruToIso(rec&&rec.end)+'"></div></div>'+
         '<div class="row"><div><label>Цена/сутки, '+MUNIT()+' *</label><input type="number" inputmode="numeric" id="rf-price" value="'+((rec&&rec.price_raw)||'')+'" placeholder="0"></div>'+
         '<div><label>Получено, '+MUNIT()+'</label><input type="number" inputmode="numeric" id="rf-got" value="'+((rec&&rec.got_raw)||'')+'" placeholder="0"></div></div>'+
         '<label>Статус</label><select id="rf-status">'+_selOpts(['Активна','Завершена'],(rec&&rec.status)||'Активна')+'</select>'+
+        (_rIsEdit?'<div style="font-size:12px;color:#ffb84d;margin-top:8px">🔒 Дату начала менять нельзя. Дату конца можно только продлевать вперёд (не раньше '+isoToRu(_rEndMin)+').</div>':'')+
         '<div style="font-size:12px;color:var(--muted);margin-top:8px">Дни и сумма посчитаются сами: дни = конец − начало, сумма = дни × цена, долг = сумма − получено.</div>';
     } else if(type==='expense'){
       html=
@@ -8431,6 +8435,14 @@
       if(!p.model){ msg.textContent='Выберите машину.'; return; }
       if(!p.start||!p.end){ msg.textContent='Укажите даты начала и конца.'; return; }
       if(_isoE<_isoS){ msg.textContent='Дата конца не может быть раньше начала аренды.'; return; }
+      if(id){
+        var _rrec=(rentD().rentals||[]).filter(function(x){return x.id===id;})[0];
+        if(_rrec){
+          var _oS=ruToIso(_rrec.start), _oE=ruToIso(_rrec.end);
+          if(_oS&&_isoS!==_oS){ msg.textContent='Дату начала нельзя менять после сохранения.'; return; }
+          if(_oE&&_isoE<_oE){ msg.textContent='Дату конца можно только продлевать — не раньше '+isoToRu(_oE)+'.'; return; }
+        }
+      }
     } else if(type==='expense'){
       p.date=isoToRu(_v('rf-date')); p.model=_v('rf-model'); p.cat=_v('rf-cat'); p.desc=_v('rf-desc'); p.sum=_v('rf-sum');
       if(!p.date){ msg.textContent='Укажите дату.'; return; }
