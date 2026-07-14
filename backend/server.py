@@ -6863,7 +6863,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "плохой запрос"})
             acc = str(body.get("account_id") or ""); cust = str(body.get("customer_id") or "")
             mime = (body.get("mime") or "").strip()
-            mtype = (body.get("type") or ig_media_type(mime)).strip()
+            # тип берём по mime — у Instagram нет типа "sticker" (webp тоже должен идти как image)
+            mtype = ig_media_type(mime) if mime else ((body.get("type") or "file").strip())
+            if mtype == "sticker":
+                mtype = "image"
             b64 = body.get("data_b64") or ""
             if not acc or not cust or not b64:
                 return self._send(400, {"error": "нужны account_id, customer_id и data_b64"})

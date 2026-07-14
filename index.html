@@ -5630,7 +5630,7 @@
   // Человеческое объяснение, почему сообщение не ушло
   function sendErrText(m){
     m=(m||'').toLowerCase();
-    if(m.includes('window')||m.includes('24')||m.includes('окн')||m.includes('outside')||m.includes('allowed')||m.includes('срок')||m.includes('messaging')||m.includes('reengage')||m.includes('re-engag')||m.includes('policy'))
+    if(m.includes('window')||m.includes('24')||m.includes('окн')||m.includes('outside')||m.includes('allowed')||m.includes('срок')||m.includes('messaging')||m.includes('reengage')||m.includes('re-engag')||m.includes('policy')||m.includes('#10')||m.includes('#551')||m.includes('not available')||m.includes('недоступ'))
       return 'Ответить можно ограниченное время после сообщения клиента (WhatsApp — 24 часа, Instagram — до 7 дней). Этот клиент писал давно — площадка заблокировала ответ. Можно будет ответить, когда он напишет снова (или напомнить о себе через сторис/публикацию).';
     if(m.includes('not found')||m.includes('не найден'))
       return 'Чат не найден — возможно, переписку удалили в Instagram.';
