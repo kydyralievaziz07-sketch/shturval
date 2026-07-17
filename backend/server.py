@@ -3048,20 +3048,29 @@ def tg_api_call(method, payload):
                                  headers={"Content-Type": "application/json", "User-Agent": "Shturval/1.0"})
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.loads(r.read().decode() or "{}")
-def tg_send(chat_id, text):
-    return tg_api_call("sendMessage", {"chat_id": str(chat_id), "text": text, "disable_web_page_preview": True})
+def tg_send(chat_id, text, biz_conn=None):
+    payload = {"chat_id": str(chat_id), "text": text, "disable_web_page_preview": True}
+    if biz_conn:
+        payload["business_connection_id"] = biz_conn   # ответ в личку через Telegram Business
+    return tg_api_call("sendMessage", payload)
 
 _tg_names = {}
+# Telegram Business: бот подключён к личному аккаунту владельца и видит его личные чаты.
+_tg_biz = {"conn_id": "", "owner_id": "", "can_reply": True}   # активное бизнес-соединение
+_tg_chat_conn = {}   # chat_id клиента -> business_connection_id (чтобы отвечать в личку)
 def tg_customer_name(chat_id):
     return _tg_names.get(str(chat_id), "")
 
 def tg_reply(account_id, customer_id, text, by="human"):
     """Ответ клиенту в Telegram + запись в историю. account_id — наш бот, customer_id — chat_id клиента."""
-    resp = tg_send(customer_id, text)
+    biz = _tg_chat_conn.get(str(customer_id)) or _tg_biz.get("conn_id") or ""
+    resp = tg_send(customer_id, text, biz_conn=(biz or None))
     try:
         mid = str(((resp or {}).get("result") or {}).get("message_id") or "")
     except Exception:
         mid = ""
+    if mid:
+        _tg_seen_mid(mid)   # чтобы «эхо» этого же сообщения из личного аккаунта не задвоилось
     try:
         _supa("POST", "tg_inbox", "",
               {"company_id": _req_company(), "sender_id": str(account_id), "recipient_id": str(customer_id),
@@ -3076,21 +3085,39 @@ def _tg_name_from(frm):
             or (frm or {}).get("username") or "")
 
 def tg_store_event(evt):
-    """Разобрать webhook Telegram (update) и сохранить входящее сообщение."""
+    """Разобрать webhook Telegram (update) и сохранить сообщение.
+    Поддержаны и обычный бот (message), и Telegram Business — личные чаты владельца
+    (business_message / business_connection)."""
     if not isinstance(evt, dict):
         return
-    msg = evt.get("message") or evt.get("edited_message")
+    # Соединение бота с личным аккаунтом (Telegram Business) — запоминаем, чтобы отвечать в личку.
+    bc = evt.get("business_connection")
+    if isinstance(bc, dict):
+        _tg_biz["conn_id"] = str(bc.get("id") or "")
+        _tg_biz["owner_id"] = str((bc.get("user") or {}).get("id") or "")
+        _tg_biz["can_reply"] = bool(bc.get("can_reply", True)) and bool(bc.get("is_enabled", True))
+        return
+    biz_msg = evt.get("business_message") or evt.get("edited_business_message")
+    msg = biz_msg or evt.get("message") or evt.get("edited_message")
     if not isinstance(msg, dict):
         return
     chat = msg.get("chat") or {}; frm = msg.get("from") or {}
-    chat_id = str(chat.get("id") or frm.get("id") or "")
+    conn_id = str(msg.get("business_connection_id") or "")
+    owner_id = _tg_biz.get("owner_id") or ""
+    # В личке владелец мог написать сам со своего телефона — это исходящее «эхо».
+    is_out = bool(biz_msg) and owner_id and str(frm.get("id") or "") == owner_id
+    # id собеседника-клиента: для личных чатов это chat.id (не владелец).
+    chat_id = str(chat.get("id") or (frm.get("id") if not is_out else "") or "")
     if not chat_id:
         return
     if _tg_seen_mid(str(msg.get("message_id") or "")):
         return
-    nm = _tg_name_from(frm)
-    if nm:
-        _tg_names[chat_id] = nm
+    if conn_id:
+        _tg_chat_conn[chat_id] = conn_id
+    if not is_out:
+        nm = _tg_name_from(frm)
+        if nm:
+            _tg_names[chat_id] = nm
     text = msg.get("text") or msg.get("caption") or ""
     if not text:
         for k, lbl in (("photo", "\U0001F4F7 фото"), ("voice", "\U0001F3A4 голосовое"),
@@ -3100,11 +3127,18 @@ def tg_store_event(evt):
                 text = lbl; break
         if not text:
             text = "сообщение"
-    row = {"company_id": COMPANY_ID, "sender_id": chat_id, "recipient_id": _tg_acct(),
-           "mid": str(msg.get("message_id") or ""), "text": text,
-           "ts": int(str(msg.get("date") or "0") or 0) * 1000, "direction": "in", "raw": msg}
+    ts = int(str(msg.get("date") or "0") or 0) * 1000
+    if is_out:
+        row = {"company_id": COMPANY_ID, "sender_id": _tg_acct(), "recipient_id": chat_id,
+               "mid": str(msg.get("message_id") or ""), "text": text, "ts": ts,
+               "direction": "out", "status": "sent", "raw": dict(msg, by="human")}
+    else:
+        row = {"company_id": COMPANY_ID, "sender_id": chat_id, "recipient_id": _tg_acct(),
+               "mid": str(msg.get("message_id") or ""), "text": text, "ts": ts,
+               "direction": "in", "raw": msg}
     _inbox_save("tg_inbox", row)
-    if msg.get("text"):
+    # ИИ-бот отвечает только клиентам обычного бота, а не в личных чатах владельца.
+    if not is_out and not biz_msg and msg.get("text"):
         _tgbot_schedule(chat_id)
 
 _tg_seen = set()
