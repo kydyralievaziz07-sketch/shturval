@@ -2443,8 +2443,12 @@ def ig_broadcast_count(account=None):
         per[c["account"]] = per.get(c["account"], 0) + 1
     return {"eligible": len(targets), "per_account": per}
 
-def ig_broadcast(text, account=None, max_age_hours=24, limit=500):
-    targets = _ig_eligible_targets(account, max_age_hours)[:limit]
+def ig_broadcast(text, account=None, max_age_hours=24, limit=500, only=None):
+    targets = _ig_eligible_targets(account, max_age_hours)
+    if only:
+        oset = set(str(x) for x in only)
+        targets = [c for c in targets if str(c.get("customer_id")) in oset]
+    targets = targets[:limit]
     sent = 0; failed = 0
     for c in targets:
         try:
@@ -2999,14 +3003,18 @@ def wa_broadcast_count(account=None, min_silent_days=0):
     return {"eligible": len(win), "total": len(allc), "sleeping": len(sleeping),
             "per_account": per}
 
-def wa_broadcast(text, account=None, limit=500, template="", lang="ru", min_silent_days=0):
+def wa_broadcast(text, account=None, limit=500, template="", lang="ru", min_silent_days=0, only=None):
     """template="" → свободный текст только тем, кто в окне 24ч.
     template="имя_шаблона" → одобренный Meta шаблон, уходит и «спящим» вне окна.
     min_silent_days>0 (только для шаблона) → лишь тем, кто молчит дольше N дней."""
     if template:
-        targets = _wa_all_targets(account, min_silent_days)[:limit]
+        targets = _wa_all_targets(account, min_silent_days)
     else:
-        targets = _wa_eligible_targets(account)[:limit]
+        targets = _wa_eligible_targets(account)
+    if only:
+        oset = set(str(x) for x in only)
+        targets = [c for c in targets if str(c.get("customer_id")) in oset]
+    targets = targets[:limit]
     sent = 0; failed = 0; errs = {}
     for c in targets:
         try:
@@ -3163,9 +3171,13 @@ def tg_clients_base():
                     "last_ts": c.get("last_ts") or 0, "count": c.get("count") or 0})
     return out
 
-def tg_broadcast(text, limit=500):
+def tg_broadcast(text, limit=500, only=None):
     """Рассылка в Telegram — без окна 24ч: можно писать всем, кто хоть раз писал боту."""
-    targets = tg_conversations()[:limit]
+    targets = tg_conversations()
+    if only:
+        oset = set(str(x) for x in only)
+        targets = [c for c in targets if str(c.get("customer_id")) in oset]
+    targets = targets[:limit]
     sent = 0; failed = 0; errs = {}
     for c in targets:
         try:
@@ -6956,7 +6968,7 @@ class Handler(BaseHTTPRequestHandler):
             if not text:
                 return self._send(400, {"error": "Введите текст рассылки"})
             try:
-                return self._send(200, tg_broadcast(text, limit=limit))
+                return self._send(200, tg_broadcast(text, limit=limit, only=(body.get("only") or None)))
             except Exception as e:
                 return self._send(500, {"error": "Рассылка не удалась: %s" % e})
         if self.path.startswith("/api/wa/template"):
@@ -7084,7 +7096,7 @@ class Handler(BaseHTTPRequestHandler):
             if not text:
                 return self._send(400, {"error": "Введите текст рассылки"})
             try:
-                return self._send(200, ig_broadcast(text, account, limit=limit))
+                return self._send(200, ig_broadcast(text, account, limit=limit, only=(body.get("only") or None)))
             except Exception as e:
                 return self._send(500, {"error": "Рассылка не удалась: %s" % e})
         if self.path.startswith("/api/wa/broadcast"):
@@ -7108,7 +7120,7 @@ class Handler(BaseHTTPRequestHandler):
             if not text and not template:
                 return self._send(400, {"error": "Введите текст рассылки"})
             try:
-                return self._send(200, wa_broadcast(text, account, limit=limit, template=template, min_silent_days=max(0, days)))
+                return self._send(200, wa_broadcast(text, account, limit=limit, template=template, min_silent_days=max(0, days), only=(body.get("only") or None)))
             except Exception as e:
                 return self._send(500, {"error": "Рассылка не удалась: %s" % e})
         if self.path.startswith("/api/ads/"):
