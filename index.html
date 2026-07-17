@@ -2964,12 +2964,21 @@
     if(on&&on.checked){ var t=document.getElementById('bc-tpl'); if(t) t.checked=false; bcResetDays(); }
     bcNumsCount();
   }
+  function bcNormNum(s){
+    var d=(s||'').replace(/\D/g,'');
+    if(!d) return '';
+    if(d.indexOf('996')===0) return d;
+    if(d.charAt(0)==='0' && d.length===10) return '996'+d.slice(1);   // 0700123456 -> 996700123456
+    if(d.length===9) return '996'+d;                                  // 700123456 -> 996700123456
+    if(d.indexOf('00')===0) return d.slice(2);                        // 00996… -> 996…
+    return d;
+  }
   function bcParseNums(){
     var raw=(document.getElementById('bc-nums-list')||{}).value||'';
     var seen={}, out=[];
     raw.split(/[\s,;\n]+/).forEach(function(s){
-      var d=(s||'').replace(/\D/g,'');
-      if(d.length>=8 && !seen[d]){ seen[d]=1; out.push(d); }
+      var d=bcNormNum(s);
+      if(d.length>=10 && !seen[d]){ seen[d]=1; out.push(d); }
     });
     return out;
   }

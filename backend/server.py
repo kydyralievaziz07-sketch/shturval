@@ -3031,8 +3031,20 @@ def wa_broadcast(text, account=None, limit=500, template="", lang="ru", min_sile
     return {"eligible": len(targets), "sent": sent, "failed": failed, "errors": errs}
 
 def _wa_norm_num(s):
-    """Оставить только цифры (WhatsApp хочет номер в межд. формате без +): 996880341000."""
-    return "".join(ch for ch in str(s or "") if ch.isdigit())
+    """Привести номер к международному формату для WhatsApp (без +): 996700123456.
+    Понимает местные форматы Кыргызстана: 0700123456, 700123456, +996…, 996…"""
+    d = "".join(ch for ch in str(s or "") if ch.isdigit())
+    if not d:
+        return ""
+    if d.startswith("996"):
+        return d
+    if d.startswith("0") and len(d) == 10:      # 0700123456 -> 996700123456
+        return "996" + d[1:]
+    if len(d) == 9:                              # 700123456 -> 996700123456
+        return "996" + d
+    if d.startswith("00"):                       # 00996… -> 996…
+        return d[2:]
+    return d
 
 def wa_broadcast_numbers(numbers, template, lang="ru", account=None, limit=1000, preview=""):
     """Рассылка «холодным» номерам, с которыми переписки НЕ было.
