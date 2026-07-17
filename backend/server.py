@@ -3030,6 +3030,32 @@ def wa_broadcast(text, account=None, limit=500, template="", lang="ru", min_sile
             k = str(e)[:90]; errs[k] = errs.get(k, 0) + 1
     return {"eligible": len(targets), "sent": sent, "failed": failed, "errors": errs}
 
+def _wa_norm_num(s):
+    """Оставить только цифры (WhatsApp хочет номер в межд. формате без +): 996880341000."""
+    return "".join(ch for ch in str(s or "") if ch.isdigit())
+
+def wa_broadcast_numbers(numbers, template, lang="ru", account=None, limit=1000, preview=""):
+    """Рассылка «холодным» номерам, с которыми переписки НЕ было.
+    WhatsApp разрешает такое ТОЛЬКО одобренным шаблоном (template обязателен)."""
+    if not (template or "").strip():
+        return {"error": "Для номеров без переписки нужен одобренный шаблон WhatsApp."}
+    phone_id = str(account or CFG.get("WA_PHONE_ID", "") or "")
+    seen = set(); nums = []
+    for n in (numbers or []):
+        d = _wa_norm_num(n)
+        if len(d) >= 8 and d not in seen:
+            seen.add(d); nums.append(d)
+    nums = nums[:limit]
+    sent = 0; failed = 0; errs = {}
+    for d in nums:
+        try:
+            wa_reply_template(phone_id, d, template, lang=lang,
+                              preview=(preview or ("\U0001F4CB шаблон: " + template)))
+            sent += 1; time.sleep(0.5)
+        except Exception as e:
+            failed += 1; k = str(e)[:90]; errs[k] = errs.get(k, 0) + 1
+    return {"eligible": len(nums), "sent": sent, "failed": failed, "errors": errs}
+
 # ============ TELEGRAM — приём/отправка через Bot API (проще Meta: без окна 24ч, номера и подписи) ============
 TG_API = "https://api.telegram.org/bot"
 def _tg_token():
@@ -7151,6 +7177,18 @@ class Handler(BaseHTTPRequestHandler):
                 days = int(body.get("days") or 0)
             except Exception:
                 days = 0
+            # Режим «по списку номеров» — холодные номера, переписки не было (только шаблон).
+            numbers = body.get("numbers") or None
+            if numbers:
+                if not template:
+                    return self._send(400, {"error": "Для номеров без переписки нужен одобренный шаблон WhatsApp."})
+                try:
+                    return self._send(200, wa_broadcast_numbers(numbers, template,
+                        lang=(body.get("lang") or "ru"),
+                        account=(None if account == "all" else account),
+                        limit=max(1, min(limit, 1000)), preview=text))
+                except Exception as e:
+                    return self._send(500, {"error": "Рассылка не удалась: %s" % e})
             if not text and not template:
                 return self._send(400, {"error": "Введите текст рассылки"})
             try:

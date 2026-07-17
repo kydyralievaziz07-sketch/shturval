@@ -1606,6 +1606,17 @@
       </div>
       <div id="bc-days-wrap" style="display:none;align-items:center;gap:8px;margin-top:8px"><input type="number" id="bc-days" min="1" value="90" onchange="bcDaysInput()" style="width:90px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--text);font-size:14px"><span style="font-size:13px;color:var(--muted)">дней и больше не писали</span></div>
     </div>
+    <div id="bc-nums-row" style="display:none;margin-top:12px;border-top:1px dashed var(--line);padding-top:12px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin:0"><input type="checkbox" id="bc-nums-on" onchange="bcNumsToggle()" style="width:auto"> 📇 По списку номеров (кому переписки ещё не было)</label>
+      <div id="bc-nums-box" style="display:none;margin-top:8px">
+        <div class="note" style="margin:0 0 8px">⚠️ «Холодным» номерам WhatsApp разрешает писать <b>только одобренным шаблоном Meta</b>. Впиши точное имя шаблона и вставь номера — каждый с новой строки или через запятую.</div>
+        <label>Имя одобренного шаблона</label>
+        <input id="bc-nums-tpl" placeholder="напр. bizmart_promo_ru" style="width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--text);font-size:14px">
+        <label style="margin-top:8px">Номера телефонов</label>
+        <textarea id="bc-nums-list" oninput="bcNumsCount()" placeholder="+996 700 123 456&#10;+996 555 987 654&#10;…" style="width:100%;min-height:110px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--text);font-family:inherit;font-size:14px;resize:vertical"></textarea>
+        <div id="bc-nums-count" style="font-size:13px;color:var(--muted);margin-top:6px"></div>
+      </div>
+    </div>
     <label>Текст сообщения</label>
     <textarea id="bc-text" placeholder="Например: 🔥 Только сегодня скидка 20% на всё! Успейте заказать." style="width:100%;min-height:90px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--text);font-family:inherit;font-size:14px;resize:vertical"></textarea>
     <div id="bc-count" style="font-size:13px;color:var(--muted);margin-top:10px">Считаю получателей…</div>
@@ -2858,6 +2869,9 @@
     var _tgb=document.getElementById('bc-ch-tg'); if(_tgb) _tgb.classList.toggle('active',ch==='tg');
     document.getElementById('bc-title').textContent = ch==='wa'?'📣 Рассылка в WhatsApp':(ch==='tg'?'📣 Рассылка в Telegram':'📣 Рассылка в Instagram');
     document.getElementById('bc-tpl-row').style.display = ch==='wa'?'':'none';
+    var _nr=document.getElementById('bc-nums-row'); if(_nr) _nr.style.display = ch==='wa'?'':'none';
+    var _no=document.getElementById('bc-nums-on'); if(_no) _no.checked=false;
+    var _nb=document.getElementById('bc-nums-box'); if(_nb) _nb.style.display='none';
     document.getElementById('bc-hint').innerHTML = ch==='wa'
       ? '⚠️ WhatsApp разрешает писать свободным текстом только тем, кто писал вам <b>за 24 часа</b>. «Спящим» (галочка ниже) уходит только <b>одобренный шаблон Meta</b> — его текст фиксированный, ваш текст в этом режиме не отправляется. За спам номер могут заблокировать.'
       : (ch==='tg' ? '✈️ Telegram: можно писать всем, кто хоть раз писал вашему боту (окна 24 часа нет). Выбери получателей галочками ниже.'
@@ -2943,9 +2957,51 @@
       if(lim && (!lim.value||+lim.value>n)) lim.value=n;
     }catch(_){ if(box) box.innerHTML='👥 Получателей: <b style="color:var(--text)">'+localN+'</b> (по данным переписки).'; }
   }
+  function bcNumsToggle(){
+    var on=document.getElementById('bc-nums-on'); var box=document.getElementById('bc-nums-box');
+    if(box) box.style.display=(on&&on.checked)?'':'none';
+    // при списке номеров прочие режимы не нужны
+    if(on&&on.checked){ var t=document.getElementById('bc-tpl'); if(t) t.checked=false; bcResetDays(); }
+    bcNumsCount();
+  }
+  function bcParseNums(){
+    var raw=(document.getElementById('bc-nums-list')||{}).value||'';
+    var seen={}, out=[];
+    raw.split(/[\s,;\n]+/).forEach(function(s){
+      var d=(s||'').replace(/\D/g,'');
+      if(d.length>=8 && !seen[d]){ seen[d]=1; out.push(d); }
+    });
+    return out;
+  }
+  function bcNumsOn(){ var o=document.getElementById('bc-nums-on'); return !!(o&&o.checked); }
+  function bcNumsCount(){
+    var el=document.getElementById('bc-nums-count'); if(!el) return;
+    if(!bcNumsOn()){ el.textContent=''; return; }
+    var n=bcParseNums().length;
+    el.innerHTML='📇 Распознано номеров: <b style="color:var(--text)">'+n+'</b>';
+  }
   async function bcSend(){
     const acc=document.getElementById('bc-account').value||'all';
     const text=(document.getElementById('bc-text').value||'').trim();
+    // Режим «по списку номеров» (WhatsApp, холодные контакты) — только шаблон
+    if(bcChannel==='wa' && bcNumsOn()){
+      const nums=bcParseNums();
+      const tplName=((document.getElementById('bc-nums-tpl')||{}).value||'').trim();
+      if(!nums.length){ alert('Вставь хотя бы один номер.'); return; }
+      if(!tplName){ alert('Впиши имя одобренного шаблона WhatsApp — без него холодным номерам отправить нельзя.'); return; }
+      if(!confirm('Отправить шаблон «'+tplName+'» на '+nums.length+' номеров в WhatsApp?\n\nЭто «холодные» номера — уйдёт фиксированный текст шаблона, не текст из поля.')) return;
+      const btn=document.getElementById('bc-send-btn'); btn.disabled=true; btn.textContent='⏳ Отправляю…';
+      try{
+        const r=await apiFetch('/api/wa/broadcast',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({numbers:nums,template:tplName,account:acc,limit:nums.length,text:text})},ONEC_BASE);
+        const d=await r.json(); if(d.error) throw new Error(d.error);
+        let msg='Готово! Отправлено: '+(d.sent||0);
+        if(d.failed) msg+=' · не доставлено: '+d.failed;
+        if(d.errors && Object.keys(d.errors).length){ msg+='\n\nПочему не доставлено:\n'+Object.entries(d.errors).map(function(e){return '• '+e[0]+' ×'+e[1];}).join('\n'); }
+        alert(msg); closeBc();
+      }catch(e){ alert('Не удалось отправить: '+(e.message||e)); }
+      finally{ btn.disabled=false; btn.textContent='Отправить рассылку'; }
+      return;
+    }
     const tpl=bcIsTemplate();
     if(!tpl && !text){ alert('Впиши текст рассылки'); return; }
     const limV=parseInt(document.getElementById('bc-limit').value||'0',10);
