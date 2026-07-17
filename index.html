@@ -661,7 +661,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.43.0<br>Демо-режим: вход demo / demo2026 показывает все разделы с фейковыми цифрами (не трогая настоящие данные)
+      Штурвал v4.44.0<br>Фикс: реальный вход всегда в приоритете над демо-режимом (данные Авто Рент больше не «пропадают»), в демо добавлен фейковый автопарк
   </aside>
 
   <!-- MAIN -->
@@ -2145,6 +2145,51 @@
     _demoCache={assortment,expenses:expensesResp,inventory,saleshist,sales,staff,suppliers,overview,crm};
     return _demoCache;
   }
+  // Фейковые данные раздела «Авто Рент» для демо (формат как у живого /api/rent)
+  function _demoRent(){
+    const nf=function(n){ return String(n||0).replace(/\B(?=(\d{3})+(?!\d))/g,' '); };
+    const cars=[
+      {id:'M001',model:'Toyota Camry 70',plate:'01 776 AJI',price:'6 000',deposit:'20 000',cost:'2 400 000',status:'В аренде',status_live:'В аренде',edit_by:'Демо',edit_ts:0},
+      {id:'M002',model:'Kia Seltos',plate:'01 925 AZN',price:'5 000',deposit:'10 000',cost:'1 500 000',status:'Свободна',status_live:'Свободна',edit_by:'Демо',edit_ts:0},
+      {id:'M003',model:'Toyota Camry 55',plate:'01 943 BAW',price:'5 000',deposit:'15 000',cost:'1 800 000',status:'В аренде',status_live:'В аренде',edit_by:'Демо',edit_ts:0},
+      {id:'M004',model:'Honda Odyssey',plate:'01 551 ARN',price:'3 000',deposit:'10 000',cost:'900 000',status:'В аренде',status_live:'В аренде',edit_by:'Демо',edit_ts:0},
+      {id:'M005',model:'Kia K5',plate:'01 811 AWA',price:'3 000',deposit:'15 000',cost:'1 200 000',status:'В аренде',status_live:'В аренде',edit_by:'Демо',edit_ts:0},
+      {id:'M006',model:'Honda Accord',plate:'01 602 AXT',price:'3 000',deposit:'10 000',cost:'800 000',status:'На ремонте',status_live:'На ремонте',edit_by:'Демо',edit_ts:0}
+    ];
+    const R=function(id,model,renter,phone,start,end,days,price,got){
+      const sum=days*price, debt=Math.max(0,sum-got);
+      return {id:id,model:model,renter:renter,phone:phone,start:start,end:end,days:String(days),
+        price:nf(price),sum:nf(sum),got:nf(got),debt:nf(debt),status:(debt>0?'Активна':'Завершена'),
+        note:'',overdue:'',overdue_days:0,by:'Демо',edit_by:'',price_raw:price,got_raw:got};
+    };
+    const rentals=[
+      R('RN2001','Toyota Camry 70','Азамат','0700 111 222','10.07.2026','14.07.2026',4,6000,24000),
+      R('RN2002','Honda Odyssey','Нурбек','0555 333 444','12.07.2026','15.07.2026',3,3000,9000),
+      R('RN2003','Kia K5','Айбек','0700 555 666','13.07.2026','16.07.2026',3,3000,6000),
+      R('RN2004','Toyota Camry 55','Данияр','0501 777 888','14.07.2026','17.07.2026',3,5000,15000),
+      R('RN2005','Honda Accord','Эркин','0555 999 000','15.07.2026','18.07.2026',3,3000,3000),
+      R('RN2006','Toyota Camry 70','Бакыт','0700 222 333','01.07.2026','05.07.2026',4,6000,24000)
+    ];
+    const expenses=[
+      {id:'EX1',date:'03.07.2026',model:'Honda Accord',cat:'Ремонт',desc:'Замена колодок',sum:'8 000',sum_raw:8000,by:'Демо',edit_by:''},
+      {id:'EX2',date:'06.07.2026',model:'',cat:'Реклама',desc:'Продвижение объявления',sum:'5 000',sum_raw:5000,by:'Демо',edit_by:''},
+      {id:'EX3',date:'09.07.2026',model:'Toyota Camry 70',cat:'Мойка',desc:'Химчистка салона',sum:'2 500',sum_raw:2500,by:'Демо',edit_by:''}
+    ];
+    const handed=[
+      {id:'HD1',date:'05.07.2026',sum:'120 000',sum_raw:120000,comment:'Сдано владельцу',by:'Демо'},
+      {id:'HD2',date:'12.07.2026',sum:'90 000',sum_raw:90000,comment:'Сдано владельцу',by:'Демо'}
+    ];
+    const months=[
+      {month:'2026-06',count:22,revenue:'260 000',expenses:'38 000',profit:'222 000',margin:'85%'},
+      {month:'2026-07',count:14,revenue:'165 000',expenses:'15 500',profit:'149 500',margin:'91%'}
+    ];
+    const summary={profit:'371 500',revenue:'425 000',debts:'12 000',expenses:'15 500',handed:'210 000',
+      balance:'-500',salary:'0',undercollect:'0',cars_total:'6',cars_free:'1',cars_rented:'4',cars_repair:'1',
+      rev_accrued:'437 000',avg_check:'10 500',avg_days:'3,3',margin:'87%',rentals_total:'6',rentals_active:'5',
+      plan:'',period:(typeof RENT_PERIOD!=='undefined'?RENT_PERIOD:'ИТОГО'),period_key:'ИТОГО',
+      commission_pct:10,commissions:{},currency:'сом',som_per_usd:87.0};
+    return {data:{cars:cars,rentals:rentals,expenses:expenses,handed:handed,months:months},summary:summary};
+  }
   function _demoData(path){
     const d=buildDemo();
     const p=(path||'').split('?')[0];
@@ -2161,6 +2206,7 @@
     if(p==='/api/staff'||p==='/api/team'||p==='/api/payroll') return d.staff;
     if(p==='/api/products') return {items:d.assortment.all_products.slice(0,60),count:d.assortment.all_products.length,page:1};
     if(p==='/api/categories') return {categories:d.inventory.categories};
+    if(p==='/api/rent') return _demoRent();
     return {ok:true,data:[],items:[],days:[],rows:[],conversations:[],campaigns:[],msgs:[],suppliers:[],chats:[]};
   }
   function _demoFetch(path,opts){
@@ -2458,15 +2504,16 @@
     try{
       const h={'X-Auth':val}; if(lg) h['X-Login']=lg;
       const r=await fetch(ONEC_BASE+'/api/auth',{headers:h});
-      if(r.ok){ const d=await r.json(); setPw(val); setLg(lg); applyUser(d); showLogin(false); _syncUrlKey(); if(canSee('crm')||canSee('dash')) loadCRM(); if(canSee('dash')) loadDashSales(); }
+      if(r.ok){ const d=await r.json(); DEMO=false; try{ localStorage.removeItem('shturval_demo'); }catch(e){} setPw(val); setLg(lg); applyUser(d); showLogin(false); _syncUrlKey(); if(canSee('crm')||canSee('dash')) loadCRM(); if(canSee('dash')) loadDashSales(); }
       else { err.textContent='Неверный логин или пароль. Попробуй ещё раз.'; }
     }catch(e){ err.textContent='Нет связи с сервером. Обнови страницу.'; }
     btn.disabled=false; btn.textContent='Войти';
   });
   // при загрузке: решаем, показывать вход или сразу сайт
   (async function bootAuth(){
-    // ДЕМО: если раньше вошли в демо — сразу возвращаемся в демо-режим, без сервера
-    try{ if(localStorage.getItem('shturval_demo')==='1'){ enterDemo(false); return; } }catch(e){}
+    // ДЕМО: если раньше вошли в демо — возвращаемся в демо-режим, но ТОЛЬКО если нет реального входа.
+    // Реальный сохранённый логин ВСЕГДА в приоритете (иначе владелец с демо-флагом залипал бы в демо и не видел свои данные).
+    try{ if(!getPw() && localStorage.getItem('shturval_demo')==='1'){ enterDemo(false); return; } }catch(e){}
     // ССЫЛКА-ЗАКЛАДКА: ?key=<base64(пароль)> или ?key=<base64(логин:пароль)> — вход сразу,
     // работает даже если браузер блокирует localStorage и cookie (пароль остаётся в памяти на сессию).
     try{
