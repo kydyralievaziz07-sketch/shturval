@@ -661,7 +661,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.44.0<br>Фикс: реальный вход всегда в приоритете над демо-режимом (данные Авто Рент больше не «пропадают»), в демо добавлен фейковый автопарк
+      Штурвал v4.45.0<br>Демо-аккаунт (demo/demo2026) полностью удалён; старый демо-флаг автоматически стирается
   </aside>
 
   <!-- MAIN -->
@@ -1983,7 +1983,6 @@
   }
   // обёртка над fetch: подставляет логин+пароль в заголовки, ловит 401 → показывает вход
   async function apiFetch(path,opts,base){
-    if(DEMO) return _demoFetch(path,opts);
     opts=opts||{}; const h=Object.assign({},opts.headers||{}); const p=getPw(); const lg=getLg();
     if(p) h['X-Auth']=p; if(lg) h['X-Login']=lg; opts.headers=h;
     if(base===undefined) base=API_BASE;
@@ -1995,236 +1994,6 @@
     }
     if(r.status===403){ throw new Error('forbidden'); }
     return r;
-  }
-  // ===================== ДЕМО-РЕЖИМ (вход demo/demo2026) =====================
-  // Весь интерфейс работает на фейковых данных, БЕЗ обращения к бэкенду.
-  // Реальные данные Бизмарта и сервер НЕ затрагиваются. Всё считается один раз во фронте.
-  let DEMO=false, _demoCache=null;
-  function _dr(seed){ let x=(seed>>>0)||1; return function(){ x^=x<<13;x>>>=0;x^=x>>17;x^=x<<5;x>>>=0; return x/4294967296; }; }
-  function _dday(off){ const d=new Date(); d.setDate(d.getDate()+off); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
-  function buildDemo(){
-    if(_demoCache) return _demoCache;
-    const R=_dr(20260716);
-    const ri=(a,b)=>Math.floor(a+R()*(b-a+1));
-    const today=(typeof salesTodayStr==='function')?salesTodayStr():_dday(0);
-    const splitSum=(total,n)=>{ let w=[],s=0; for(let i=0;i<n;i++){ const v=(n-i)+R()*n; w.push(v); s+=v; } return w.map(v=>Math.round(total*v/s)); };
-    const FL=[
-      ['1 этаж',[['Косметика',3200000,.34],['Бытовая химия',1500000,.28],['Посуда',1800000,.31],['Текстиль',1400000,.36]]],
-      ['2 этаж',[['Детская одежда',2600000,.42],['Игрушки',1700000,.45],['Обувь',2100000,.38],['Канцтовары',900000,.40]]],
-      ['3 этаж',[['Сумки-чемоданы',1600000,.40],['Носочные',800000,.48],['Электроника',1900000,.22],['Подарки',700000,.44]]],
-    ];
-    const PROD={'Косметика':['Крем для рук','Шампунь 400мл','Помада матовая','Маска для лица','Гель для душа'],
-      'Бытовая химия':['Порошок 3кг','Средство для пола','Освежитель воздуха','Губки 10шт'],
-      'Посуда':['Набор тарелок 6шт','Кастрюля 4л','Кружка керамика','Сковорода 26см'],
-      'Текстиль':['Полотенце банное','Плед 1.5сп','Простыня','Наволочка 2шт'],
-      'Детская одежда':['Кофта детская','Штаны детские','Боди 3шт','Комбинезон'],
-      'Игрушки':['Кукла','Машинка инерц.','Конструктор 120','Мяч резиновый'],
-      'Обувь':['Кроссовки','Тапочки дом.','Сандали дет.','Ботинки зим.'],
-      'Канцтовары':['Тетрадь 48л','Ручка синяя','Пенал','Краски 12цв'],
-      'Сумки-чемоданы':['Чемодан 24"','Рюкзак город','Сумка женская','Косметичка'],
-      'Носочные':['Носки 5пар','Колготки дет.','Гольфы','Следки 3пар'],
-      'Электроника':['Наушники TWS','Пауэрбанк 10000','Кабель USB-C','Лампа LED'],
-      'Подарки':['Открытка','Свеча ароматич.','Рамка фото','Мягкая игрушка']};
-    let floors=[], tree=[], groups=[], allProd=[], totRev=0, totProf=0, totQty=0;
-    FL.forEach(([fl,cats])=>{
-      let frev=0,fprof=0,fqty=0, fcats=[], fchildren=[];
-      cats.forEach(([cat,base,mrg])=>{
-        const rev=Math.round(base*(0.9+R()*0.25));
-        const prof=Math.round(rev*mrg);
-        const qty=Math.round(rev/ri(220,650));
-        frev+=rev; fprof+=prof; fqty+=qty; totRev+=rev; totProf+=prof; totQty+=qty;
-        const names=PROD[cat]||[cat];
-        const revs=splitSum(rev,names.length), qtys=splitSum(qty,names.length);
-        let items=[];
-        names.forEach((nm,i)=>{
-          const irev=revs[i], iqty=Math.max(1,qtys[i]), iprof=Math.round(irev*mrg);
-          const it={name:nm, qty:iqty, revenue:irev, profit:iprof,
-                    margin:Math.round(mrg*100), profit_per_unit:Math.round(iprof/iqty)};
-          items.push(it);
-          allProd.push({name:nm, group:cat, qty:iqty, revenue:irev, profit:iprof,
-                        margin:Math.round(mrg*100), profit_per_unit:Math.round(iprof/iqty)});
-        });
-        items.sort((a,b)=>b.profit-a.profit);
-        fcats.push({name:cat,revenue:rev,profit:prof,qty:qty,margin:Math.round(mrg*100)});
-        fchildren.push({name:cat,revenue:rev,profit:prof,qty:qty,margin:Math.round(mrg*100),
-                        children:[], items:items});
-        const keep=Math.min(3,items.length), keepP=items.slice(0,keep).reduce((s,i)=>s+i.profit,0);
-        groups.push({group:cat, revenue:rev, profit:prof, count:names.length,
-                     keep_n:keep, keep_profit_share:Math.round(keepP/prof*100),
-                     top:items.map((it,ix)=>({rank:ix+1,name:it.name,qty:it.qty,revenue:it.revenue,
-                        profit:it.profit,group_share:Math.round(it.profit/prof*100*10)/10,
-                        margin:it.margin,profit_per_unit:it.profit_per_unit}))});
-      });
-      fcats.sort((a,b)=>b.revenue-a.revenue);
-      fchildren.sort((a,b)=>b.revenue-a.revenue);
-      floors.push({floor:fl,revenue:frev,profit:fprof,qty:fqty,
-                   margin:Math.round(fprof/frev*100),cats:fcats});
-      tree.push({name:fl,revenue:frev,profit:fprof,qty:fqty,
-                 margin:Math.round(fprof/frev*100),children:fchildren,items:[]});
-    });
-    floors.sort((a,b)=>b.revenue-a.revenue);
-    tree.sort((a,b)=>b.revenue-a.revenue);
-    groups.sort((a,b)=>b.profit-a.profit);
-    groups.forEach(g=>{ g.share=Math.round(g.profit/totProf*100*10)/10; });
-    allProd.sort((a,b)=>b.profit-a.profit);
-    const avgMargin=Math.round(totProf/totRev*100*10)/10;
-    const assortment={period_days:30, from:_dday(-29), to:today,
-      total_revenue:totRev, total_profit:totProf, avg_margin:avgMargin,
-      total_products:allProd.length, days_ok:30, days_fail:0,
-      groups:groups, all_products:allProd, floors:floors, tree:tree,
-      updated:new Date().toLocaleDateString('ru-RU')+' '+new Date().toLocaleTimeString('ru-RU').slice(0,5)};
-    const MONTHS=['2026-04','2026-05','2026-06','2026-07'];
-    const monScale=[0.82,1.05,1.12,0.72];
-    const by_month=MONTHS.map((m,i)=>{ const s=Math.round(totRev*monScale[i]); const p=Math.round(totProf*monScale[i]);
-      const e=Math.round(p*(0.55+R()*0.1)); return {month:m,sales:s,profit:p,expense:e,net:p-e}; });
-    const EXP_CATS=[['Аренда',180000],['Транспорт',42000],['Питание',12000],['Упаковка',9500],
-      ['Хозтовары',15000],['Реклама',60000],['Коммуналка',22000],['Услуги',18000],['Материалы',11000],['Прочее',7000]];
-    let expenses=[], eid=9000;
-    for(let d=0;d>-14;d--){ const dt=_dday(d);
-      const k=ri(2,4);
-      for(let j=0;j<k;j++){ const c=EXP_CATS[ri(0,EXP_CATS.length-1)];
-        expenses.push({id:eid++, date:dt, category:c[0], amount:ri(300,Math.round(c[1]/6)), note:''}); }
-    }
-    expenses.push({id:eid++,date:_dday(-1),category:'Аренда',amount:180000,note:'аренда помещения'});
-    expenses.push({id:eid++,date:_dday(-2),category:'Зарплата',amount:640000,note:'ЗП сотрудники'});
-    const monE=by_month.find(m=>m.month===today.slice(0,7))||by_month[by_month.length-1];
-    const monS=monE.sales, monP=monE.profit;
-    const catAgg={}; expenses.filter(x=>x.date.slice(0,7)===today.slice(0,7)).forEach(x=>{catAgg[x.category]=(catAgg[x.category]||0)+x.amount;});
-    const by_category=Object.keys(catAgg).map(c=>({category:c,amount:catAgg[c]})).sort((a,b)=>b.amount-a.amount);
-    const mExp=Math.round(monS*0.05+700000), wExp=Math.round(mExp/4), tExp=Math.round(mExp/26);
-    const periods={
-      today:{sales:Math.round(monS/26),profit:Math.round(monP/26),expense:tExp,net:Math.round(monP/26)-tExp},
-      week:{sales:Math.round(monS/4),profit:Math.round(monP/4),expense:wExp,net:Math.round(monP/4)-wExp},
-      month:{sales:monS,profit:monP,expense:mExp,net:monP-mExp}};
-    const expensesResp={expenses:expenses.sort((a,b)=>a.date<b.date?1:-1), by_category:by_category,
-      periods:periods, by_month:by_month, total_count:expenses.length};
-    const invCats=[]; let retail=0,cost=0,units=0,sku=0;
-    FL.forEach(([fl,cats])=>cats.forEach(([cat,base,mrg])=>{
-      const cv=Math.round(base*ri(20,34)/10), cu=ri(400,2200), cc=ri(60,340);
-      retail+=cv; cost+=Math.round(cv*(1-mrg)); units+=cu; sku+=cc;
-      invCats.push({title:cat,value:cv,units:cu,count:cc});
-    }));
-    invCats.sort((a,b)=>b.value-a.value);
-    const inventory={ total_sku:sku, in_stock:sku-ri(20,60), total_units:units,
-      retail_value:retail, cost_value:cost, margin_value:retail-cost, no_cost_units:ri(50,200),
-      categories:invCats, cats_value:invCats, cats_units:invCats.slice().sort((a,b)=>b.units-a.units),
-      all_cats:invCats, super_cats:invCats,
-      low:invCats.slice(0,5).map(c=>({title:c.title+' — ходовой',qty:ri(0,4),category:c.title})),
-      updated:new Date().toLocaleTimeString('ru-RU').slice(0,8)};
-    let hist=[]; for(let d=-59;d<=0;d++){ const dt=_dday(d);
-      const base=totRev/30*(0.75+R()*0.6); const s=Math.round(base); const p=Math.round(base*(avgMargin/100));
-      hist.push({date:dt,sales:s,profit:p,receipts:ri(700,1200),returns_sum:ri(3000,18000)}); }
-    const saleshist={days:hist};
-    const tday=hist[hist.length-1];
-    const sellers=['Айгерим','Нурсултан','Мадина','Бекзат','Айжан'];
-    const sales={date:today, sales_count:tday.receipts, net_sales:tday.sales,
-      gross_sales:Math.round(tday.sales*1.02), profit:tday.profit,
-      avg_check:Math.round(tday.sales/tday.receipts), returns_count:ri(4,14), returns_sum:tday.returns_sum,
-      by_pay:[{name:'Мбанк',sum:Math.round(tday.sales*0.44)},{name:'Наличный',sum:Math.round(tday.sales*0.30)},
-              {name:'Оптима',sum:Math.round(tday.sales*0.18)},{name:'Прочее',sum:Math.round(tday.sales*0.08)}],
-      by_seller:sellers.map(n=>({name:n,count:ri(90,260),sum:ri(120000,420000)})),
-      top_products:allProd.slice(0,10).map(p=>({name:p.name,qty:ri(3,40),sum:ri(5000,60000),profit:ri(2000,25000)})),
-      receipts:[], total_receipts:tday.receipts, updated:new Date().toLocaleTimeString('ru-RU').slice(0,8)};
-    const staffNames=[['Айгерим','Продавец-кассир'],['Нурсултан','Продавец'],['Мадина','Администратор'],
-      ['Бекзат','Кладовщик'],['Айжан','Продавец'],['Тимур','Управляющий'],['Гульнара','Бухгалтер'],['Данияр','Грузчик']];
-    const staff={employees:staffNames.map((s,i)=>({id:i+1,name:s[0],login:'demo'+(i+1),role:s[1],
-      department:'Магазин',salary_month:ri(28,65)*1000,advance:ri(0,15)*1000,bonus_month:ri(0,8)*1000,active:true})),
-      team:staffNames.map((s,i)=>({name:s[0],role:s[1]}))};
-    const supNames=['Азиз опт','Гульмира текстиль','Нурлан игрушки','Динара косметика','Марат электроника','Салтанат обувь'];
-    const suppliers={suppliers:supNames.map((n,i)=>({id:i+1,name:n,debt:ri(0,6)*50000,note:'',created_by:'demo'}))};
-    const stages=['Новая заявка','Взяли в работу','Готов к отправке','В пути','Клиент получил товар','Отказано'];
-    const stage_summary=stages.map(st=>({stage:st,count:ri(8,120),sum:ri(80000,900000)}));
-    const recent=allProd.slice(0,15).map((p,i)=>({name:'Заказ #'+(4820+i),price:ri(800,9000),
-      stage:stages[ri(0,stages.length-2)]}));
-    const mkper=()=>({count:ri(30,400),sum:ri(400000,6000000),stage_summary:stage_summary,recent:recent});
-    const overview={account:'bizmart-demo',currency:'сом',
-      pipelines:[{name:'Продажи',stages:stage_summary}],
-      periods:{all:mkper(),today:mkper(),week:mkper(),month:mkper()},
-      recent:recent, stage_summary:stage_summary, total_count:ri(1200,3000), total_sum:ri(20000000,45000000),
-      sampled:false, updated:new Date().toLocaleTimeString('ru-RU').slice(0,8)};
-    const crm={clients:[], deals:[], updated:''};
-    _demoCache={assortment,expenses:expensesResp,inventory,saleshist,sales,staff,suppliers,overview,crm};
-    return _demoCache;
-  }
-  // Фейковые данные раздела «Авто Рент» для демо (формат как у живого /api/rent)
-  function _demoRent(){
-    const nf=function(n){ return String(n||0).replace(/\B(?=(\d{3})+(?!\d))/g,' '); };
-    const cars=[
-      {id:'M001',model:'Toyota Camry 70',plate:'01 776 AJI',price:'6 000',deposit:'20 000',cost:'2 400 000',status:'В аренде',status_live:'В аренде',edit_by:'Демо',edit_ts:0},
-      {id:'M002',model:'Kia Seltos',plate:'01 925 AZN',price:'5 000',deposit:'10 000',cost:'1 500 000',status:'Свободна',status_live:'Свободна',edit_by:'Демо',edit_ts:0},
-      {id:'M003',model:'Toyota Camry 55',plate:'01 943 BAW',price:'5 000',deposit:'15 000',cost:'1 800 000',status:'В аренде',status_live:'В аренде',edit_by:'Демо',edit_ts:0},
-      {id:'M004',model:'Honda Odyssey',plate:'01 551 ARN',price:'3 000',deposit:'10 000',cost:'900 000',status:'В аренде',status_live:'В аренде',edit_by:'Демо',edit_ts:0},
-      {id:'M005',model:'Kia K5',plate:'01 811 AWA',price:'3 000',deposit:'15 000',cost:'1 200 000',status:'В аренде',status_live:'В аренде',edit_by:'Демо',edit_ts:0},
-      {id:'M006',model:'Honda Accord',plate:'01 602 AXT',price:'3 000',deposit:'10 000',cost:'800 000',status:'На ремонте',status_live:'На ремонте',edit_by:'Демо',edit_ts:0}
-    ];
-    const R=function(id,model,renter,phone,start,end,days,price,got){
-      const sum=days*price, debt=Math.max(0,sum-got);
-      return {id:id,model:model,renter:renter,phone:phone,start:start,end:end,days:String(days),
-        price:nf(price),sum:nf(sum),got:nf(got),debt:nf(debt),status:(debt>0?'Активна':'Завершена'),
-        note:'',overdue:'',overdue_days:0,by:'Демо',edit_by:'',price_raw:price,got_raw:got};
-    };
-    const rentals=[
-      R('RN2001','Toyota Camry 70','Азамат','0700 111 222','10.07.2026','14.07.2026',4,6000,24000),
-      R('RN2002','Honda Odyssey','Нурбек','0555 333 444','12.07.2026','15.07.2026',3,3000,9000),
-      R('RN2003','Kia K5','Айбек','0700 555 666','13.07.2026','16.07.2026',3,3000,6000),
-      R('RN2004','Toyota Camry 55','Данияр','0501 777 888','14.07.2026','17.07.2026',3,5000,15000),
-      R('RN2005','Honda Accord','Эркин','0555 999 000','15.07.2026','18.07.2026',3,3000,3000),
-      R('RN2006','Toyota Camry 70','Бакыт','0700 222 333','01.07.2026','05.07.2026',4,6000,24000)
-    ];
-    const expenses=[
-      {id:'EX1',date:'03.07.2026',model:'Honda Accord',cat:'Ремонт',desc:'Замена колодок',sum:'8 000',sum_raw:8000,by:'Демо',edit_by:''},
-      {id:'EX2',date:'06.07.2026',model:'',cat:'Реклама',desc:'Продвижение объявления',sum:'5 000',sum_raw:5000,by:'Демо',edit_by:''},
-      {id:'EX3',date:'09.07.2026',model:'Toyota Camry 70',cat:'Мойка',desc:'Химчистка салона',sum:'2 500',sum_raw:2500,by:'Демо',edit_by:''}
-    ];
-    const handed=[
-      {id:'HD1',date:'05.07.2026',sum:'120 000',sum_raw:120000,comment:'Сдано владельцу',by:'Демо'},
-      {id:'HD2',date:'12.07.2026',sum:'90 000',sum_raw:90000,comment:'Сдано владельцу',by:'Демо'}
-    ];
-    const months=[
-      {month:'2026-06',count:22,revenue:'260 000',expenses:'38 000',profit:'222 000',margin:'85%'},
-      {month:'2026-07',count:14,revenue:'165 000',expenses:'15 500',profit:'149 500',margin:'91%'}
-    ];
-    const summary={profit:'371 500',revenue:'425 000',debts:'12 000',expenses:'15 500',handed:'210 000',
-      balance:'-500',salary:'0',undercollect:'0',cars_total:'6',cars_free:'1',cars_rented:'4',cars_repair:'1',
-      rev_accrued:'437 000',avg_check:'10 500',avg_days:'3,3',margin:'87%',rentals_total:'6',rentals_active:'5',
-      plan:'',period:(typeof RENT_PERIOD!=='undefined'?RENT_PERIOD:'ИТОГО'),period_key:'ИТОГО',
-      commission_pct:10,commissions:{},currency:'сом',som_per_usd:87.0};
-    return {data:{cars:cars,rentals:rentals,expenses:expenses,handed:handed,months:months},summary:summary};
-  }
-  function _demoData(path){
-    const d=buildDemo();
-    const p=(path||'').split('?')[0];
-    if(p==='/api/auth') return {ok:true,name:'Демо · Бизмарт',sections:['all'],role:'all',owner:true,demo:true};
-    if(p==='/api/account') return {ok:true,name:'Демо · Бизмарт',login:'demo',role:'all'};
-    if(p==='/api/overview') return d.overview;
-    if(p==='/api/crm-data') return d.crm;
-    if(p==='/api/expenses') return d.expenses;
-    if(p==='/api/assortment') return d.assortment;
-    if(p==='/api/inventory') return d.inventory;
-    if(p==='/api/sales-history') return d.saleshist;
-    if(p==='/api/sales') return d.sales;
-    if(p==='/api/suppliers') return {ok:true,data:d.suppliers.suppliers,suppliers:d.suppliers.suppliers};
-    if(p==='/api/staff'||p==='/api/team'||p==='/api/payroll') return d.staff;
-    if(p==='/api/products') return {items:d.assortment.all_products.slice(0,60),count:d.assortment.all_products.length,page:1};
-    if(p==='/api/categories') return {categories:d.inventory.categories};
-    if(p==='/api/rent') return _demoRent();
-    return {ok:true,data:[],items:[],days:[],rows:[],conversations:[],campaigns:[],msgs:[],suppliers:[],chats:[]};
-  }
-  function _demoFetch(path,opts){
-    opts=opts||{};
-    const data=_demoData(path);
-    const isPost=(opts.method||'GET').toUpperCase()==='POST';
-    const body=isPost?{ok:true,data:(data&&data.data)||[]}:data;
-    return Promise.resolve({ok:true,status:200,
-      json:()=>Promise.resolve(body), text:()=>Promise.resolve(JSON.stringify(body))});
-  }
-  function enterDemo(persist){
-    DEMO=true;
-    try{ if(persist){ localStorage.setItem('shturval_demo','1'); } }catch(e){}
-    if(typeof applyUser==='function') applyUser({ok:true,name:'Демо · Бизмарт',sections:['all'],role:'all',owner:true});
-    if(typeof showLogin==='function') showLogin(false);
-    try{ if(typeof loadCRM==='function') loadCRM(); }catch(e){}
-    try{ if(typeof loadDashSales==='function') loadDashSales(); }catch(e){}
   }
   // --- пользователь и роли (что ему показывать) ---
   let USER={name:'',sections:['all'],role:'',department:'',plan_day:0};
@@ -2499,22 +2268,19 @@
     const lgi=document.getElementById('loginlg'), inp=document.getElementById('loginpw'), err=document.getElementById('loginerr'), btn=document.getElementById('loginbtn');
     const lg=(lgi.value||'').trim(), val=inp.value.trim();
     if(!val){ inp.focus(); return; }
-    // ДЕМО-вход: полностью во фронте, сервер не трогаем
-    if(lg.toLowerCase()==='demo' && val==='demo2026'){ err.textContent=''; enterDemo(true); return; }
     err.textContent=''; btn.disabled=true; btn.textContent='Проверяю…';
     try{
       const h={'X-Auth':val}; if(lg) h['X-Login']=lg;
       const r=await fetch(ONEC_BASE+'/api/auth',{headers:h});
-      if(r.ok){ const d=await r.json(); DEMO=false; try{ localStorage.removeItem('shturval_demo'); }catch(e){} setPw(val); setLg(lg); applyUser(d); showLogin(false); _syncUrlKey(); if(canSee('crm')||canSee('dash')) loadCRM(); if(canSee('dash')) loadDashSales(); }
+      if(r.ok){ const d=await r.json(); try{ localStorage.removeItem('shturval_demo'); }catch(e){} setPw(val); setLg(lg); applyUser(d); showLogin(false); _syncUrlKey(); if(canSee('crm')||canSee('dash')) loadCRM(); if(canSee('dash')) loadDashSales(); }
       else { err.textContent='Неверный логин или пароль. Попробуй ещё раз.'; }
     }catch(e){ err.textContent='Нет связи с сервером. Обнови страницу.'; }
     btn.disabled=false; btn.textContent='Войти';
   });
   // при загрузке: решаем, показывать вход или сразу сайт
   (async function bootAuth(){
-    // ДЕМО: если раньше вошли в демо — возвращаемся в демо-режим, но ТОЛЬКО если нет реального входа.
-    // Реальный сохранённый логин ВСЕГДА в приоритете (иначе владелец с демо-флагом залипал бы в демо и не видел свои данные).
-    try{ if(!getPw() && localStorage.getItem('shturval_demo')==='1'){ enterDemo(false); return; } }catch(e){}
+    // Демо-режим удалён — подчищаем возможный старый флаг у тех, кто когда-то заходил в демо.
+    try{ localStorage.removeItem('shturval_demo'); }catch(e){}
     // ССЫЛКА-ЗАКЛАДКА: ?key=<base64(пароль)> или ?key=<base64(логин:пароль)> — вход сразу,
     // работает даже если браузер блокирует localStorage и cookie (пароль остаётся в памяти на сессию).
     try{
@@ -2551,7 +2317,7 @@
   })();
   function logout(){
     var sess=_sessionMode();
-    DEMO=false; try{ localStorage.removeItem('shturval_demo'); }catch(e){}   // выйти из демо-режима
+    try{ localStorage.removeItem('shturval_demo'); }catch(e){}   // подчистить старый демо-флаг (демо-режим удалён)
     clearPw();
     // на общем устройстве — стираем ВСЕ данные приложения, чтобы следующий не увидел чужое.
     // НО если это вкладка-демо (вход по ссылке) — не трогаем основной вход/данные в localStorage.
