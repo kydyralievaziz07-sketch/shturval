@@ -1861,7 +1861,7 @@
         (D.rentals||[]).forEach(function(r){
           var u=(typeof rentUrg==='function')?rentUrg(r):null;
           if(u) items.push({cls:(u.tag.indexOf('🔴')>=0?'red':'warn'),
-            html:'<b>'+u.tag+'.</b> '+esc(r.model||'')+(r.renter?' · '+esc(r.renter):'')+(r.phone?' · <a href="tel:'+esc((r.phone||'').replace(/[^0-9+]/g,''))+'" style="color:inherit">'+esc(r.phone)+'</a>':'')+' (сдача '+esc(r.end||'')+')'});
+            html:'<b>'+u.tag+'.</b> '+esc(r.model||'')+(r.renter?' · '+esc(r.renter):'')+(r.phone?' · <a href="tel:'+esc((r.phone||'').replace(/[^0-9+]/g,''))+'" style="color:inherit">'+esc(r.phone)+'</a>':'')+' (сдача '+esc(r.end||'')+(r.return_time?' в '+esc(r.return_time):'')+')'});
         });
         // в колокольчике — ТОЛЬКО про сдачу машин (когда вернуть). Долги показываем в разделе «Требует внимания».
       }
@@ -7780,7 +7780,8 @@
     var rows=list.map(function(r){
       totSum+=rnum(r.sum); totDebt+=rnum(r.debt); var debt=rnum(r.debt);
       var u=rentUrg(r), trst=u?(' style="background:'+u.bg+'"'):'';
-      var endCell=u?('<span style="color:'+u.col+';font-weight:600">'+esc(r.end||'')+'</span><div style="font-size:11px;color:'+u.col+'">'+u.tag+'</div>'):esc(r.end||'');
+      var endTime=r.return_time?('<div style="font-size:11px;color:var(--muted)">⏰ '+esc(r.return_time)+'</div>'):'';
+      var endCell=u?('<span style="color:'+u.col+';font-weight:600">'+esc(r.end||'')+'</span>'+endTime+'<div style="font-size:11px;color:'+u.col+'">'+u.tag+'</div>'):(esc(r.end||'')+endTime);
       var whoCell=r.by?('🧑‍💼 <b>'+esc(r.by)+'</b>'+(r.edit_by&&r.edit_by!==r.by?('<div style="font-size:11px;color:var(--muted)">правил: '+esc(r.edit_by)+'</div>'):'')):(r.edit_by?('✏️ '+esc(r.edit_by)):'<span style="color:var(--muted)">—</span>');
       return '<tr'+trst+'><td '+RT_TD+' style="font-size:12px;white-space:nowrap">'+whoCell+'</td><td '+RT_TD+'><b>'+esc(r.model||'')+'</b></td>'+
         '<td '+RT_TD+'>'+(r.renter?esc(r.renter):'<span style="color:var(--muted)">—</span>')+'</td>'+
@@ -8154,7 +8155,8 @@
         '<label>Арендатор</label><input id="rf-renter" value="'+esc(rec&&rec.renter||'')+'" placeholder="имя">'+
         '<label>Телефон</label><input id="rf-phone" value="'+esc(rec&&rec.phone||'')+'" placeholder="необязательно">'+
         '<div class="row"><div><label>Дата начала *</label><input type="date" id="rf-start" value="'+ruToIso(rec&&rec.start)+'"'+_rStartAttr+'></div>'+
-        '<div><label>Дата конца *</label><input type="date" id="rf-end" min="'+_rEndMin+'" value="'+ruToIso(rec&&rec.end)+'"></div></div>'+
+        '<div><label>Дата конца *</label><input type="date" id="rf-end" min="'+_rEndMin+'" value="'+ruToIso(rec&&rec.end)+'"></div>'+
+        '<div><label>Время сдачи</label><input type="time" id="rf-return-time" value="'+esc(rec&&rec.return_time||'')+'" placeholder="напр. 12:00"></div></div>'+
         '<div class="row"><div><label>Цена/сутки, '+MUNIT()+' *</label><input type="number" inputmode="numeric" id="rf-price" value="'+((rec&&rec.price_raw)||'')+'" placeholder="0"></div>'+
         '<div><label>Получено, '+MUNIT()+'</label><input type="number" inputmode="numeric" id="rf-got" value="'+((rec&&rec.got_raw)||'')+'" placeholder="0"></div></div>'+
         '<label>Статус</label><select id="rf-status">'+_selOpts(['Активна','Завершена'],(rec&&rec.status)||'Активна')+'</select>'+
@@ -8215,6 +8217,7 @@
       p.model=_v('rf-model'); p.renter=_v('rf-renter'); p.phone=_v('rf-phone');
       var _isoS=_v('rf-start'), _isoE=_v('rf-end');
       p.start=isoToRu(_isoS); p.end=isoToRu(_isoE);
+      p.return_time=_v('rf-return-time');
       p.price=_v('rf-price'); p.got=_v('rf-got'); p.status=_v('rf-status');
       if(!p.model){ msg.textContent='Выберите машину.'; return; }
       if(!p.start||!p.end){ msg.textContent='Укажите даты начала и конца.'; return; }
