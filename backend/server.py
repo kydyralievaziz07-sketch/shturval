@@ -754,6 +754,7 @@ def rent_build(period=None, company=None):
     def fr(r):
         return {"id": r.get("id", ""), "model": r.get("model", ""), "renter": r.get("renter", ""),
                 "phone": r.get("phone", ""), "start": r.get("start", ""), "end": r.get("end", ""),
+                "return_time": r.get("return_time", ""),
                 "days": str(r["_days"] or ""), "price": _rmoney(_rnum(r.get("price"))) if _rnum(r.get("price")) else "",
                 "sum": _rmoney(r["_sum"]), "got": _rmoney(r["_got"]) if r.get("got") not in (None, "") else "",
                 "debt": _rmoney(r["_debt"]), "status": r.get("status", ""), "note": r.get("note", ""),
@@ -821,12 +822,13 @@ def rent_apply(action, p, company=None, user=None):
     if action == "add_rental":
         d["rentals"].append(stamp_new({"id": _rent_newid(d, "RN"), "ts": now_ms,
             "model": p.get("model", ""), "renter": p.get("renter", ""), "phone": p.get("phone", ""),
-            "start": p.get("start", ""), "end": p.get("end", ""), "price": p.get("price", ""),
+            "start": p.get("start", ""), "end": p.get("end", ""), "return_time": p.get("return_time", ""),
+            "price": p.get("price", ""),
             "got": p.get("got", ""), "status": (p.get("status") or "Активна"), "note": p.get("note", "")}))
     elif action == "edit_rental":
         r = find(d["rentals"], p.get("id"))
         if r:
-            for f in ("model", "renter", "phone", "start", "end", "price", "got", "status", "note"):
+            for f in ("model", "renter", "phone", "start", "end", "return_time", "price", "got", "status", "note"):
                 if f in p:
                     r[f] = p[f]
             stamp_edit(r)
