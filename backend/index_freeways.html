@@ -1747,7 +1747,7 @@
     return canSee(tab);
   }
   // временно скрытые модули — прячем ИКОНКУ у тех, кто видит их только через «all».
-  const HIDDEN_MODULES=[];
+  const HIDDEN_MODULES=['crm','mkt','shop','team','ai'];
   function _explicitModule(key){
     if(key==='rent') return (USER.sections||[]).some(function(s){ return s==='rent'||s.indexOf('rent_')===0; });
     return (USER.sections||[]).indexOf(key)>=0;
