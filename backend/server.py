@@ -6922,6 +6922,64 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             self.send_response(200); self.send_header("Content-Type", "text/plain")
             self.end_headers(); self.wfile.write(b"EVENT_RECEIVED"); return
+        if self.path == "/api/tg/sendreport":
+            user = self._user()
+            if not user:
+                return self._send(401, {"error": "Требуется вход"})
+            body_obj = json.loads(req_body or "{}")
+            report = body_obj.get("report", {})
+            chat_id = CFG.get("TG_REPORT_GROUP", "")
+            bot_token = CFG.get("TG_BOT_TOKEN", "")
+            if not chat_id or not bot_token:
+                return self._send(400, {"error": "TG_REPORT_GROUP или TG_BOT_TOKEN не настроены"})
+            # Форматируем отчёт
+            date_str = report.get("date", "")
+            lines = ["📋 *Отчёт Bizmart за %s*" % date_str, ""]
+            kassas = report.get("kassas", [])
+            for k in kassas:
+                name = k.get("name", "Касса")
+                obshiy = k.get("obshiy", 0)
+                ostatok = k.get("ostatok", 0)
+                lines.append("🏦 *%s*" % name)
+                kfields = [
+                    ("Общий", k.get("obshiy",0)), ("Мбанк пер", k.get("mbank",0)),
+                    ("Оптима 1", k.get("optima1",0)), ("Оптима 2", k.get("optima2",0)),
+                    ("ЗЕРО", k.get("zero",0)), ("М бизнес", k.get("m_biz",0)),
+                    ("Cash2u", k.get("cash2u",0)), ("Онл.пер", k.get("onl_per",0)),
+                    ("Онл.нал", k.get("onl_nal",0)), ("PAIDA опти", k.get("payda",0)),
+                    ("М+", k.get("m_plus",0)), ("Безналичный", k.get("beznal",0)),
+                    ("Остаток", k.get("ostatok",0)),
+                ]
+                for label, val in kfields:
+                    if val:
+                        lines.append("  %s: %s" % (label, "{:,.0f}".format(float(val)).replace(",", " ")))
+                lines.append("")
+            def _section(rows, title, emoji="💸"):
+                if not rows: return
+                total = sum(float(r.get("sum",0)) for r in rows)
+                lines.append("%s *%s* — итого: %s" % (emoji, title, "{:,.0f}".format(total).replace(",", " ")))
+                for r in rows:
+                    nm = r.get("name","")
+                    sm = r.get("sum",0)
+                    if nm or sm:
+                        lines.append("  %s: %s" % (nm or "—", "{:,.0f}".format(float(sm)).replace(",", " ")))
+                lines.append("")
+            _section(report.get("rashod_rows",[]), "Расходдор", "💸")
+            _section(report.get("avans_rows",[]), "Авансы", "💰")
+            _section(report.get("oplata_rows",[]), "Оплата за товар", "🛒")
+            _section(report.get("fond_rows",[]), "Фонд", "🏦")
+            _section(report.get("izyatie_rows",[]), "Изъятие", "📤")
+            text = "\n".join(lines)
+            import urllib.request as _ur
+            tg_url = "https://api.telegram.org/bot%s/sendMessage" % bot_token
+            tg_payload = json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}).encode()
+            req2 = _ur.Request(tg_url, data=tg_payload, headers={"Content-Type":"application/json"}, method="POST")
+            try:
+                resp2 = _ur.urlopen(req2, timeout=10)
+                resp_body = json.loads(resp2.read())
+                return self._send(200, {"ok": True, "tg": resp_body})
+            except Exception as ex:
+                return self._send(500, {"error": str(ex)})
         if self.path.startswith("/api/tg/webhook"):
             try:
                 length = int(self.headers.get("Content-Length", 0))

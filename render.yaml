@@ -102,6 +102,10 @@ services:
       # --- Telegram ---
       - key: TG_BOT_TOKEN
         sync: false
+      - key: TG_WEBHOOK_SECRET
+        sync: false
+      - key: TG_REPORT_GROUP
+        sync: false
 
       # --- AMO CRM (отключён, но объявлен чтобы Render не стёр если вернём) ---
       - key: AMO_SUBDOMAIN

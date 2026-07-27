@@ -721,6 +721,7 @@
           <input type="date" id="rpt-date-inp" style="background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:13px" onchange="rptLoad()">
           <span id="rpt-save-msg" style="font-size:12px;color:var(--muted);margin-left:4px"></span>
           <button class="btn" style="margin-left:auto;padding:7px 16px" onclick="rptSave()">💾 Сохранить</button>
+          <button class="btn ghost" style="padding:7px 14px;font-size:13px" onclick="rptSendTg()">📤 Telegram</button>
         </div>
         <div id="rpt-body"><div style="color:var(--muted);padding:20px">Загрузка…</div></div>
       </div>
@@ -8683,6 +8684,19 @@ function rptSave(){
   }).catch(function(){if(msg) msg.textContent='Ошибка';});
 }
 function _rptAutoSave(){clearTimeout(_rptTimer);_rptTimer=setTimeout(rptSave,2500);}
+
+function rptSendTg(){
+  if(!_rptData){alert('Нет данных для отправки');return;}
+  var btn=event&&event.target; if(btn){btn.disabled=true;btn.textContent='Отправляю…';}
+  apiFetch('/api/tg/sendreport',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({report:_rptData})},ONEC_BASE).then(function(r){
+    if(btn){btn.disabled=false;btn.textContent='📤 Telegram';}
+    if(r&&r.ok) alert('✅ Отчёт отправлен в Telegram!');
+    else alert('Ошибка: '+(r&&r.error||'Неизвестная ошибка'));
+  }).catch(function(e){
+    if(btn){btn.disabled=false;btn.textContent='📤 Telegram';}
+    alert('Ошибка отправки: '+e);
+  });
+}
 
 function _rptSumKassas(fk){var s=0;if(_rptData)_rptData.kassas.forEach(function(k){s+=_rptN(k[fk]);});return s;}
 function _rptRashodTotal(){var s=0;if(_rptData)(_rptData.rashod_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
