@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.51.0<br>«Ежедневный отчёт»: внизу — «Контроль потерь» (товары по 0/1 сом или со скидкой ≥80%), считается сам из чеков 1С, только просмотр
+      Штурвал v4.52.0<br>«Итого по всем кассам»: «Остаток» и «Изъятие» теперь пишутся руками прямо там, убраны из списка минусов
   </aside>
 
   <!-- MAIN -->
@@ -8679,7 +8679,7 @@ function _rptRuToIso(s){if(!s)return '';var p=s.split('.');return p.length<3?s:p
 function _rptN(v){return parseFloat(String(v||'0').replace(/[\s ]/g,'').replace(',','.'))||0;}
 function _rptFmt(n){return n?String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g,' '):'0';}
 function _rptNewKassa(num){var o={id:'k'+Date.now()+'_'+num,name:num+'-Касса',status:true};RPT_FIELDS.forEach(function(f){o[f.k]=0;});return o;}
-function _rptEmpty(){return {date:_rptIsoToRu(_rptTodayIso()),kassas:[_rptNewKassa(1),_rptNewKassa(2),_rptNewKassa(3)],rashod_rows:[],avans_rows:[],oplata_rows:[],fond_rows:[],izyatie_rows:[],mbank_total:0,schetchik:0,n_status:false};}
+function _rptEmpty(){return {date:_rptIsoToRu(_rptTodayIso()),kassas:[_rptNewKassa(1),_rptNewKassa(2),_rptNewKassa(3)],rashod_rows:[],avans_rows:[],oplata_rows:[],fond_rows:[],izyatie_rows:[],mbank_total:0,schetchik:0,n_status:false,ostatok_total:0,izyatie_total:0};}
 // Наложить авто-суммы способов оплаты (из auto_pay, посчитано бэкендом из чеков 1С) на кассы —
 // по номеру в названии кассы ("1-Касса", "Касса №1" → 1).
 function _rptApplyAuto(d){
@@ -8882,9 +8882,10 @@ function rptRender(){
   h+='<div class="rpt-field"><span>Авансы (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptAvansTotal())+'</span></div>';
   h+='<div class="rpt-field"><span>Оплата за товар (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptOplataTotal())+'</span></div>';
   h+='<div class="rpt-field"><span>Фонд (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptFondTotal())+'</span></div>';
-  h+='<div class="rpt-field"><span>Изъятие (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptIzyatieTotal())+'</span></div>';
   h+='</div>';
   h+='<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">';
+  h+='<div class="rpt-field"><span>Остаток</span><input type="number" inputmode="numeric" value="'+(_rptN(d.ostatok_total)||'')+'" placeholder="0" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" oninput="_rptData.ostatok_total=_rptN(this.value);_rptAutoSave()"></div>';
+  h+='<div class="rpt-field"><span>Изъятие</span><input type="number" inputmode="numeric" value="'+(_rptN(d.izyatie_total)||'')+'" placeholder="0" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" oninput="_rptData.izyatie_total=_rptN(this.value);_rptAutoSave()"></div>';
   h+='<div class="rpt-field"><span>Мбанк</span><input type="number" inputmode="numeric" value="'+(_rptN(d.mbank_total)||'')+'" placeholder="0" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" oninput="_rptData.mbank_total=_rptN(this.value);_rptAutoSave()"></div>';
   h+='<div class="rpt-field"><span>Счётчик</span><input type="number" inputmode="numeric" value="'+(_rptN(d.schetchik)||'')+'" placeholder="0" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" oninput="_rptData.schetchik=_rptN(this.value);_rptAutoSave()"></div>';
   h+='<div class="rpt-field"><span>Н</span><label style="cursor:pointer;display:flex;align-items:center;gap:4px"><input type="checkbox" '+(d.n_status?'checked':'')+' onchange="_rptData.n_status=this.checked;_rptAutoSave()"> ✅</label></div>';
@@ -8921,7 +8922,6 @@ function rptRefreshSummary(){
   h+='<div class="rpt-field"><span>Авансы (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptAvansTotal())+'</span></div>';
   h+='<div class="rpt-field"><span>Оплата за товар (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptOplataTotal())+'</span></div>';
   h+='<div class="rpt-field"><span>Фонд (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptFondTotal())+'</span></div>';
-  h+='<div class="rpt-field"><span>Изъятие (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptIzyatieTotal())+'</span></div>';
   el.innerHTML=h;
 }
 
