@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.50.0<br>Авто Рент больше не зависает на «Загружаю…»: таймаут + авто-повтор при перезапуске сервера/сбое сети
+      Штурвал v4.51.0<br>«Ежедневный отчёт»: внизу — «Контроль потерь» (товары по 0/1 сом или со скидкой ≥80%), считается сам из чеков 1С, только просмотр
   </aside>
 
   <!-- MAIN -->
@@ -8717,6 +8717,7 @@ function rptRefreshAuto(){
   apiFetch('/api/dailyrep?date='+encodeURIComponent(dateRu),{},ONEC_BASE).then(function(r){return r.json();}).then(function(d){
     if(!_rptData||!d) return;
     _rptData.auto_pay=d.auto_pay||{};
+    _rptData.loss_items=d.loss_items||[];
     _rptApplyAuto(_rptData);
     rptRender();
     rptSave();
@@ -8731,6 +8732,7 @@ function rptLoad(){
     _rptData=(d&&d.date)?d:_rptEmpty();
     _rptData.date=dateRu;
     _rptData.auto_pay=(d&&d.auto_pay)||{};
+    _rptData.loss_items=(d&&d.loss_items)||[];
     _rptApplyAuto(_rptData);
     rptRender();
   }).catch(function(){_rptData=_rptEmpty(); _rptData.date=_rptIsoToRu(inp?inp.value:_rptTodayIso()); rptRender();});
@@ -8887,6 +8889,25 @@ function rptRender(){
   h+='<div class="rpt-field"><span>Счётчик</span><input type="number" inputmode="numeric" value="'+(_rptN(d.schetchik)||'')+'" placeholder="0" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" oninput="_rptData.schetchik=_rptN(this.value);_rptAutoSave()"></div>';
   h+='<div class="rpt-field"><span>Н</span><label style="cursor:pointer;display:flex;align-items:center;gap:4px"><input type="checkbox" '+(d.n_status?'checked':'')+' onchange="_rptData.n_status=this.checked;_rptAutoSave()"> ✅</label></div>';
   h+='</div></div>';
+
+  // Контроль потерь: считается сам из чеков 1С (0/1 сом за штуку или скидка ≥80%).
+  // Только просмотр — ни ввода, ни удаления строк тут нет, изменить нельзя.
+  var loss=d.loss_items||[];
+  var lossKindLabel={zero:'0 сом', one:'1 сом', big:'скидка ≥80%'};
+  h+='<div class="rpt-kassa"><div class="rpt-section-head"><span>⚠️ Контроль потерь (0/1 сом, скидка ≥80%)</span></div>';
+  if(!loss.length){
+    h+='<div style="color:var(--muted);font-size:13px;padding:6px 0">Подозрительных продаж за день нет.</div>';
+  } else {
+    var lossTotal=loss.reduce(function(s,r){return s+(r.cost||0);},0);
+    h+='<div class="rpt-field" style="font-weight:700"><span>Списано по себестоимости</span><span style="color:var(--red)">'+_rptFmt(lossTotal)+'</span></div>';
+    loss.forEach(function(r){
+      h+='<div class="rpt-field" style="align-items:flex-start">';
+      h+='<span>'+esc(r.name)+' ×'+r.qty+' <span style="font-size:11px;color:var(--muted)">('+(lossKindLabel[r.kind]||r.kind)+', '+esc(r.kassa)+')</span></span>';
+      h+='<span style="text-align:right;white-space:nowrap"><span style="color:var(--muted);text-decoration:line-through;font-size:12px">'+_rptFmt(r.price)+'</span> → '+_rptFmt(r.sale)+' <span style="font-size:11px;color:var(--red)">(себест. '+_rptFmt(r.cost)+')</span></span>';
+      h+='</div>';
+    });
+  }
+  h+='</div>';
 
   document.getElementById('rpt-body').innerHTML=h;
 }

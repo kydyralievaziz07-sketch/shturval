@@ -4566,7 +4566,7 @@ def build_sales(from_ts=None, to_ts=None, date_label=None):
     sales_count = 0; gross = 0.0; net = 0.0; profit = 0.0
     returns_count = 0; returns_sum = 0.0
     by_pay = {}; by_seller = {}; by_product = {}; by_seller_pay = {}
-    rows = []
+    rows = []; loss_items = []
     for x in receipts:
         total = _num(x.get("receiptTotal"))
         is_return = x.get("operationType") == "Возврат" or total < 0
@@ -4578,6 +4578,28 @@ def build_sales(from_ts=None, to_ts=None, date_label=None):
             p["qty"] += _num(it.get("qty"))
             p["sum"] += _num(it.get("saleAmount"))
             p["profit"] += _num(it.get("profit"))
+            # контроль потерь — только продажи (возвраты не считаем): 0/1 сом за штуку
+            # или отдано за ≤20% прайсовой суммы строки (= скидка ≥80%).
+            if not is_return:
+                q = _num(it.get("qty")) or 1
+                sa = _num(it.get("saleAmount"))
+                pline = _num(it.get("price")) * q
+                unit = (sa / q) if q else sa
+                kind = None
+                if unit < 0.5:
+                    kind = "zero"
+                elif unit < 1.5:
+                    kind = "one"
+                elif pline > 0 and sa / pline <= 0.2:
+                    kind = "big"
+                if kind:
+                    loss_items.append({
+                        "name": nm, "qty": int(round(q)), "price": round(pline),
+                        "sale": round(sa), "cost": round(_num(it.get("costPrice"))),
+                        "profit": round(_num(it.get("profit"))),
+                        "disc": (round((1 - sa / pline) * 100) if pline > 0 else 0),
+                        "kassa": (x.get("seller") or "—").strip() or "—", "kind": kind,
+                    })
         if is_return:
             returns_count += 1; returns_sum += -total
         else:
@@ -4614,6 +4636,7 @@ def build_sales(from_ts=None, to_ts=None, date_label=None):
         "returns_count": returns_count, "returns_sum": round(returns_sum),
         "by_pay": pay_list, "by_seller": seller_list, "top_products": top,
         "by_seller_pay": {k: {n: round(v) for n, v in v2.items()} for k, v2 in by_seller_pay.items()},
+        "loss_items": sorted(loss_items, key=lambda r: -r["cost"])[:200],
         "receipts": rows[:80], "total_receipts": len(receipts),
         "updated": time.strftime("%H:%M:%S"),
     }
@@ -4735,20 +4758,22 @@ def _rpt_iso_from_ru(date_ru):
     d, m, y = parts
     return "%s-%s-%s" % (y, m, d)
 
-def rpt_auto_pay_for_date(date_ru):
-    """Автосчёт способов оплаты по кассам за конкретный день (ДД.ММ.ГГГГ). Сегодня — живьём
-    из 1С (кэш 30с внутри sales_day/build_sales); прошлые дни — из сохранённого в Supabase
-    детального снимка (sales_daily.detail.by_seller_pay), если он там есть."""
+def rpt_auto_data_for_date(date_ru):
+    """Автосчёт для дневного отчёта за конкретный день (ДД.ММ.ГГГГ): способы оплаты по кассам
+    + подозрительные позиции (контроль потерь — 0/1 сом, скидка ≥80%). Сегодня — живьём из 1С
+    (кэш 30с внутри sales_day/build_sales); прошлые дни — из сохранённого в Supabase детального
+    снимка (sales_daily.detail), если он там есть."""
     iso = _rpt_iso_from_ru(date_ru)
     if not iso:
-        return {}
+        return {"pay": {}, "loss_items": []}
     try:
         s = sales_day(iso)
     except Exception:
-        return {}
+        return {"pay": {}, "loss_items": []}
     if not isinstance(s, dict):
-        return {}
-    return _rpt_auto_pay(s.get("by_seller_pay", {}))
+        return {"pay": {}, "loss_items": []}
+    return {"pay": _rpt_auto_pay(s.get("by_seller_pay", {})),
+            "loss_items": s.get("loss_items", [])}
 
 def sales_history(days=14):
     """История продаж по дням из Supabase (последние N дней, по возрастанию даты)."""
@@ -8233,9 +8258,11 @@ class Handler(BaseHTTPRequestHandler):
                     val = None
             val = val or {}
             try:
-                val["auto_pay"] = rpt_auto_pay_for_date(date_ru)
+                auto = rpt_auto_data_for_date(date_ru)
             except Exception:
-                val["auto_pay"] = {}
+                auto = {"pay": {}, "loss_items": []}
+            val["auto_pay"] = auto.get("pay", {})
+            val["loss_items"] = auto.get("loss_items", [])
             return self._send(200, val)
         if self.path.startswith("/api/assortment"):
             from urllib.parse import urlparse, parse_qs
