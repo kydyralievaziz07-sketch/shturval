@@ -8588,7 +8588,6 @@ const RPT_FIELDS=[
   {k:'mbank',   l:'Мбанк пер'},
   {k:'optima1', l:'Оптима 1'},
   {k:'optima2', l:'Оптима 2'},
-  {k:'rashod',  l:'Расход'},
   {k:'zero',    l:'ЗЕРО'},
   {k:'m_biz',   l:'М бизнес'},
   {k:'cash2u',  l:'Cash2u'},
@@ -8597,7 +8596,6 @@ const RPT_FIELDS=[
   {k:'payda',   l:'PAIDA опти'},
   {k:'m_plus',  l:'М+'},
   {k:'beznal',  l:'Безналичный'},
-  {k:'izyata',  l:'Изъята'},
   {k:'ostatok', l:'Остаток'},
 ];
 function _rptTodayIso(){var d=new Date(),m=d.getMonth()+1,dy=d.getDate();return d.getFullYear()+'-'+(m<10?'0'+m:m)+'-'+(dy<10?'0'+dy:dy);}
@@ -8606,7 +8604,7 @@ function _rptRuToIso(s){if(!s)return '';var p=s.split('.');return p.length<3?s:p
 function _rptN(v){return parseFloat(String(v||'0').replace(/[\s ]/g,'').replace(',','.'))||0;}
 function _rptFmt(n){return n?String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g,' '):'0';}
 function _rptNewKassa(num){var o={id:'k'+Date.now()+'_'+num,name:num+'-Касса',status:true};RPT_FIELDS.forEach(function(f){o[f.k]=0;});return o;}
-function _rptEmpty(){return {date:_rptIsoToRu(_rptTodayIso()),kassas:[_rptNewKassa(1)],rashod_rows:[],avans_rows:[],oplata_rows:[],fond_rows:[],mbank_total:0,schetchik:0,n_status:false};}
+function _rptEmpty(){return {date:_rptIsoToRu(_rptTodayIso()),kassas:[_rptNewKassa(1),_rptNewKassa(2),_rptNewKassa(3)],rashod_rows:[],avans_rows:[],oplata_rows:[],fond_rows:[],izyatie_rows:[],mbank_total:0,schetchik:0,n_status:false};}
 
 function rptInit(){
   var inp=document.getElementById('rpt-date-inp');
@@ -8636,6 +8634,7 @@ function _rptRashodTotal(){var s=0;if(_rptData)(_rptData.rashod_rows||[]).forEac
 function _rptAvansTotal(){var s=0;if(_rptData)(_rptData.avans_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
 function _rptOplataTotal(){var s=0;if(_rptData)(_rptData.oplata_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
 function _rptFondTotal(){var s=0;if(_rptData)(_rptData.fond_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
+function _rptIzyatieTotal(){var s=0;if(_rptData)(_rptData.izyatie_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
 
 function rptRender(){
   var d=_rptData; if(!d){document.getElementById('rpt-body').innerHTML='';return;}
@@ -8719,6 +8718,21 @@ function rptRender(){
   h+='<div class="rpt-total" id="rpt-fond-total">('+_rptFmt(_rptFondTotal())+')</div>';
   h+='</div>';
 
+  // Изъятие
+  h+='<div class="rpt-kassa">';
+  h+='<div class="rpt-section-head"><span>📍 Изъятие 📍</span></div>';
+  (d.izyatie_rows||[]).forEach(function(r){
+    h+='<div class="rpt-field">';
+    h+='<input class="rpt-field-name" value="'+esc(r.name)+'" placeholder="название" oninput="rptIzyatieName(\''+r.id+'\',this.value)">';
+    h+='<div style="display:flex;align-items:center;gap:6px">';
+    h+='<input type="number" inputmode="numeric" style="width:100px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" value="'+(_rptN(r.sum)||'')+'" placeholder="0" oninput="rptIzyatieVal(\''+r.id+'\',this.value)">';
+    h+='<button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:15px;padding:0 2px" onclick="rptDelIzyatie(\''+r.id+'\')">✕</button>';
+    h+='</div></div>';
+  });
+  h+='<button class="btn ghost" style="margin-top:8px;font-size:12px" onclick="rptAddIzyatie()">➕ Добавить изъятие</button>';
+  h+='<div class="rpt-total" id="rpt-izyatie-total">('+_rptFmt(_rptIzyatieTotal())+')</div>';
+  h+='</div>';
+
   // Итого (авто-сумма по кассам)
   h+='<div class="rpt-kassa"><div class="rpt-section-head"><span>Итого по всем кассам</span></div>';
   h+='<div id="rpt-summary">';
@@ -8727,6 +8741,7 @@ function rptRender(){
   h+='<div class="rpt-field"><span>Авансы (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptAvansTotal())+'</span></div>';
   h+='<div class="rpt-field"><span>Оплата за товар (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptOplataTotal())+'</span></div>';
   h+='<div class="rpt-field"><span>Фонд (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptFondTotal())+'</span></div>';
+  h+='<div class="rpt-field"><span>Изъятие (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptIzyatieTotal())+'</span></div>';
   h+='</div>';
   h+='<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">';
   h+='<div class="rpt-field"><span>Мбанк</span><input type="number" inputmode="numeric" value="'+(_rptN(d.mbank_total)||'')+'" placeholder="0" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" oninput="_rptData.mbank_total=_rptN(this.value);_rptAutoSave()"></div>';
@@ -8745,6 +8760,7 @@ function rptRefreshSummary(){
   h+='<div class="rpt-field"><span>Авансы (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptAvansTotal())+'</span></div>';
   h+='<div class="rpt-field"><span>Оплата за товар (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptOplataTotal())+'</span></div>';
   h+='<div class="rpt-field"><span>Фонд (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptFondTotal())+'</span></div>';
+  h+='<div class="rpt-field"><span>Изъятие (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptIzyatieTotal())+'</span></div>';
   el.innerHTML=h;
 }
 
@@ -8753,7 +8769,7 @@ function rptKassaName(id,v){var k=(_rptData.kassas||[]).find(function(x){return 
 function rptKassaStatus(id,v){var k=(_rptData.kassas||[]).find(function(x){return x.id===id;});if(k)k.status=v;_rptAutoSave();}
 function rptKassaVal(id,fk,v){var k=(_rptData.kassas||[]).find(function(x){return x.id===id;});if(k)k[fk]=_rptN(v);rptRefreshSummary();_rptAutoSave();}
 function rptAddKassa(){_rptData.kassas.push(_rptNewKassa(_rptData.kassas.length+1));rptRender();_rptAutoSave();}
-function rptDelKassa(id){if(_rptData.kassas.length<=1)return;_rptData.kassas=_rptData.kassas.filter(function(x){return x.id!==id;});rptRender();_rptAutoSave();}
+function rptDelKassa(id){if(_rptData.kassas.length<=3)return;_rptData.kassas=_rptData.kassas.filter(function(x){return x.id!==id;});rptRender();_rptAutoSave();}
 // Расходы
 function rptAddRashod(){_rptData.rashod_rows.push({id:'r'+Date.now(),name:'',sum:0});rptRender();}
 function rptDelRashod(id){_rptData.rashod_rows=_rptData.rashod_rows.filter(function(x){return x.id!==id;});rptRender();_rptAutoSave();}
@@ -8774,6 +8790,11 @@ function rptAddFond(){if(!_rptData.fond_rows)_rptData.fond_rows=[];_rptData.fond
 function rptDelFond(id){_rptData.fond_rows=(_rptData.fond_rows||[]).filter(function(x){return x.id!==id;});rptRender();_rptAutoSave();}
 function rptFondName(id,v){var r=(_rptData.fond_rows||[]).find(function(x){return x.id===id;});if(r)r.name=v;_rptAutoSave();}
 function rptFondVal(id,v){var r=(_rptData.fond_rows||[]).find(function(x){return x.id===id;});if(r)r.sum=_rptN(v);var el=document.getElementById('rpt-fond-total');if(el)el.textContent='('+_rptFmt(_rptFondTotal())+')';rptRefreshSummary();_rptAutoSave();}
+// Изъятие
+function rptAddIzyatie(){if(!_rptData.izyatie_rows)_rptData.izyatie_rows=[];_rptData.izyatie_rows.push({id:'i'+Date.now(),name:'',sum:0});rptRender();}
+function rptDelIzyatie(id){_rptData.izyatie_rows=(_rptData.izyatie_rows||[]).filter(function(x){return x.id!==id;});rptRender();_rptAutoSave();}
+function rptIzyatieName(id,v){var r=(_rptData.izyatie_rows||[]).find(function(x){return x.id===id;});if(r)r.name=v;_rptAutoSave();}
+function rptIzyatieVal(id,v){var r=(_rptData.izyatie_rows||[]).find(function(x){return x.id===id;});if(r)r.sum=_rptN(v);var el=document.getElementById('rpt-izyatie-total');if(el)el.textContent='('+_rptFmt(_rptIzyatieTotal())+')';rptRefreshSummary();_rptAutoSave();}
 </script>
 <!-- RENT_BLOCK_END -->
 </body>
