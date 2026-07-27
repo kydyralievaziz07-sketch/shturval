@@ -8606,7 +8606,7 @@ function _rptRuToIso(s){if(!s)return '';var p=s.split('.');return p.length<3?s:p
 function _rptN(v){return parseFloat(String(v||'0').replace(/[\s ]/g,'').replace(',','.'))||0;}
 function _rptFmt(n){return n?String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g,' '):'0';}
 function _rptNewKassa(num){var o={id:'k'+Date.now()+'_'+num,name:num+'-Касса',status:true};RPT_FIELDS.forEach(function(f){o[f.k]=0;});return o;}
-function _rptEmpty(){return {date:_rptIsoToRu(_rptTodayIso()),kassas:[_rptNewKassa(1)],rashod_rows:[],avans_rows:[],mbank_total:0,schetchik:0,n_status:false};}
+function _rptEmpty(){return {date:_rptIsoToRu(_rptTodayIso()),kassas:[_rptNewKassa(1)],rashod_rows:[],avans_rows:[],oplata_rows:[],fond_rows:[],mbank_total:0,schetchik:0,n_status:false};}
 
 function rptInit(){
   var inp=document.getElementById('rpt-date-inp');
@@ -8634,6 +8634,8 @@ function _rptAutoSave(){clearTimeout(_rptTimer);_rptTimer=setTimeout(rptSave,250
 function _rptSumKassas(fk){var s=0;if(_rptData)_rptData.kassas.forEach(function(k){s+=_rptN(k[fk]);});return s;}
 function _rptRashodTotal(){var s=0;if(_rptData)(_rptData.rashod_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
 function _rptAvansTotal(){var s=0;if(_rptData)(_rptData.avans_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
+function _rptOplataTotal(){var s=0;if(_rptData)(_rptData.oplata_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
+function _rptFondTotal(){var s=0;if(_rptData)(_rptData.fond_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
 
 function rptRender(){
   var d=_rptData; if(!d){document.getElementById('rpt-body').innerHTML='';return;}
@@ -8687,12 +8689,44 @@ function rptRender(){
   h+='<div class="rpt-total" id="rpt-avans-total">('+_rptFmt(_rptAvansTotal())+')</div>';
   h+='</div>';
 
+  // Оплата за товар
+  h+='<div class="rpt-kassa">';
+  h+='<div class="rpt-section-head"><span>📍 Оплата за товар 📍</span></div>';
+  (d.oplata_rows||[]).forEach(function(r){
+    h+='<div class="rpt-field">';
+    h+='<input class="rpt-field-name" value="'+esc(r.name)+'" placeholder="название" oninput="rptOplataName(\''+r.id+'\',this.value)">';
+    h+='<div style="display:flex;align-items:center;gap:6px">';
+    h+='<input type="number" inputmode="numeric" style="width:100px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" value="'+(_rptN(r.sum)||'')+'" placeholder="0" oninput="rptOplataVal(\''+r.id+'\',this.value)">';
+    h+='<button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:15px;padding:0 2px" onclick="rptDelOplata(\''+r.id+'\')">✕</button>';
+    h+='</div></div>';
+  });
+  h+='<button class="btn ghost" style="margin-top:8px;font-size:12px" onclick="rptAddOplata()">➕ Добавить оплату</button>';
+  h+='<div class="rpt-total" id="rpt-oplata-total">('+_rptFmt(_rptOplataTotal())+')</div>';
+  h+='</div>';
+
+  // Фонд
+  h+='<div class="rpt-kassa">';
+  h+='<div class="rpt-section-head"><span>📍 Фонд 📍</span></div>';
+  (d.fond_rows||[]).forEach(function(r){
+    h+='<div class="rpt-field">';
+    h+='<input class="rpt-field-name" value="'+esc(r.name)+'" placeholder="название" oninput="rptFondName(\''+r.id+'\',this.value)">';
+    h+='<div style="display:flex;align-items:center;gap:6px">';
+    h+='<input type="number" inputmode="numeric" style="width:100px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" value="'+(_rptN(r.sum)||'')+'" placeholder="0" oninput="rptFondVal(\''+r.id+'\',this.value)">';
+    h+='<button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:15px;padding:0 2px" onclick="rptDelFond(\''+r.id+'\')">✕</button>';
+    h+='</div></div>';
+  });
+  h+='<button class="btn ghost" style="margin-top:8px;font-size:12px" onclick="rptAddFond()">➕ Добавить фонд</button>';
+  h+='<div class="rpt-total" id="rpt-fond-total">('+_rptFmt(_rptFondTotal())+')</div>';
+  h+='</div>';
+
   // Итого (авто-сумма по кассам)
   h+='<div class="rpt-kassa"><div class="rpt-section-head"><span>Итого по всем кассам</span></div>';
   h+='<div id="rpt-summary">';
   RPT_FIELDS.forEach(function(f){var v=_rptSumKassas(f.k);h+='<div class="rpt-field"><span>'+esc(f.l)+'</span><span style="font-weight:'+(f.k==='obshiy'?'700':'400')+'">'+_rptFmt(v)+'</span></div>';});
   h+='<div class="rpt-field" style="border-top:1px solid var(--line);margin-top:4px;padding-top:4px"><span>Расходдор (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptRashodTotal())+'</span></div>';
   h+='<div class="rpt-field"><span>Авансы (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptAvansTotal())+'</span></div>';
+  h+='<div class="rpt-field"><span>Оплата за товар (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptOplataTotal())+'</span></div>';
+  h+='<div class="rpt-field"><span>Фонд (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptFondTotal())+'</span></div>';
   h+='</div>';
   h+='<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">';
   h+='<div class="rpt-field"><span>Мбанк</span><input type="number" inputmode="numeric" value="'+(_rptN(d.mbank_total)||'')+'" placeholder="0" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" oninput="_rptData.mbank_total=_rptN(this.value);_rptAutoSave()"></div>';
@@ -8709,6 +8743,8 @@ function rptRefreshSummary(){
   RPT_FIELDS.forEach(function(f){var v=_rptSumKassas(f.k);h+='<div class="rpt-field"><span>'+esc(f.l)+'</span><span style="font-weight:'+(f.k==='obshiy'?'700':'400')+'">'+_rptFmt(v)+'</span></div>';});
   h+='<div class="rpt-field" style="border-top:1px solid var(--line);margin-top:4px;padding-top:4px"><span>Расходдор (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptRashodTotal())+'</span></div>';
   h+='<div class="rpt-field"><span>Авансы (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptAvansTotal())+'</span></div>';
+  h+='<div class="rpt-field"><span>Оплата за товар (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptOplataTotal())+'</span></div>';
+  h+='<div class="rpt-field"><span>Фонд (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptFondTotal())+'</span></div>';
   el.innerHTML=h;
 }
 
@@ -8728,6 +8764,16 @@ function rptAddAvans(){_rptData.avans_rows.push({id:'a'+Date.now(),name:'',sum:0
 function rptDelAvans(id){_rptData.avans_rows=_rptData.avans_rows.filter(function(x){return x.id!==id;});rptRender();_rptAutoSave();}
 function rptAvansName(id,v){var r=(_rptData.avans_rows||[]).find(function(x){return x.id===id;});if(r)r.name=v;_rptAutoSave();}
 function rptAvansVal(id,v){var r=(_rptData.avans_rows||[]).find(function(x){return x.id===id;});if(r)r.sum=_rptN(v);var el=document.getElementById('rpt-avans-total');if(el)el.textContent='('+_rptFmt(_rptAvansTotal())+')';rptRefreshSummary();_rptAutoSave();}
+// Оплата за товар
+function rptAddOplata(){if(!_rptData.oplata_rows)_rptData.oplata_rows=[];_rptData.oplata_rows.push({id:'o'+Date.now(),name:'',sum:0});rptRender();}
+function rptDelOplata(id){_rptData.oplata_rows=(_rptData.oplata_rows||[]).filter(function(x){return x.id!==id;});rptRender();_rptAutoSave();}
+function rptOplataName(id,v){var r=(_rptData.oplata_rows||[]).find(function(x){return x.id===id;});if(r)r.name=v;_rptAutoSave();}
+function rptOplataVal(id,v){var r=(_rptData.oplata_rows||[]).find(function(x){return x.id===id;});if(r)r.sum=_rptN(v);var el=document.getElementById('rpt-oplata-total');if(el)el.textContent='('+_rptFmt(_rptOplataTotal())+')';rptRefreshSummary();_rptAutoSave();}
+// Фонд
+function rptAddFond(){if(!_rptData.fond_rows)_rptData.fond_rows=[];_rptData.fond_rows.push({id:'f'+Date.now(),name:'',sum:0});rptRender();}
+function rptDelFond(id){_rptData.fond_rows=(_rptData.fond_rows||[]).filter(function(x){return x.id!==id;});rptRender();_rptAutoSave();}
+function rptFondName(id,v){var r=(_rptData.fond_rows||[]).find(function(x){return x.id===id;});if(r)r.name=v;_rptAutoSave();}
+function rptFondVal(id,v){var r=(_rptData.fond_rows||[]).find(function(x){return x.id===id;});if(r)r.sum=_rptN(v);var el=document.getElementById('rpt-fond-total');if(el)el.textContent='('+_rptFmt(_rptFondTotal())+')';rptRefreshSummary();_rptAutoSave();}
 </script>
 <!-- RENT_BLOCK_END -->
 </body>
