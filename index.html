@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.54.0<br>В кассах: «Общий» переименован в «Наличные», добавлен настоящий «Общий» — авто-итог по всей кассе (сумма всех способов оплаты)
+      Штурвал v4.55.0<br>«Ежедневный отчёт»: кнопка «Сохранить» убрана — «📤 Telegram» теперь сама сохраняет отчёт перед отправкой
   </aside>
 
   <!-- MAIN -->
@@ -720,8 +720,7 @@
           <h2 style="margin:0;font-size:18px">📋 Ежедневный отчёт</h2>
           <input type="date" id="rpt-date-inp" style="background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:13px" onchange="rptLoad()">
           <span id="rpt-save-msg" style="font-size:12px;color:var(--muted);margin-left:4px"></span>
-          <button class="btn" style="margin-left:auto;padding:7px 16px" onclick="rptSave()">💾 Сохранить</button>
-          <button class="btn ghost" style="padding:7px 14px;font-size:13px" onclick="rptSendTg()">📤 Telegram</button>
+          <button class="btn" style="margin-left:auto;padding:7px 14px;font-size:13px" onclick="rptSendTg()">📤 Telegram</button>
         </div>
         <div id="rpt-body"><div style="color:var(--muted);padding:20px">Загрузка…</div></div>
       </div>
@@ -8739,9 +8738,9 @@ function rptLoad(){
   }).catch(function(){_rptData=_rptEmpty(); _rptData.date=_rptIsoToRu(inp?inp.value:_rptTodayIso()); rptRender();});
 }
 function rptSave(){
-  if(!_rptData) return;
+  if(!_rptData) return Promise.resolve();
   var msg=document.getElementById('rpt-save-msg'); if(msg) msg.textContent='Сохраняю…';
-  apiFetch('/api/dailyrep',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_rptData)},ONEC_BASE).then(function(){
+  return apiFetch('/api/dailyrep',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_rptData)},ONEC_BASE).then(function(){
     if(msg){msg.textContent='✓ Сохранено';setTimeout(function(){if(msg)msg.textContent='';},3000);}
   }).catch(function(){if(msg) msg.textContent='Ошибка';});
 }
@@ -8749,10 +8748,14 @@ function _rptAutoSave(){clearTimeout(_rptTimer);_rptTimer=setTimeout(rptSave,250
 
 function rptSendTg(){
   if(!_rptData){alert('Нет данных для отправки');return;}
-  var btn=event&&event.target; if(btn){btn.disabled=true;btn.textContent='Отправляю…';}
-  apiFetch('/api/tg/sendreport',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({report:_rptData})},ONEC_BASE).then(function(r){
+  var btn=event&&event.target; if(btn){btn.disabled=true;btn.textContent='Сохраняю…';}
+  clearTimeout(_rptTimer);
+  rptSave().then(function(){
+    if(btn) btn.textContent='Отправляю…';
+    return apiFetch('/api/tg/sendreport',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({report:_rptData})},ONEC_BASE);
+  }).then(function(r){
     if(btn){btn.disabled=false;btn.textContent='📤 Telegram';}
-    if(r&&r.ok) alert('✅ Отчёт отправлен в Telegram!');
+    if(r&&r.ok) alert('✅ Отчёт сохранён и отправлен в Telegram!');
     else alert('Ошибка: '+(r&&r.error||'Неизвестная ошибка'));
   }).catch(function(e){
     if(btn){btn.disabled=false;btn.textContent='📤 Telegram';}
