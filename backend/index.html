@@ -626,7 +626,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.30.3<br>Ограничение дат аренды — только для сотрудников: у них начало заморожено, конец только вперёд; владелец правит свободно
+      Штурвал v4.30.4<br>Авто Рент больше не зависает на «Загружаю…»: таймаут + авто-повтор при перезапуске сервера/сбое сети
   </aside>
 
   <!-- MAIN -->
@@ -7554,11 +7554,25 @@
     if(el) el.innerHTML='<div class="card"><span style="color:var(--muted)">⏳ Загружаю… (сервер мог просыпаться)</span></div>';
     rentLoad();
   }
-  function rentLoad(){
-    apiFetch('/api/rent?period='+encodeURIComponent(RENT_PERIOD),{},ONEC_BASE).then(function(r){ return r.json(); }).then(function(d){
+  function rentLoad(attempt){
+    attempt=attempt||1;
+    // устойчиво к перезапускам бэкенда (деплой) и морганиям сети: таймаут + авто-повтор,
+    // чтобы вкладка НЕ висела вечно на «Загружаю…».
+    var ctrl=(typeof AbortController!=='undefined')?new AbortController():null;
+    var to=ctrl?setTimeout(function(){ try{ctrl.abort();}catch(e){} },18000):null;
+    apiFetch('/api/rent?period='+encodeURIComponent(RENT_PERIOD),ctrl?{signal:ctrl.signal}:{},ONEC_BASE).then(function(r){ return r.json(); }).then(function(d){
+      if(to){ clearTimeout(to); }
       if(d&&d.error){ RENT_ERR=d.error; RENT=null; rentShowErr(); return; }
       RENT=d; RENT_ERR=''; rentRenderCur();
-    }).catch(function(e){ RENT_ERR=(e&&e.message==='unauthorized')?'Нужно войти заново.':'Сервер недоступен — обнови через минуту.'; rentShowErr(); });
+    }).catch(function(e){
+      if(to){ clearTimeout(to); }
+      if(attempt<5 && !(e&&e.message==='unauthorized')){
+        if(attempt>=2){ var el=document.getElementById(RENT_CONT[RENT_CUR]); if(el) el.innerHTML='<div class="card"><span style="color:var(--muted)">⏳ Сервер обновляется, подождите… (попытка '+(attempt+1)+' из 5)</span></div>'; }
+        setTimeout(function(){ rentLoad(attempt+1); }, 3000);
+        return;
+      }
+      RENT_ERR=(e&&e.message==='unauthorized')?'Нужно войти заново.':'Сервер недоступен — обнови через минуту.'; rentShowErr();
+    });
   }
   function rentShowErr(){
     var el=document.getElementById(RENT_CONT[RENT_CUR]);
