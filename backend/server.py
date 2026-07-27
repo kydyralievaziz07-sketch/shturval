@@ -7095,7 +7095,7 @@ class Handler(BaseHTTPRequestHandler):
             lines.append("Мбанк:%s" % _fmt(report.get("mbank_total", 0)))
             lines.append("")
             lines.append("Счетчик-%s" % _fmt(report.get("schetchik", 0)))
-            lines.append("Н" + (" ✅" if report.get("n_status") else ""))
+            lines.append("Н" + ("✅" if report.get("n_status") else ""))
 
             loss_items = report.get("loss_items", [])
             if loss_items:
