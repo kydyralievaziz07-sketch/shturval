@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.52.0<br>«Итого по всем кассам»: «Остаток» и «Изъятие» теперь пишутся руками прямо там, убраны из списка минусов
+      Штурвал v4.53.0<br>Убрана отдельная карточка «Изъятие» (со строками) — теперь только одно поле в «Итого по всем кассам»
   </aside>
 
   <!-- MAIN -->
@@ -8679,7 +8679,7 @@ function _rptRuToIso(s){if(!s)return '';var p=s.split('.');return p.length<3?s:p
 function _rptN(v){return parseFloat(String(v||'0').replace(/[\s ]/g,'').replace(',','.'))||0;}
 function _rptFmt(n){return n?String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g,' '):'0';}
 function _rptNewKassa(num){var o={id:'k'+Date.now()+'_'+num,name:num+'-Касса',status:true};RPT_FIELDS.forEach(function(f){o[f.k]=0;});return o;}
-function _rptEmpty(){return {date:_rptIsoToRu(_rptTodayIso()),kassas:[_rptNewKassa(1),_rptNewKassa(2),_rptNewKassa(3)],rashod_rows:[],avans_rows:[],oplata_rows:[],fond_rows:[],izyatie_rows:[],mbank_total:0,schetchik:0,n_status:false,ostatok_total:0,izyatie_total:0};}
+function _rptEmpty(){return {date:_rptIsoToRu(_rptTodayIso()),kassas:[_rptNewKassa(1),_rptNewKassa(2),_rptNewKassa(3)],rashod_rows:[],avans_rows:[],oplata_rows:[],fond_rows:[],mbank_total:0,schetchik:0,n_status:false,ostatok_total:0,izyatie_total:0};}
 // Наложить авто-суммы способов оплаты (из auto_pay, посчитано бэкендом из чеков 1С) на кассы —
 // по номеру в названии кассы ("1-Касса", "Касса №1" → 1).
 function _rptApplyAuto(d){
@@ -8765,7 +8765,6 @@ function _rptRashodTotal(){var s=0;if(_rptData)(_rptData.rashod_rows||[]).forEac
 function _rptAvansTotal(){var s=0;if(_rptData)(_rptData.avans_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
 function _rptOplataTotal(){var s=0;if(_rptData)(_rptData.oplata_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
 function _rptFondTotal(){var s=0;if(_rptData)(_rptData.fond_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
-function _rptIzyatieTotal(){var s=0;if(_rptData)(_rptData.izyatie_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
 
 function rptRender(){
   var d=_rptData; if(!d){document.getElementById('rpt-body').innerHTML='';return;}
@@ -8858,21 +8857,6 @@ function rptRender(){
   h+='<div class="rpt-total" id="rpt-fond-total">('+_rptFmt(_rptFondTotal())+')</div>';
   h+='</div>';
 
-  // Изъятие
-  h+='<div class="rpt-kassa">';
-  h+='<div class="rpt-section-head"><span>📍 Изъятие 📍</span></div>';
-  (d.izyatie_rows||[]).forEach(function(r){
-    h+='<div class="rpt-field">';
-    h+='<input class="rpt-field-name" value="'+esc(r.name)+'" placeholder="название" oninput="rptIzyatieName(\''+r.id+'\',this.value)">';
-    h+='<div style="display:flex;align-items:center;gap:6px">';
-    h+='<input type="number" inputmode="numeric" style="width:100px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" value="'+(_rptN(r.sum)||'')+'" placeholder="0" oninput="rptIzyatieVal(\''+r.id+'\',this.value)">';
-    h+='<button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:15px;padding:0 2px" onclick="rptDelIzyatie(\''+r.id+'\')">✕</button>';
-    h+='</div></div>';
-  });
-  h+='<button class="btn ghost" style="margin-top:8px;font-size:12px" onclick="rptAddIzyatie()">➕ Добавить изъятие</button>';
-  h+='<div class="rpt-total" id="rpt-izyatie-total">('+_rptFmt(_rptIzyatieTotal())+')</div>';
-  h+='</div>';
-
   // Итого (авто-сумма по кассам)
   h+='<div class="rpt-kassa"><div class="rpt-section-head"><span>Итого по всем кассам</span></div>';
   h+='<div id="rpt-summary">';
@@ -8951,11 +8935,6 @@ function rptAddFond(){if(!_rptData.fond_rows)_rptData.fond_rows=[];_rptData.fond
 function rptDelFond(id){_rptData.fond_rows=(_rptData.fond_rows||[]).filter(function(x){return x.id!==id;});rptRender();_rptAutoSave();}
 function rptFondName(id,v){var r=(_rptData.fond_rows||[]).find(function(x){return x.id===id;});if(r)r.name=v;_rptAutoSave();}
 function rptFondVal(id,v){var r=(_rptData.fond_rows||[]).find(function(x){return x.id===id;});if(r)r.sum=_rptN(v);var el=document.getElementById('rpt-fond-total');if(el)el.textContent='('+_rptFmt(_rptFondTotal())+')';rptRefreshSummary();_rptAutoSave();}
-// Изъятие
-function rptAddIzyatie(){if(!_rptData.izyatie_rows)_rptData.izyatie_rows=[];_rptData.izyatie_rows.push({id:'i'+Date.now(),name:'',sum:0});rptRender();}
-function rptDelIzyatie(id){_rptData.izyatie_rows=(_rptData.izyatie_rows||[]).filter(function(x){return x.id!==id;});rptRender();_rptAutoSave();}
-function rptIzyatieName(id,v){var r=(_rptData.izyatie_rows||[]).find(function(x){return x.id===id;});if(r)r.name=v;_rptAutoSave();}
-function rptIzyatieVal(id,v){var r=(_rptData.izyatie_rows||[]).find(function(x){return x.id===id;});if(r)r.sum=_rptN(v);var el=document.getElementById('rpt-izyatie-total');if(el)el.textContent='('+_rptFmt(_rptIzyatieTotal())+')';rptRefreshSummary();_rptAutoSave();}
 </script>
 <!-- RENT_BLOCK_END -->
 </body>
