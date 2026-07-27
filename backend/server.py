@@ -7040,40 +7040,78 @@ class Handler(BaseHTTPRequestHandler):
             bot_token = CFG.get("TG_BOT_TOKEN", "")
             if not chat_id or not bot_token:
                 return self._send(400, {"error": "TG_REPORT_GROUP или TG_BOT_TOKEN не настроены"})
-            # Форматируем отчёт
+            # Форматируем отчёт — обычным текстом, в стиле, каким кассиры писали его вручную
+            # (без Markdown: имена товаров/статей могут содержать *_ и т.п.).
+            def _n(x):
+                try:
+                    return float(x or 0)
+                except Exception:
+                    return 0.0
+            def _fmt(x):
+                return "{:,.0f}".format(_n(x)).replace(",", ".")
+
             date_str = report.get("date", "")
-            lines = ["📋 *Отчёт Bizmart за %s*" % date_str, ""]
             kassas = report.get("kassas", [])
-            kassa_total = 0.0
-            pay_keys = ("obshiy", "mbank", "optima1", "optima2", "zero", "m_biz",
-                        "cash2u", "onl_per", "onl_nal", "payda", "m_plus", "beznal")
+            lines = [date_str, "", "     Bizmart🐫 (%d)" % len(kassas), ""]
+
+            PAY_FIELDS = [
+                ("obshiy", "Общий"), ("mbank", "Мбанк пер"), ("optima1", "Оптима 1"),
+                ("optima2", "Оптима 2"), ("zero", "ЗЕРО"), ("m_biz", "М бизнес"),
+                ("rashod_k", "Расход"), ("cash2u", "Cash2u"), ("onl_per", "Онл.пер"),
+                ("onl_nal", "Онл.нал"), ("payda", "PAIDA опти"), ("m_plus", "М+"),
+                ("beznal", "Безналичный"), ("izyatie_k", "Изъятие"), ("ostatok", "Остаток"),
+            ]
             for k in kassas:
                 name = k.get("name", "Касса")
-                itogo = sum(float(k.get(pk, 0) or 0) for pk in pay_keys)
-                kassa_total += itogo
-                lines.append("🏦 *%s* — итого: %s" % (name, "{:,.0f}".format(itogo).replace(",", " ")))
-            lines.append("")
-            lines.append("💰 *Общий итог по кассам*: %s" % "{:,.0f}".format(kassa_total).replace(",", " "))
-            lines.append("")
-            def _section(rows, title, emoji="💸"):
-                if not rows: return
-                total = sum(float(r.get("sum",0)) for r in rows)
-                lines.append("%s *%s* — итого: %s" % (emoji, title, "{:,.0f}".format(total).replace(",", " ")))
-                for r in rows:
-                    nm = r.get("name","")
-                    sm = r.get("sum",0)
-                    if nm or sm:
-                        lines.append("  %s: %s" % (nm or "—", "{:,.0f}".format(float(sm)).replace(",", " ")))
+                lines.append(name + (" ✅" if k.get("status") else ""))
                 lines.append("")
-            _section(report.get("rashod_rows",[]), "Расходдор", "💸")
-            _section(report.get("avans_rows",[]), "Авансы", "💰")
-            _section(report.get("oplata_rows",[]), "Оплата за товар", "🛒")
-            _section(report.get("fond_rows",[]), "Фонд", "🏦")
-            _section(report.get("izyatie_rows",[]), "Изъятие", "📤")
+                for key, label in PAY_FIELDS:
+                    lines.append("%s-%s" % (label, _fmt(k.get(key, 0))))
+                lines.append("")
+                lines.append("")
+
+            def _section(rows, title):
+                if not rows:
+                    return
+                lines.append("📍 %s📍" % title)
+                lines.append("")
+                for r in rows:
+                    nm = r.get("name", "")
+                    sm = r.get("sum", 0)
+                    if nm or sm:
+                        lines.append("%s-%s" % (_fmt(sm), nm or "—"))
+                lines.append("")
+                lines.append("(%s)" % _fmt(sum(_n(r.get("sum")) for r in rows)))
+                lines.append("")
+                lines.append("")
+            _section(report.get("rashod_rows", []), "РАСХОДДОР")
+            _section(report.get("avans_rows", []), "Аванс")
+            _section(report.get("oplata_rows", []), "Оплата за товар")
+            _section(report.get("fond_rows", []), "Фонд")
+
+            for key, label in PAY_FIELDS:
+                lines.append("%s-%s" % (label, _fmt(sum(_n(k.get(key)) for k in kassas))))
+            lines.append("")
+            lines.append("Мбанк:%s" % _fmt(report.get("mbank_total", 0)))
+            lines.append("")
+            lines.append("Счетчик-%s" % _fmt(report.get("schetchik", 0)))
+            lines.append("Н" + (" ✅" if report.get("n_status") else ""))
+
+            loss_items = report.get("loss_items", [])
+            if loss_items:
+                lines.append("")
+                lines.append("")
+                lines.append("📍 Контроль потерь📍")
+                lines.append("")
+                for it in loss_items:
+                    lines.append("%s x%s-%s" % (it.get("name", ""), it.get("qty", 0), _fmt(it.get("sale", 0))))
+                lines.append("")
+                lines.append("(-%s)" % _fmt(sum(_n(it.get("cost")) for it in loss_items)))
+
             text = "\n".join(lines)
             import urllib.request as _ur
             tg_url = "https://api.telegram.org/bot%s/sendMessage" % bot_token
-            tg_payload = json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}).encode()
+            tg_payload = json.dumps({"chat_id": chat_id, "text": text}).encode()
             req2 = _ur.Request(tg_url, data=tg_payload, headers={"Content-Type":"application/json"}, method="POST")
             try:
                 resp2 = _ur.urlopen(req2, timeout=10)

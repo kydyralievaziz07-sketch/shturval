@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.56.0<br>Починена отправка в Telegram: TG_REPORT_GROUP никогда не читался бэкендом (был в render.yaml, но не в коде) — из-за этого была «Неизвестная ошибка»
+      Штурвал v4.57.0<br>Telegram-отчёт переписан под старый формат кассиров (простой текст, «Расход»/«Изъятие» по кассам, «Контроль потерь» внизу)
   </aside>
 
   <!-- MAIN -->
@@ -8661,12 +8661,14 @@ const RPT_FIELDS=[
   {k:'optima2', l:'Оптима 2'},
   {k:'zero',    l:'ЗЕРО'},
   {k:'m_biz',   l:'М бизнес'},
+  {k:'rashod_k',l:'Расход'},
   {k:'cash2u',  l:'Cash2u'},
   {k:'onl_per', l:'Онл.пер'},
   {k:'onl_nal', l:'Онл.нал'},
   {k:'payda',   l:'PAIDA опти'},
   {k:'m_plus',  l:'М+'},
   {k:'beznal',  l:'Безналичный'},
+  {k:'izyatie_k',l:'Изъятие'},
   {k:'ostatok', l:'Остаток'},
 ];
 // Способы оплаты, которые считаются сами из чеков 1С (сумма по кассе за день) — не вводятся
@@ -8764,10 +8766,11 @@ function rptSendTg(){
 }
 
 function _rptSumKassas(fk){var s=0;if(_rptData)_rptData.kassas.forEach(function(k){s+=_rptN(k[fk]);});return s;}
-function _rptGrandTotal(){var s=0;RPT_FIELDS.forEach(function(f){if(f.k!=='ostatok'&&f.k!=='itog')s+=_rptSumKassas(f.k);});return s;}
+const RPT_NONREVENUE_KEYS=['itog','ostatok','rashod_k','izyatie_k'];
+function _rptGrandTotal(){var s=0;RPT_FIELDS.forEach(function(f){if(RPT_NONREVENUE_KEYS.indexOf(f.k)<0)s+=_rptSumKassas(f.k);});return s;}
 // «Общий» по кассе — реальный итог (сумма всех способов оплаты этой кассы, без Остатка).
 // Считается на лету при рендере, нигде не хранится.
-function _rptKassaTotal(k){var s=0;RPT_FIELDS.forEach(function(f){if(f.k!=='itog'&&f.k!=='ostatok')s+=_rptN(k[f.k]);});return s;}
+function _rptKassaTotal(k){var s=0;RPT_FIELDS.forEach(function(f){if(RPT_NONREVENUE_KEYS.indexOf(f.k)<0)s+=_rptN(k[f.k]);});return s;}
 function _rptRashodTotal(){var s=0;if(_rptData)(_rptData.rashod_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
 function _rptAvansTotal(){var s=0;if(_rptData)(_rptData.avans_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
 function _rptOplataTotal(){var s=0;if(_rptData)(_rptData.oplata_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
