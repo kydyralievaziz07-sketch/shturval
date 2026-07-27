@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.53.0<br>Убрана отдельная карточка «Изъятие» (со строками) — теперь только одно поле в «Итого по всем кассам»
+      Штурвал v4.54.0<br>В кассах: «Общий» переименован в «Наличные», добавлен настоящий «Общий» — авто-итог по всей кассе (сумма всех способов оплаты)
   </aside>
 
   <!-- MAIN -->
@@ -8655,7 +8655,8 @@
 // ===== ЕЖЕДНЕВНЫЙ ОТЧЁТ =====
 var _rptData=null, _rptTimer=null;
 const RPT_FIELDS=[
-  {k:'obshiy',  l:'Общий'},
+  {k:'itog',    l:'Общий'},
+  {k:'obshiy',  l:'Наличные'},
   {k:'mbank',   l:'Мбанк пер'},
   {k:'optima1', l:'Оптима 1'},
   {k:'optima2', l:'Оптима 2'},
@@ -8760,7 +8761,10 @@ function rptSendTg(){
 }
 
 function _rptSumKassas(fk){var s=0;if(_rptData)_rptData.kassas.forEach(function(k){s+=_rptN(k[fk]);});return s;}
-function _rptGrandTotal(){var s=0;RPT_FIELDS.forEach(function(f){if(f.k!=='ostatok')s+=_rptSumKassas(f.k);});return s;}
+function _rptGrandTotal(){var s=0;RPT_FIELDS.forEach(function(f){if(f.k!=='ostatok'&&f.k!=='itog')s+=_rptSumKassas(f.k);});return s;}
+// «Общий» по кассе — реальный итог (сумма всех способов оплаты этой кассы, без Остатка).
+// Считается на лету при рендере, нигде не хранится.
+function _rptKassaTotal(k){var s=0;RPT_FIELDS.forEach(function(f){if(f.k!=='itog'&&f.k!=='ostatok')s+=_rptN(k[f.k]);});return s;}
 function _rptRashodTotal(){var s=0;if(_rptData)(_rptData.rashod_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
 function _rptAvansTotal(){var s=0;if(_rptData)(_rptData.avans_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
 function _rptOplataTotal(){var s=0;if(_rptData)(_rptData.oplata_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
@@ -8780,11 +8784,13 @@ function rptRender(){
     h+='<label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;font-weight:400"><input type="checkbox" '+(k.status?'checked':'')+' onchange="rptKassaStatus(\''+k.id+'\',this.checked)"> ✅</label>';
     h+='</div><button class="btn ghost" style="padding:2px 8px;font-size:12px;color:var(--red)" onclick="rptDelKassa(\''+k.id+'\')">✕</button></div>';
     RPT_FIELDS.forEach(function(f){
-      var val=_rptN(k[f.k]);
+      var isTotal=f.k==='itog';
+      var val=isTotal?_rptKassaTotal(k):_rptN(k[f.k]);
       var isAuto=RPT_AUTO_KEYS.indexOf(f.k)>=0;
-      h+='<div class="rpt-field"><span>'+esc(f.l)+(isAuto?' <span style="font-size:10px;color:var(--muted)" title="Считается само из чеков 1С">🔄</span>':'')+'</span>';
-      if(isAuto){
-        h+='<span style="font-weight:'+(f.k==='obshiy'?'700':'400')+'">'+_rptFmt(val)+'</span>';
+      var badge=isTotal?'':(isAuto?' <span style="font-size:10px;color:var(--muted)" title="Считается само из чеков 1С">🔄</span>':'');
+      h+='<div class="rpt-field"><span>'+esc(f.l)+badge+'</span>';
+      if(isTotal||isAuto){
+        h+='<span style="font-weight:'+(isTotal||f.k==='obshiy'?'700':'400')+'">'+_rptFmt(val)+'</span>';
       } else {
         h+='<input type="number" inputmode="numeric" value="'+(val||'')+'" placeholder="0" oninput="rptKassaVal(\''+k.id+'\',\''+f.k+'\',this.value)">';
       }
@@ -8861,7 +8867,7 @@ function rptRender(){
   h+='<div class="rpt-kassa"><div class="rpt-section-head"><span>Итого по всем кассам</span></div>';
   h+='<div id="rpt-summary">';
   h+='<div class="rpt-field" style="font-weight:700;font-size:15px"><span>💰 Общий итог (выручка)</span><span>'+_rptFmt(_rptGrandTotal())+'</span></div>';
-  RPT_FIELDS.forEach(function(f){var v=_rptSumKassas(f.k);h+='<div class="rpt-field"><span>'+esc(f.l)+'</span><span style="font-weight:'+(f.k==='obshiy'?'700':'400')+'">'+_rptFmt(v)+'</span></div>';});
+  RPT_FIELDS.forEach(function(f){if(f.k==='itog')return;var v=_rptSumKassas(f.k);h+='<div class="rpt-field"><span>'+esc(f.l)+'</span><span style="font-weight:'+(f.k==='obshiy'?'700':'400')+'">'+_rptFmt(v)+'</span></div>';});
   h+='<div class="rpt-field" style="border-top:1px solid var(--line);margin-top:4px;padding-top:4px"><span>Расходдор (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptRashodTotal())+'</span></div>';
   h+='<div class="rpt-field"><span>Авансы (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptAvansTotal())+'</span></div>';
   h+='<div class="rpt-field"><span>Оплата за товар (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptOplataTotal())+'</span></div>';
@@ -8901,7 +8907,7 @@ function rptRefreshSummary(){
   var el=document.getElementById('rpt-summary'); if(!el) return;
   var h='';
   h+='<div class="rpt-field" style="font-weight:700;font-size:15px"><span>💰 Общий итог (выручка)</span><span>'+_rptFmt(_rptGrandTotal())+'</span></div>';
-  RPT_FIELDS.forEach(function(f){var v=_rptSumKassas(f.k);h+='<div class="rpt-field"><span>'+esc(f.l)+'</span><span style="font-weight:'+(f.k==='obshiy'?'700':'400')+'">'+_rptFmt(v)+'</span></div>';});
+  RPT_FIELDS.forEach(function(f){if(f.k==='itog')return;var v=_rptSumKassas(f.k);h+='<div class="rpt-field"><span>'+esc(f.l)+'</span><span style="font-weight:'+(f.k==='obshiy'?'700':'400')+'">'+_rptFmt(v)+'</span></div>';});
   h+='<div class="rpt-field" style="border-top:1px solid var(--line);margin-top:4px;padding-top:4px"><span>Расходдор (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptRashodTotal())+'</span></div>';
   h+='<div class="rpt-field"><span>Авансы (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptAvansTotal())+'</span></div>';
   h+='<div class="rpt-field"><span>Оплата за товар (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptOplataTotal())+'</span></div>';
