@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.48.0<br>«Ежедневный отчёт»: способы оплаты по кассам теперь считаются сами из чеков 1С (обновление раз в минуту), плюс починены сохранение отчёта и отправка в Telegram (были сломаны)
+      Штурвал v4.49.0<br>Карточка «Контроль потерь» в отчёте временно скрыта (расчёт на бэкенде продолжает работать — включается обратно одним флагом)
   </aside>
 
   <!-- MAIN -->
@@ -3731,6 +3731,7 @@
     if(prods.length) html+='<div class="card"><h3 style="margin:0 0 8px">🛒 Товары ('+prods.length+')</h3><div style="overflow:auto"><table style="width:100%;font-size:13px;border-collapse:collapse"><tr style="text-align:left;color:var(--muted)"><th style="padding:5px 8px">Товар</th><th style="padding:5px 8px">Категория</th><th style="padding:5px 8px;text-align:right">Продано</th><th style="padding:5px 8px;text-align:right">Выручка</th><th style="padding:5px 8px;text-align:right">Прибыль</th></tr>'+prods.slice(0,200).map(p=>'<tr style="border-top:1px solid var(--line)"><td style="padding:5px 8px">'+esc(p.i.name)+'</td><td style="padding:5px 8px;color:var(--muted)">'+esc(p.path)+'</td><td style="padding:5px 8px;text-align:right">'+(p.i.qty||0).toLocaleString('ru-RU')+'</td><td style="padding:5px 8px;text-align:right">'+fmt(p.i.revenue)+'</td><td style="padding:5px 8px;text-align:right;font-weight:600">'+fmt(p.i.profit)+'</td></tr>').join('')+'</table></div></div>';
     return html||'<div class="card"><span style="color:var(--muted);font-size:13px">Ничего не найдено. (Товары ищутся среди топ-15 по прибыли в каждой категории.)</span></div>';
   }
+  const SHOW_AUDIT=false;   // «Контроль потерь» временно скрыт (расчёт на бэкенде идёт, карточка не показывается)
   const AU_KINDS=[
     {k:'zero',label:'Продано по 0 сом',color:'#ff6b6b',emoji:'🔴'},
     {k:'one', label:'Продано по 1 сом',color:'#ffb84d',emoji:'🟠'},
@@ -3797,7 +3798,7 @@
     if(kp) kp.innerHTML=kpiCard('Период',(periodWord(reportDays).trim()||((d.period_days||0)+' дн.')))+km('Выручка',d.total_revenue)+km('Чистая прибыль',d.total_profit)+kpiCard('Средняя маржа',(d.avg_margin||0)+'%');
     const tree=(d.tree&&d.tree.length)?d.tree:floorsToTree(d.floors||[]);
     if(ch) ch.innerHTML=reportCharts(tree);
-    const auEl=document.getElementById('report-audit'); if(auEl) auEl.innerHTML=reportAuditHtml(d.audit);
+    const auEl=document.getElementById('report-audit'); if(auEl) auEl.innerHTML=SHOW_AUDIT?reportAuditHtml(d.audit):'';
     const qEl=document.getElementById('report-search'); const q=(qEl?qEl.value:'').trim().toLowerCase();
     if(q){ box.innerHTML=reportSearch(tree,q); renderMoney(); return; }
     box.innerHTML=tree.length?reportTreeHtml(tree,0):'<div class="card"><span style="color:var(--muted);font-size:13px">Нет данных за период.</span></div>';
