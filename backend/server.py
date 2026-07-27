@@ -6936,24 +6936,15 @@ class Handler(BaseHTTPRequestHandler):
             date_str = report.get("date", "")
             lines = ["📋 *Отчёт Bizmart за %s*" % date_str, ""]
             kassas = report.get("kassas", [])
+            kassa_total = 0.0
             for k in kassas:
                 name = k.get("name", "Касса")
-                obshiy = k.get("obshiy", 0)
-                ostatok = k.get("ostatok", 0)
-                lines.append("🏦 *%s*" % name)
-                kfields = [
-                    ("Общий", k.get("obshiy",0)), ("Мбанк пер", k.get("mbank",0)),
-                    ("Оптима 1", k.get("optima1",0)), ("Оптима 2", k.get("optima2",0)),
-                    ("ЗЕРО", k.get("zero",0)), ("М бизнес", k.get("m_biz",0)),
-                    ("Cash2u", k.get("cash2u",0)), ("Онл.пер", k.get("onl_per",0)),
-                    ("Онл.нал", k.get("onl_nal",0)), ("PAIDA опти", k.get("payda",0)),
-                    ("М+", k.get("m_plus",0)), ("Безналичный", k.get("beznal",0)),
-                    ("Остаток", k.get("ostatok",0)),
-                ]
-                for label, val in kfields:
-                    if val:
-                        lines.append("  %s: %s" % (label, "{:,.0f}".format(float(val)).replace(",", " ")))
-                lines.append("")
+                obshiy = float(k.get("obshiy", 0) or 0)
+                kassa_total += obshiy
+                lines.append("🏦 *%s* — итого: %s" % (name, "{:,.0f}".format(obshiy).replace(",", " ")))
+            lines.append("")
+            lines.append("💰 *Общий итог по кассам*: %s" % "{:,.0f}".format(kassa_total).replace(",", " "))
+            lines.append("")
             def _section(rows, title, emoji="💸"):
                 if not rows: return
                 total = sum(float(r.get("sum",0)) for r in rows)
