@@ -631,6 +631,17 @@
     .topbar h1{font-size:18px}
     .modal{padding:20px 14px;padding-bottom:max(20px,env(safe-area-inset-bottom))}
   }
+  /* ===== ЕЖЕДНЕВНЫЙ ОТЧЁТ ===== */
+  .rpt-kassa{border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:10px;background:var(--panel2)}
+  .rpt-field{display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(128,128,128,.12);font-size:13px;gap:8px}
+  .rpt-field:last-child{border-bottom:none}
+  .rpt-field input[type=number]{width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px;-moz-appearance:textfield}
+  .rpt-field input[type=number]::-webkit-outer-spin-button,.rpt-field input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
+  .rpt-field input[type=number]:focus{outline:none;border-bottom-color:var(--accent)}
+  .rpt-field-name{flex:1;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px;min-width:80px}
+  .rpt-field-name:focus{outline:none;border-bottom-color:var(--accent)}
+  .rpt-total{font-weight:700;color:var(--accent);font-size:14px;text-align:right;padding:6px 0 2px}
+  .rpt-section-head{font-weight:700;font-size:15px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
 </style>
 </head>
 <body>
@@ -703,6 +714,17 @@
     <section id="tab-rentcalendar" class="hide"><div id="rent-calendar"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-rentnotes" class="hide"><div id="rent-notes"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-renttasks" class="hide"><div id="rent-tasks"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
+    <section id="tab-reportdash" class="hide">
+      <div style="max-width:680px;margin:0 auto;padding:8px 4px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+          <h2 style="margin:0;font-size:18px">📋 Ежедневный отчёт</h2>
+          <input type="date" id="rpt-date-inp" style="background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:13px" onchange="rptLoad()">
+          <span id="rpt-save-msg" style="font-size:12px;color:var(--muted);margin-left:4px"></span>
+          <button class="btn" style="margin-left:auto;padding:7px 16px" onclick="rptSave()">💾 Сохранить</button>
+        </div>
+        <div id="rpt-body"><div style="color:var(--muted);padding:20px">Загрузка…</div></div>
+      </div>
+    </section>
 
     <section id="tab-dash">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
@@ -1773,6 +1795,7 @@
     {key:'mkt',  icon:'📣', label:'Реклама', tabs:['ads','adsreport','adsanalysis','wbads']},
     {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','assort','report','analytics','supl','fin','exp']},
     {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','renttasks','rentnotes','rentcars','rentlist','rentalert','rentexp','renthanded','rentanalysis','rentplan','rentclients','rentcalendar']},
+    {key:'dailyrep', icon:'📋', label:'Отчёты', tabs:['reportdash']},
     {key:'team', icon:'👥', label:'Команда', tabs:['myday','hr']},
     {key:'ai',   icon:'🤖', label:'ИИ',      tabs:['ai','sim']}
   ];
@@ -1805,6 +1828,7 @@
     // у Wildberries закупочной цены нет, показывать эти вкладки там нечего
     if(tab==='assort') return isBizmart()&&(isOwner()||canSee('assort')||canSee('sales')||canSee('analytics'));
     if(tab==='report') return isBizmart()&&(isOwner()||canSee('assort')||canSee('sales')||canSee('analytics'));
+    if(tab==='reportdash') return isOwner()||canSee('dailyrep');
     return canSee(tab);
   }
   // временно скрытые модули — прячем ИКОНКУ у тех, кто видит их только через «all».
@@ -1854,6 +1878,7 @@
     else if(tab==='rentplan') rentDispatch('plan');
     else if(tab==='rentclients') rentDispatch('clients');
     else if(tab==='rentcalendar') rentDispatch('calendar');
+    else if(tab==='reportdash') rptInit();
   }
   function openTab(tab){
     curTab=tab;
@@ -8555,6 +8580,150 @@
     });
   }
 
+
+// ===== ЕЖЕДНЕВНЫЙ ОТЧЁТ =====
+var _rptData=null, _rptTimer=null;
+const RPT_FIELDS=[
+  {k:'obshiy',  l:'Общий'},
+  {k:'mbank',   l:'Мбанк пер'},
+  {k:'optima1', l:'Оптима 1'},
+  {k:'optima2', l:'Оптима 2'},
+  {k:'rashod',  l:'Расход'},
+  {k:'zero',    l:'ЗЕРО'},
+  {k:'m_biz',   l:'М бизнес'},
+  {k:'cash2u',  l:'Cash2u'},
+  {k:'onl_per', l:'Онл.пер'},
+  {k:'onl_nal', l:'Онл.нал'},
+  {k:'payda',   l:'PAIDA опти'},
+  {k:'m_plus',  l:'М+'},
+  {k:'beznal',  l:'Безналичный'},
+  {k:'izyata',  l:'Изъята'},
+  {k:'ostatok', l:'Остаток'},
+];
+function _rptTodayIso(){var d=new Date(),m=d.getMonth()+1,dy=d.getDate();return d.getFullYear()+'-'+(m<10?'0'+m:m)+'-'+(dy<10?'0'+dy:dy);}
+function _rptIsoToRu(s){if(!s)return '';var p=s.split('-');return p.length<3?s:p[2]+'.'+p[1]+'.'+p[0];}
+function _rptRuToIso(s){if(!s)return '';var p=s.split('.');return p.length<3?s:p[2]+'-'+p[1]+'-'+p[0];}
+function _rptN(v){return parseFloat(String(v||'0').replace(/[\s ]/g,'').replace(',','.'))||0;}
+function _rptFmt(n){return n?String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g,' '):'0';}
+function _rptNewKassa(num){var o={id:'k'+Date.now()+'_'+num,name:num+'-Касса',status:true};RPT_FIELDS.forEach(function(f){o[f.k]=0;});return o;}
+function _rptEmpty(){return {date:_rptIsoToRu(_rptTodayIso()),kassas:[_rptNewKassa(1)],rashod_rows:[],avans_rows:[],mbank_total:0,schetchik:0,n_status:false};}
+
+function rptInit(){
+  var inp=document.getElementById('rpt-date-inp');
+  if(inp&&!inp.value) inp.value=_rptTodayIso();
+  rptLoad();
+}
+function rptLoad(){
+  var inp=document.getElementById('rpt-date-inp');
+  var dateRu=_rptIsoToRu(inp?inp.value:_rptTodayIso());
+  var box=document.getElementById('rpt-body');
+  if(box) box.innerHTML='<div style="color:var(--muted);padding:20px">Загрузка…</div>';
+  apiFetch('/api/dailyrep?date='+encodeURIComponent(dateRu),{},ONEC_BASE).then(function(r){return r.json();}).then(function(d){
+    _rptData=(d&&d.date)?d:_rptEmpty(); _rptData.date=dateRu; rptRender();
+  }).catch(function(){_rptData=_rptEmpty(); _rptData.date=_rptIsoToRu(inp?inp.value:_rptTodayIso()); rptRender();});
+}
+function rptSave(){
+  if(!_rptData) return;
+  var msg=document.getElementById('rpt-save-msg'); if(msg) msg.textContent='Сохраняю…';
+  apiFetch('/api/dailyrep',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_rptData)},ONEC_BASE).then(function(){
+    if(msg){msg.textContent='✓ Сохранено';setTimeout(function(){if(msg)msg.textContent='';},3000);}
+  }).catch(function(){if(msg) msg.textContent='Ошибка';});
+}
+function _rptAutoSave(){clearTimeout(_rptTimer);_rptTimer=setTimeout(rptSave,2500);}
+
+function _rptSumKassas(fk){var s=0;if(_rptData)_rptData.kassas.forEach(function(k){s+=_rptN(k[fk]);});return s;}
+function _rptRashodTotal(){var s=0;if(_rptData)(_rptData.rashod_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
+function _rptAvansTotal(){var s=0;if(_rptData)(_rptData.avans_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
+
+function rptRender(){
+  var d=_rptData; if(!d){document.getElementById('rpt-body').innerHTML='';return;}
+  var h='';
+  // Шапка
+  h+='<div class="card" style="text-align:center;font-weight:700;font-size:15px;margin-bottom:10px">'+esc(d.date)+'&nbsp;&nbsp;Bizmart🐫 ('+d.kassas.length+')</div>';
+  // Кассы
+  d.kassas.forEach(function(k){
+    h+='<div class="rpt-kassa">';
+    h+='<div class="rpt-section-head">';
+    h+='<div style="display:flex;align-items:center;gap:8px">';
+    h+='<input class="rpt-field-name" style="width:110px;font-weight:700;font-size:14px;border-bottom:none" value="'+esc(k.name)+'" oninput="rptKassaName(\''+k.id+'\',this.value)">';
+    h+='<label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;font-weight:400"><input type="checkbox" '+(k.status?'checked':'')+' onchange="rptKassaStatus(\''+k.id+'\',this.checked)"> ✅</label>';
+    h+='</div><button class="btn ghost" style="padding:2px 8px;font-size:12px;color:var(--red)" onclick="rptDelKassa(\''+k.id+'\')">✕</button></div>';
+    RPT_FIELDS.forEach(function(f){
+      var val=_rptN(k[f.k]);
+      h+='<div class="rpt-field"><span>'+esc(f.l)+'</span>';
+      h+='<input type="number" inputmode="numeric" value="'+(val||'')+'" placeholder="0" oninput="rptKassaVal(\''+k.id+'\',\''+f.k+'\',this.value)"></div>';
+    });
+    h+='</div>';
+  });
+  h+='<button class="btn ghost" style="width:100%;margin-bottom:12px" onclick="rptAddKassa()">➕ Добавить кассу</button>';
+
+  // Расходдор
+  h+='<div class="rpt-kassa">';
+  h+='<div class="rpt-section-head"><span>📍 РАСХОДДОР 📍</span></div>';
+  (d.rashod_rows||[]).forEach(function(r){
+    h+='<div class="rpt-field">';
+    h+='<input class="rpt-field-name" value="'+esc(r.name)+'" placeholder="название" oninput="rptRashodName(\''+r.id+'\',this.value)">';
+    h+='<div style="display:flex;align-items:center;gap:6px">';
+    h+='<input type="number" inputmode="numeric" style="width:100px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" value="'+(_rptN(r.sum)||'')+'" placeholder="0" oninput="rptRashodVal(\''+r.id+'\',this.value)">';
+    h+='<button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:15px;padding:0 2px" onclick="rptDelRashod(\''+r.id+'\')">✕</button>';
+    h+='</div></div>';
+  });
+  h+='<button class="btn ghost" style="margin-top:8px;font-size:12px" onclick="rptAddRashod()">➕ Добавить расход</button>';
+  h+='<div class="rpt-total" id="rpt-rashod-total">('+_rptFmt(_rptRashodTotal())+')</div>';
+  h+='</div>';
+
+  // Аванс
+  h+='<div class="rpt-kassa">';
+  h+='<div class="rpt-section-head"><span>📍 Аванс 📍</span></div>';
+  (d.avans_rows||[]).forEach(function(r){
+    h+='<div class="rpt-field">';
+    h+='<input class="rpt-field-name" value="'+esc(r.name)+'" placeholder="сотрудник" oninput="rptAvansName(\''+r.id+'\',this.value)">';
+    h+='<div style="display:flex;align-items:center;gap:6px">';
+    h+='<input type="number" inputmode="numeric" style="width:100px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" value="'+(_rptN(r.sum)||'')+'" placeholder="0" oninput="rptAvansVal(\''+r.id+'\',this.value)">';
+    h+='<button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:15px;padding:0 2px" onclick="rptDelAvans(\''+r.id+'\')">✕</button>';
+    h+='</div></div>';
+  });
+  h+='<button class="btn ghost" style="margin-top:8px;font-size:12px" onclick="rptAddAvans()">➕ Добавить аванс</button>';
+  h+='<div class="rpt-total" id="rpt-avans-total">('+_rptFmt(_rptAvansTotal())+')</div>';
+  h+='</div>';
+
+  // Итого (авто-сумма по кассам)
+  h+='<div class="rpt-kassa"><div class="rpt-section-head"><span>Итого по всем кассам</span></div>';
+  h+='<div id="rpt-summary">';
+  RPT_FIELDS.forEach(function(f){var v=_rptSumKassas(f.k);h+='<div class="rpt-field"><span>'+esc(f.l)+'</span><span style="font-weight:'+(f.k==='obshiy'?'700':'400')+'">'+_rptFmt(v)+'</span></div>';});
+  h+='</div>';
+  h+='<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">';
+  h+='<div class="rpt-field"><span>Мбанк</span><input type="number" inputmode="numeric" value="'+(_rptN(d.mbank_total)||'')+'" placeholder="0" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" oninput="_rptData.mbank_total=_rptN(this.value);_rptAutoSave()"></div>';
+  h+='<div class="rpt-field"><span>Счётчик</span><input type="number" inputmode="numeric" value="'+(_rptN(d.schetchik)||'')+'" placeholder="0" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" oninput="_rptData.schetchik=_rptN(this.value);_rptAutoSave()"></div>';
+  h+='<div class="rpt-field"><span>Н</span><label style="cursor:pointer;display:flex;align-items:center;gap:4px"><input type="checkbox" '+(d.n_status?'checked':'')+' onchange="_rptData.n_status=this.checked;_rptAutoSave()"> ✅</label></div>';
+  h+='</div></div>';
+
+  document.getElementById('rpt-body').innerHTML=h;
+}
+
+function rptRefreshSummary(){
+  var el=document.getElementById('rpt-summary'); if(!el) return;
+  var h='';
+  RPT_FIELDS.forEach(function(f){var v=_rptSumKassas(f.k);h+='<div class="rpt-field"><span>'+esc(f.l)+'</span><span style="font-weight:'+(f.k==='obshiy'?'700':'400')+'">'+_rptFmt(v)+'</span></div>';});
+  el.innerHTML=h;
+}
+
+// Кассы
+function rptKassaName(id,v){var k=(_rptData.kassas||[]).find(function(x){return x.id===id;});if(k)k.name=v;_rptAutoSave();}
+function rptKassaStatus(id,v){var k=(_rptData.kassas||[]).find(function(x){return x.id===id;});if(k)k.status=v;_rptAutoSave();}
+function rptKassaVal(id,fk,v){var k=(_rptData.kassas||[]).find(function(x){return x.id===id;});if(k)k[fk]=_rptN(v);rptRefreshSummary();_rptAutoSave();}
+function rptAddKassa(){_rptData.kassas.push(_rptNewKassa(_rptData.kassas.length+1));rptRender();_rptAutoSave();}
+function rptDelKassa(id){if(_rptData.kassas.length<=1)return;_rptData.kassas=_rptData.kassas.filter(function(x){return x.id!==id;});rptRender();_rptAutoSave();}
+// Расходы
+function rptAddRashod(){_rptData.rashod_rows.push({id:'r'+Date.now(),name:'',sum:0});rptRender();}
+function rptDelRashod(id){_rptData.rashod_rows=_rptData.rashod_rows.filter(function(x){return x.id!==id;});rptRender();_rptAutoSave();}
+function rptRashodName(id,v){var r=(_rptData.rashod_rows||[]).find(function(x){return x.id===id;});if(r)r.name=v;_rptAutoSave();}
+function rptRashodVal(id,v){var r=(_rptData.rashod_rows||[]).find(function(x){return x.id===id;});if(r)r.sum=_rptN(v);var el=document.getElementById('rpt-rashod-total');if(el)el.textContent='('+_rptFmt(_rptRashodTotal())+')';_rptAutoSave();}
+// Авансы
+function rptAddAvans(){_rptData.avans_rows.push({id:'a'+Date.now(),name:'',sum:0});rptRender();}
+function rptDelAvans(id){_rptData.avans_rows=_rptData.avans_rows.filter(function(x){return x.id!==id;});rptRender();_rptAutoSave();}
+function rptAvansName(id,v){var r=(_rptData.avans_rows||[]).find(function(x){return x.id===id;});if(r)r.name=v;_rptAutoSave();}
+function rptAvansVal(id,v){var r=(_rptData.avans_rows||[]).find(function(x){return x.id===id;});if(r)r.sum=_rptN(v);var el=document.getElementById('rpt-avans-total');if(el)el.textContent='('+_rptFmt(_rptAvansTotal())+')';_rptAutoSave();}
 </script>
 <!-- RENT_BLOCK_END -->
 </body>

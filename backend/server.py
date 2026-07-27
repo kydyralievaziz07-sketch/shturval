@@ -8011,6 +8011,31 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 src = "1С" if _co == BIZMART_ID else "Wildberries"
                 return self._send(200, {"error": "Нет связи с %s: %s" % (src, e)})
+        if self.path.startswith("/api/dailyrep"):
+            from urllib.parse import urlparse, parse_qs
+            user = self._user()
+            if not user:
+                return self._send(401, {"error": "Требуется вход"})
+            if method == "GET":
+                qs2 = parse_qs(urlparse(self.path).query)
+                date_ru = qs2.get("date", [""])[0].strip()
+                key = "dailyrep_%s_%s" % (COMPANY_ID, date_ru.replace(".", ""))
+                val = kv_load(key)
+                import ast as _ast
+                if val and isinstance(val, str):
+                    try: val = json.loads(val)
+                    except Exception:
+                        try: val = _ast.literal_eval(val)
+                        except Exception: val = None
+                return self._send(200, val or {})
+            elif method == "POST":
+                body_obj = json.loads(req_body or "{}")
+                date_ru = (body_obj.get("date") or "").strip()
+                if not date_ru:
+                    return self._send(400, {"error": "Нет даты"})
+                key = "dailyrep_%s_%s" % (COMPANY_ID, date_ru.replace(".", ""))
+                kv_save(key, json.dumps(body_obj, ensure_ascii=False))
+                return self._send(200, {"ok": True})
         if self.path.startswith("/api/assortment"):
             from urllib.parse import urlparse, parse_qs
             _co = (self._user() or {}).get("company") or COMPANY_ID
