@@ -82,6 +82,7 @@ def load_secret():
     cfg["TG_CHANNEL_BIZMART"] = env("TG_CHANNEL_BIZMART")  # @канал или -100xxx Telegram
     cfg["TG_BOT_USERNAME"] = env("TG_BOT_USERNAME")       # @username бота (для показа)
     cfg["TG_WEBHOOK_SECRET"] = env("TG_WEBHOOK_SECRET")   # секрет вебхука Telegram (fail-closed при заданном)
+    cfg["TG_REPORT_GROUP"] = env("TG_REPORT_GROUP")       # chat_id группы для «Ежедневного отчёта»
     # Название компании для этого деплоя (мульти-тенант: bizmart / freeways / joru...)
     cfg["BRAND_NAME"] = env("BRAND_NAME") or "Штурвал"
     return cfg
