@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.45.0<br>Демо-аккаунт (demo/demo2026) полностью удалён; старый демо-флаг автоматически стирается
+      Штурвал v4.46.0<br>В «Отчёт по продажам» добавлен «Контроль потерь»: продажи по 0/1 сом и со скидкой ≥80% считаются из чеков сами и обновляются с периодом
   </aside>
 
   <!-- MAIN -->
@@ -1066,6 +1066,7 @@
       </div>
       <div id="report-kpis" class="kpis" style="margin-bottom:14px"></div>
       <div id="report-charts" class="grid2" style="margin-bottom:14px"></div>
+      <div id="report-audit" style="margin-bottom:14px"></div>
       <div style="display:flex;gap:8px;align-items:center;margin:6px 0 14px;flex-wrap:wrap">
         <input id="report-search" type="search" placeholder="🔍 Поиск категории или товара…" oninput="renderReport()" style="flex:1;min-width:200px;background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:7px 10px;font-size:13px">
         <button class="btn ghost" style="font-size:12px;padding:6px 12px" onclick="exportReport()">⬇️ В Excel</button>
@@ -3729,6 +3730,59 @@
     if(prods.length) html+='<div class="card"><h3 style="margin:0 0 8px">🛒 Товары ('+prods.length+')</h3><div style="overflow:auto"><table style="width:100%;font-size:13px;border-collapse:collapse"><tr style="text-align:left;color:var(--muted)"><th style="padding:5px 8px">Товар</th><th style="padding:5px 8px">Категория</th><th style="padding:5px 8px;text-align:right">Продано</th><th style="padding:5px 8px;text-align:right">Выручка</th><th style="padding:5px 8px;text-align:right">Прибыль</th></tr>'+prods.slice(0,200).map(p=>'<tr style="border-top:1px solid var(--line)"><td style="padding:5px 8px">'+esc(p.i.name)+'</td><td style="padding:5px 8px;color:var(--muted)">'+esc(p.path)+'</td><td style="padding:5px 8px;text-align:right">'+(p.i.qty||0).toLocaleString('ru-RU')+'</td><td style="padding:5px 8px;text-align:right">'+fmt(p.i.revenue)+'</td><td style="padding:5px 8px;text-align:right;font-weight:600">'+fmt(p.i.profit)+'</td></tr>').join('')+'</table></div></div>';
     return html||'<div class="card"><span style="color:var(--muted);font-size:13px">Ничего не найдено. (Товары ищутся среди топ-15 по прибыли в каждой категории.)</span></div>';
   }
+  const AU_KINDS=[
+    {k:'zero',label:'Продано по 0 сом',color:'#ff6b6b',emoji:'🔴'},
+    {k:'one', label:'Продано по 1 сом',color:'#ffb84d',emoji:'🟠'},
+    {k:'big', label:'Скидка ≥80%',     color:'#F1BC37',emoji:'🟡'}];
+  function reportAuditHtml(au){
+    if(!au||!au.total) return '';   // старый снимок без аудита — появится после пересчёта
+    const t=au.total;
+    if(!t.pos) return '<div class="card" style="border-left:3px solid #39d98a"><h3 style="margin:0 0 4px">🛡️ Контроль потерь</h3><div style="color:var(--muted);font-size:13px">✅ За период не найдено продаж по 0 / 1 сом или со скидкой ≥80%. Чисто.</div></div>';
+    const chips=AU_KINDS.map(K=>{ const v=(au.kinds||{})[K.k]||{pos:0,qty:0,cost:0};
+      return '<div style="flex:1;min-width:150px;background:var(--panel);border:1px solid var(--line);border-left:3px solid '+K.color+';border-radius:10px;padding:10px 12px">'+
+        '<div style="font-size:12px;color:var(--muted)">'+K.emoji+' '+K.label+'</div>'+
+        '<div style="font-size:18px;font-weight:700;margin-top:2px">'+v.pos+' <span style="font-size:12px;color:var(--muted);font-weight:400">поз · '+v.qty+' шт</span></div>'+
+        '<div style="font-size:12px;color:var(--muted)">себест. '+fmt(v.cost)+' сом</div></div>'; }).join('');
+    const kass=(au.by_kassa||[]).map(k=>'<span style="display:inline-block;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:12px;margin:2px 4px 2px 0">'+esc(k.kassa)+' — <b>'+k.pos+'</b> поз · '+fmt(k.cost)+' сом</span>').join('');
+    const cat=(au.by_cat||[]).slice(0,14).map(c=>'<tr style="border-top:1px solid var(--line)"><td style="padding:4px 8px">'+esc(c.cat)+'</td><td style="padding:4px 8px;text-align:right">'+c.pos+'</td><td style="padding:4px 8px;text-align:right">'+c.qty+'</td><td style="padding:4px 8px;text-align:right;font-weight:600">'+fmt(c.cost)+'</td></tr>').join('');
+    const catTbl='<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px"><tr style="text-align:left;color:var(--muted)"><th style="padding:4px 8px">Категория</th><th style="padding:4px 8px;text-align:right">Позиций</th><th style="padding:4px 8px;text-align:right">Штук</th><th style="padding:4px 8px;text-align:right">Себестоимость</th></tr>'+cat+'</table></div>';
+    const KRU={zero:'0 сом',one:'1 сом',big:'скидка ≥80%'}, KCL={zero:'#ff6b6b',one:'#ffb84d',big:'#F1BC37'};
+    const rows=(au.rows||[]).map(r=>'<tr style="border-top:1px solid var(--line)">'+
+      '<td style="padding:3px 6px;white-space:nowrap">'+esc(r.date)+'</td>'+
+      '<td style="padding:3px 6px">'+esc(r.cat)+'</td>'+
+      '<td style="padding:3px 6px">'+esc(r.name)+'</td>'+
+      '<td style="padding:3px 6px;text-align:right">'+r.qty+'</td>'+
+      '<td style="padding:3px 6px;text-align:right;color:var(--muted)">'+fmt(r.price)+'</td>'+
+      '<td style="padding:3px 6px;text-align:right">'+fmt(r.sale)+'</td>'+
+      '<td style="padding:3px 6px;text-align:right">'+fmt(r.cost)+'</td>'+
+      '<td style="padding:3px 6px;text-align:right;color:#ff6b6b;font-weight:600">'+fmt(r.profit)+'</td>'+
+      '<td style="padding:3px 6px;text-align:right">'+(r.disc||0)+'%</td>'+
+      '<td style="padding:3px 6px;white-space:nowrap">'+esc(r.kassa)+'</td>'+
+      '<td style="padding:3px 6px"><span style="color:'+(KCL[r.kind]||'#888')+'">'+(KRU[r.kind]||'')+'</span></td></tr>').join('');
+    const cap=au.rows_capped?('<div class="note" style="font-size:11px;margin-top:6px">Показаны '+(au.rows||[]).length+' крупнейших по себестоимости из '+au.rows_total+' позиций (полный список — в выгрузке Excel).</div>'):'';
+    const detail='<details class="rtree" style="margin-top:10px"><summary style="cursor:pointer;font-size:13px;font-weight:600;padding:6px 0;list-style:none">▸ Показать все '+t.pos+' позиций (дата · товар · касса)</summary>'+
+      '<div style="overflow:auto;max-height:520px;margin-top:6px"><table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="text-align:left;color:var(--muted)"><th style="padding:3px 6px">Дата</th><th style="padding:3px 6px">Категория</th><th style="padding:3px 6px">Товар</th><th style="padding:3px 6px;text-align:right">Кол-во</th><th style="padding:3px 6px;text-align:right">Прайс</th><th style="padding:3px 6px;text-align:right">Продано</th><th style="padding:3px 6px;text-align:right">Себест.</th><th style="padding:3px 6px;text-align:right">Убыток</th><th style="padding:3px 6px;text-align:right">Скидка</th><th style="padding:3px 6px">Касса</th><th style="padding:3px 6px">Тип</th></tr>'+rows+'</table></div>'+cap+'</details>';
+    return '<div class="card" style="border-left:3px solid #ff6b6b">'+
+      '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">'+
+        '<h3 style="margin:0">🚨 Контроль потерь <span style="font-size:11px;color:var(--muted);font-weight:400">· считается из чеков сам</span></h3>'+
+        '<button class="btn ghost" style="font-size:12px;padding:5px 11px" onclick="exportAudit()">⬇️ В Excel</button></div>'+
+      '<div style="font-size:14px;margin:8px 0 4px"><b>'+t.pos+'</b> позиций · <b>'+t.qty+'</b> шт · потери по себестоимости <b style="color:#ff6b6b">'+fmt(t.cost)+' сом</b></div>'+
+      '<div class="note" style="font-size:12px;margin-bottom:12px">Товары, ушедшие по <b>0 сом</b>, <b>1 сом</b> или со скидкой <b>≥80%</b>. Этот убыток <b>уже вычтен</b> из чистой прибыли выше — карточка показывает, <b>где именно</b> он возник (категория / касса / день), чтобы можно было разобраться.</div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">'+chips+'</div>'+
+      (kass?'<div style="font-size:12px;color:var(--muted);margin-bottom:4px">По кассам:</div><div style="margin-bottom:12px">'+kass+'</div>':'')+
+      '<div style="font-size:13px;font-weight:600;margin-bottom:4px">По категориям</div>'+catTbl+detail+'</div>';
+  }
+  function exportAudit(){
+    const d=_reportData[reportDays], au=d&&d.audit;
+    if(!au||!au.total||!au.total.pos){ alert('За период потерь не найдено — выгружать нечего.'); return; }
+    const KRU={zero:'0 сом',one:'1 сом',big:'скидка ≥80%'};
+    const rows=[['BIZMART — контроль потерь (0 / 1 сом, скидка ≥80%)'],
+      ['Период',(d.from||'')+' … '+(d.to||''),(d.period_days||0)+' дн.'],
+      ['Итого позиций',au.total.pos,'Штук',au.total.qty,'Себестоимость',au.total.cost],[],
+      ['Дата','Категория','Товар','Кол-во','Прайс','Продано','Себестоимость','Убыток','Скидка %','Касса','Тип']];
+    (au.rows||[]).forEach(r=>rows.push([r.date,r.cat,r.name,r.qty,r.price,r.sale,r.cost,r.profit,r.disc,r.kassa,KRU[r.kind]||r.kind]));
+    downloadCSV('bizmart-контроль-потерь.csv',rows);
+  }
   function renderReport(){
     const d=_reportData[reportDays];
     const st=document.getElementById('report-status');
@@ -3742,6 +3796,7 @@
     if(kp) kp.innerHTML=kpiCard('Период',(periodWord(reportDays).trim()||((d.period_days||0)+' дн.')))+km('Выручка',d.total_revenue)+km('Чистая прибыль',d.total_profit)+kpiCard('Средняя маржа',(d.avg_margin||0)+'%');
     const tree=(d.tree&&d.tree.length)?d.tree:floorsToTree(d.floors||[]);
     if(ch) ch.innerHTML=reportCharts(tree);
+    const auEl=document.getElementById('report-audit'); if(auEl) auEl.innerHTML=reportAuditHtml(d.audit);
     const qEl=document.getElementById('report-search'); const q=(qEl?qEl.value:'').trim().toLowerCase();
     if(q){ box.innerHTML=reportSearch(tree,q); renderMoney(); return; }
     box.innerHTML=tree.length?reportTreeHtml(tree,0):'<div class="card"><span style="color:var(--muted);font-size:13px">Нет данных за период.</span></div>';

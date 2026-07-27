@@ -4856,7 +4856,8 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
         for recs in ex.map(_pull, dates):
             fetched.append(recs)
-    for recs in fetched:
+    susp = []   # контроль потерь: подозрительные позиции (0 сом / 1 сом / скидка ≥80%)
+    for dd, recs in zip(dates, fetched):
         if recs is None:
             days_fail += 1
             continue
@@ -4871,6 +4872,7 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
             factor = (rtot / isum) if isum else 0
             sign = -1 if (x.get("operationType") == "Возврат" or rtot < 0) else 1
             pfac = factor if (factor and abs(factor - 1) > 0.001) else sign
+            seller = (x.get("seller") or "—")
             for it in items:
                 nm = (it.get("name") or "").strip()
                 if not nm:
@@ -4879,6 +4881,25 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
                 a["qty"] += sign * _num(it.get("qty"))
                 a["rev"] += _num(it.get("saleAmount")) * factor
                 a["profit"] += _num(it.get("profit")) * pfac
+                # контроль потерь — только продажи (возвраты не считаем)
+                if sign > 0:
+                    q = _num(it.get("qty")) or 1
+                    sa = _num(it.get("saleAmount"))
+                    pline = _num(it.get("price")) * q     # прайсовая сумма всей строки
+                    unit = (sa / q) if q else sa           # фактическая цена за штуку
+                    kind = None
+                    if unit < 0.5:        kind = "zero"    # продано по 0 сом
+                    elif unit < 1.5:      kind = "one"     # продано по 1 сом
+                    elif pline > 0 and sa / pline <= 0.2:  # отдано за ≤20% прайса = скидка ≥80%
+                        kind = "big"
+                    if kind:
+                        susp.append({"date": dd, "cid": name2cat.get(nm, ""), "name": nm,
+                                     "qty": int(round(q)), "sale": round(sa),
+                                     "cost": round(_num(it.get("costPrice"))),  # уже сумма всей строки
+                                     "profit": round(_num(it.get("profit"))),
+                                     "price": round(pline),
+                                     "disc": (round((1 - sa / pline) * 100) if pline > 0 else 0),
+                                     "kassa": seller, "kind": kind})
     # раскладка по группам
     groups = {}
     for nm, a in agg.items():
@@ -4977,6 +4998,40 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
                            "margin": round(i["rev"] and i["profit"] / i["rev"] * 100)} for i in items]}
     tree = [_ser_node(k, v) for k, v in troot["children"].items()]
     tree.sort(key=lambda x: -x["revenue"])
+    # ── КОНТРОЛЬ ПОТЕРЬ: агрегируем подозрительные позиции (сам считается из чеков) ──
+    def _leafcat(cid):
+        pp = (cpath(cid) if cid else [])
+        return (pp[-1] if pp else None) or "— без категории —"
+    au_kinds = {"zero": {"pos": 0, "qty": 0, "cost": 0, "loss": 0},
+                "one":  {"pos": 0, "qty": 0, "cost": 0, "loss": 0},
+                "big":  {"pos": 0, "qty": 0, "cost": 0, "loss": 0}}
+    au_cat = {}; au_kassa = {}; au_date = {}; au_rows = []
+    for s in susp:
+        k = s["kind"]; ak = au_kinds[k]
+        ak["pos"] += 1; ak["qty"] += s["qty"]; ak["cost"] += s["cost"]; ak["loss"] += s["profit"]
+        cat = _leafcat(s["cid"])
+        c = au_cat.setdefault(cat, {"pos": 0, "qty": 0, "cost": 0, "loss": 0})
+        c["pos"] += 1; c["qty"] += s["qty"]; c["cost"] += s["cost"]; c["loss"] += s["profit"]
+        ks = au_kassa.setdefault(s["kassa"], {"pos": 0, "cost": 0, "loss": 0})
+        ks["pos"] += 1; ks["cost"] += s["cost"]; ks["loss"] += s["profit"]
+        dtd = au_date.setdefault(s["date"], {"pos": 0, "cost": 0, "loss": 0})
+        dtd["pos"] += 1; dtd["cost"] += s["cost"]; dtd["loss"] += s["profit"]
+        au_rows.append({"date": s["date"], "cat": cat, "name": s["name"], "qty": s["qty"],
+                        "price": s["price"], "sale": s["sale"], "cost": s["cost"],
+                        "profit": s["profit"], "disc": s["disc"], "kassa": s["kassa"], "kind": k})
+    au_total = {"pos": len(susp),
+                "qty":  sum(v["qty"]  for v in au_kinds.values()),
+                "cost": sum(v["cost"] for v in au_kinds.values()),
+                "loss": sum(v["loss"] for v in au_kinds.values())}
+    au_rows.sort(key=lambda r: (-r["cost"], r["date"]))
+    AU_CAP = 1500
+    audit = {
+        "kinds": au_kinds, "total": au_total,
+        "by_cat":   sorted(({"cat": k, **v}   for k, v in au_cat.items()),   key=lambda x: -x["cost"]),
+        "by_kassa": sorted(({"kassa": k, **v} for k, v in au_kassa.items()), key=lambda x: -x["pos"]),
+        "by_date":  sorted(({"date": k, **v}  for k, v in au_date.items()),  key=lambda x: x["date"]),
+        "rows": au_rows[:AU_CAP], "rows_total": len(au_rows), "rows_capped": len(au_rows) > AU_CAP,
+    }
     res = {
         "period_days": days, "top_n": top_n,
         "from": dates[-1], "to": today,
@@ -4987,6 +5042,7 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
         "all_products": all_products,
         "floors": floors,
         "tree": tree,
+        "audit": audit,
         "generated_ts": int(time.time()),
         "updated": time.strftime("%d.%m.%Y %H:%M"),
     }
@@ -5037,6 +5093,8 @@ def get_assortment(days=ASSORT_DAYS):
             threading.Thread(target=_assort_refresh, kwargs={"days": days, "force": True}, daemon=True).start()
         return {"computing": True, "period_days": days, "groups": [], "floors": [], "tree": [],
                 "error": "Идёт расчёт за выбранный период — обновите страницу через минуту."}
+    if "audit" not in d:
+        st["next"] = 0   # снимок старого формата (без «Контроля потерь») — пересчитать сейчас
     if time.time() >= st.get("next", 0) and not st["refreshing"]:
         threading.Thread(target=_assort_refresh, kwargs={"days": days}, daemon=True).start()
     out = dict(d)
