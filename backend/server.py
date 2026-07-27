@@ -4565,7 +4565,7 @@ def build_sales(from_ts=None, to_ts=None, date_label=None):
     receipts = data.get("receipts", []) if isinstance(data, dict) else []
     sales_count = 0; gross = 0.0; net = 0.0; profit = 0.0
     returns_count = 0; returns_sum = 0.0
-    by_pay = {}; by_seller = {}; by_product = {}
+    by_pay = {}; by_seller = {}; by_product = {}; by_seller_pay = {}
     rows = []
     for x in receipts:
         total = _num(x.get("receiptTotal"))
@@ -4589,6 +4589,10 @@ def build_sales(from_ts=None, to_ts=None, date_label=None):
         s = (x.get("seller") or "—").strip() or "—"
         agg = by_seller.setdefault(s, {"count": 0, "sum": 0.0})
         agg["count"] += 1; agg["sum"] += total
+        sp = by_seller_pay.setdefault(s, {})
+        for pm in pays:
+            nm = (pm.get("name") or "—").strip() or "—"
+            sp[nm] = sp.get(nm, 0.0) + _num(pm.get("summ"))
         ts = _recv_ts(x.get("dateTime"))
         items_text = "; ".join("{} ×{}".format((it.get("name") or "").strip(),
                                int(_num(it.get("qty")))) for it in x.get("items", [])[:6])
@@ -4609,6 +4613,7 @@ def build_sales(from_ts=None, to_ts=None, date_label=None):
         "profit": round(profit), "avg_check": round(gross / sales_count) if sales_count else 0,
         "returns_count": returns_count, "returns_sum": round(returns_sum),
         "by_pay": pay_list, "by_seller": seller_list, "top_products": top,
+        "by_seller_pay": {k: {n: round(v) for n, v in v2.items()} for k, v2 in by_seller_pay.items()},
         "receipts": rows[:80], "total_receipts": len(receipts),
         "updated": time.strftime("%H:%M:%S"),
     }
@@ -4671,6 +4676,79 @@ def sales_day(date):
                 "error": "За этот день у нас ещё нет сохранённых данных."}
     except Exception as e:
         return {"error": str(e), "receipts": [], "date": date}
+
+# ===== Ежедневный отчёт (кассы): автосбор способов оплаты из чеков 1С =====
+def _rpt_pay_key(name):
+    """Название способа оплаты из чека 1С (AllPaymentMethods[].name) → ключ поля кассы
+    в дневном отчёте (см. RPT_FIELDS во фронтенде). Реальные значения сверены вживую
+    2026-07-27 через /receipts/v2: 'Наличный', 'Мбанк', 'Оптима 1', 'Оптима 2 ',
+    'Payda Оптима ', 'М+', 'Онлайн  перевод' (пробелы у 1С нестабильны — нормализуем)."""
+    n = re.sub(r"\s+", " ", (name or "").strip().lower())
+    if "payda" in n or "пайда" in n:
+        return "payda"
+    if "налич" in n:
+        return "obshiy"
+    if "мбанк" in n:
+        return "mbank"
+    if "оптима" in n:
+        if "1" in n:
+            return "optima1"
+        if "2" in n:
+            return "optima2"
+    if "зеро" in n or n == "zero":
+        return "zero"
+    if "cash2u" in n:
+        return "cash2u"
+    if "онлайн" in n and "перевод" in n:
+        return "onl_per"
+    if n.replace(" ", "") in ("м+", "m+"):
+        return "m_plus"
+    return None
+
+def _rpt_kassa_num(name):
+    """Номер кассы из названия ('Касса №1', '1-Касса', 'Касса 2', ...) → int или None."""
+    m = re.search(r"\d+", name or "")
+    return int(m.group()) if m else None
+
+def _rpt_auto_pay(by_seller_pay):
+    """{продавец: {способ_оплаты: сумма}} из build_sales → {номер_кассы: {ключ_поля: сумма}}.
+    Способ оплаты без известного соответствия (новый в 1С, ещё не описан в _rpt_pay_key)
+    не пропадает молча — попадает в "_unmatched", чтобы касса не потеряла деньги незаметно."""
+    out = {}
+    for seller, pays in (by_seller_pay or {}).items():
+        num = _rpt_kassa_num(seller)
+        if num is None:
+            continue
+        row = out.setdefault(num, {})
+        for name, val in (pays or {}).items():
+            key = _rpt_pay_key(name)
+            if key:
+                row[key] = row.get(key, 0) + round(val)
+            else:
+                row["_unmatched"] = row.get("_unmatched", 0) + round(val)
+    return out
+
+def _rpt_iso_from_ru(date_ru):
+    parts = (date_ru or "").split(".")
+    if len(parts) != 3:
+        return None
+    d, m, y = parts
+    return "%s-%s-%s" % (y, m, d)
+
+def rpt_auto_pay_for_date(date_ru):
+    """Автосчёт способов оплаты по кассам за конкретный день (ДД.ММ.ГГГГ). Сегодня — живьём
+    из 1С (кэш 30с внутри sales_day/build_sales); прошлые дни — из сохранённого в Supabase
+    детального снимка (sales_daily.detail.by_seller_pay), если он там есть."""
+    iso = _rpt_iso_from_ru(date_ru)
+    if not iso:
+        return {}
+    try:
+        s = sales_day(iso)
+    except Exception:
+        return {}
+    if not isinstance(s, dict):
+        return {}
+    return _rpt_auto_pay(s.get("by_seller_pay", {}))
 
 def sales_history(days=14):
     """История продаж по дням из Supabase (последние N дней, по возрастанию даты)."""
@@ -6926,7 +7004,11 @@ class Handler(BaseHTTPRequestHandler):
             user = self._user()
             if not user:
                 return self._send(401, {"error": "Требуется вход"})
-            body_obj = json.loads(req_body or "{}")
+            try:
+                _length = int(self.headers.get("Content-Length", 0))
+                body_obj = json.loads(self.rfile.read(_length) or b"{}") if _length else {}
+            except Exception:
+                return self._send(400, {"error": "неверный JSON"})
             report = body_obj.get("report", {})
             chat_id = CFG.get("TG_REPORT_GROUP", "")
             bot_token = CFG.get("TG_BOT_TOKEN", "")
@@ -6937,11 +7019,13 @@ class Handler(BaseHTTPRequestHandler):
             lines = ["📋 *Отчёт Bizmart за %s*" % date_str, ""]
             kassas = report.get("kassas", [])
             kassa_total = 0.0
+            pay_keys = ("obshiy", "mbank", "optima1", "optima2", "zero", "m_biz",
+                        "cash2u", "onl_per", "onl_nal", "payda", "m_plus", "beznal")
             for k in kassas:
                 name = k.get("name", "Касса")
-                obshiy = float(k.get("obshiy", 0) or 0)
-                kassa_total += obshiy
-                lines.append("🏦 *%s* — итого: %s" % (name, "{:,.0f}".format(obshiy).replace(",", " ")))
+                itogo = sum(float(k.get(pk, 0) or 0) for pk in pay_keys)
+                kassa_total += itogo
+                lines.append("🏦 *%s* — итого: %s" % (name, "{:,.0f}".format(itogo).replace(",", " ")))
             lines.append("")
             lines.append("💰 *Общий итог по кассам*: %s" % "{:,.0f}".format(kassa_total).replace(",", " "))
             lines.append("")
@@ -7906,6 +7990,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True, "data": gg_sales_report(_co)})
             except Exception as e:
                 return self._send(200, {"ok": False, "error": str(e)})
+        if self.path.startswith("/api/dailyrep"):
+            user = self._user()
+            if not user:
+                return self._send(401, {"error": "Требуется вход"})
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body_obj = json.loads(self.rfile.read(length) or b"{}") if length else {}
+            except Exception:
+                return self._send(400, {"error": "неверный JSON"})
+            date_ru = (body_obj.get("date") or "").strip()
+            if not date_ru:
+                return self._send(400, {"error": "Нет даты"})
+            key = "dailyrep_%s_%s" % (COMPANY_ID, date_ru.replace(".", ""))
+            kv_save(key, json.dumps(body_obj, ensure_ascii=False))
+            return self._send(200, {"ok": True})
         self._send(404, {"error": "не найдено"})
 
     def do_GET(self):
@@ -8123,26 +8222,21 @@ class Handler(BaseHTTPRequestHandler):
             user = self._user()
             if not user:
                 return self._send(401, {"error": "Требуется вход"})
-            if method == "GET":
-                qs2 = parse_qs(urlparse(self.path).query)
-                date_ru = qs2.get("date", [""])[0].strip()
-                key = "dailyrep_%s_%s" % (COMPANY_ID, date_ru.replace(".", ""))
-                val = kv_load(key)
-                import ast as _ast
-                if val and isinstance(val, str):
-                    try: val = json.loads(val)
-                    except Exception:
-                        try: val = _ast.literal_eval(val)
-                        except Exception: val = None
-                return self._send(200, val or {})
-            elif method == "POST":
-                body_obj = json.loads(req_body or "{}")
-                date_ru = (body_obj.get("date") or "").strip()
-                if not date_ru:
-                    return self._send(400, {"error": "Нет даты"})
-                key = "dailyrep_%s_%s" % (COMPANY_ID, date_ru.replace(".", ""))
-                kv_save(key, json.dumps(body_obj, ensure_ascii=False))
-                return self._send(200, {"ok": True})
+            qs2 = parse_qs(urlparse(self.path).query)
+            date_ru = qs2.get("date", [""])[0].strip()
+            key = "dailyrep_%s_%s" % (COMPANY_ID, date_ru.replace(".", ""))
+            val = kv_load(key)
+            if val and isinstance(val, str):
+                try:
+                    val = json.loads(val)
+                except Exception:
+                    val = None
+            val = val or {}
+            try:
+                val["auto_pay"] = rpt_auto_pay_for_date(date_ru)
+            except Exception:
+                val["auto_pay"] = {}
+            return self._send(200, val)
         if self.path.startswith("/api/assortment"):
             from urllib.parse import urlparse, parse_qs
             _co = (self._user() or {}).get("company") or COMPANY_ID

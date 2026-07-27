@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.47.0<br>Telegram-отчёт по кассам упрощён: вместо списка способов оплаты — итог по каждой кассе и общий итог
+      Штурвал v4.48.0<br>«Ежедневный отчёт»: способы оплаты по кассам теперь считаются сами из чеков 1С (обновление раз в минуту), плюс починены сохранение отчёта и отправка в Telegram (были сломаны)
   </aside>
 
   <!-- MAIN -->
@@ -8654,6 +8654,10 @@ const RPT_FIELDS=[
   {k:'beznal',  l:'Безналичный'},
   {k:'ostatok', l:'Остаток'},
 ];
+// Способы оплаты, которые считаются сами из чеков 1С (сумма по кассе за день) — не вводятся
+// вручную. Остальные поля (М бизнес, Онл.нал, Безналичный, Остаток) не приходят из 1С отдельно
+// и остаются ручными.
+const RPT_AUTO_KEYS=['obshiy','mbank','optima1','optima2','zero','cash2u','onl_per','payda','m_plus'];
 function _rptTodayIso(){var d=new Date(),m=d.getMonth()+1,dy=d.getDate();return d.getFullYear()+'-'+(m<10?'0'+m:m)+'-'+(dy<10?'0'+dy:dy);}
 function _rptIsoToRu(s){if(!s)return '';var p=s.split('-');return p.length<3?s:p[2]+'.'+p[1]+'.'+p[0];}
 function _rptRuToIso(s){if(!s)return '';var p=s.split('.');return p.length<3?s:p[2]+'-'+p[1]+'-'+p[0];}
@@ -8661,11 +8665,47 @@ function _rptN(v){return parseFloat(String(v||'0').replace(/[\s ]/g,'').replace(
 function _rptFmt(n){return n?String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g,' '):'0';}
 function _rptNewKassa(num){var o={id:'k'+Date.now()+'_'+num,name:num+'-Касса',status:true};RPT_FIELDS.forEach(function(f){o[f.k]=0;});return o;}
 function _rptEmpty(){return {date:_rptIsoToRu(_rptTodayIso()),kassas:[_rptNewKassa(1),_rptNewKassa(2),_rptNewKassa(3)],rashod_rows:[],avans_rows:[],oplata_rows:[],fond_rows:[],izyatie_rows:[],mbank_total:0,schetchik:0,n_status:false};}
+// Наложить авто-суммы способов оплаты (из auto_pay, посчитано бэкендом из чеков 1С) на кассы —
+// по номеру в названии кассы ("1-Касса", "Касса №1" → 1).
+function _rptApplyAuto(d){
+  if(!d) return;
+  var auto=d.auto_pay||{};
+  (d.kassas||[]).forEach(function(k){
+    var m=(k.name||'').match(/\d+/);
+    var row=m?auto[m[0]]:null;
+    RPT_AUTO_KEYS.forEach(function(fk){ k[fk]=(row&&row[fk]!=null)?row[fk]:0; });
+    k._unmatched=(row&&row._unmatched)||0;
+  });
+}
 
 function rptInit(){
   var inp=document.getElementById('rpt-date-inp');
   if(inp&&!inp.value) inp.value=_rptTodayIso();
   rptLoad();
+  startRptAuto();
+}
+// автообновление: пока вкладка «Отчёты» открыта — раз в минуту пересчитываем способы оплаты
+// по кассам из свежих чеков 1С (не трогая расходы/авансы и прочие ручные поля)
+var rptAutoTimer=null;
+function startRptAuto(){
+  if(rptAutoTimer) return;
+  rptAutoTimer=setInterval(function(){
+    var tab=document.getElementById('tab-reportdash');
+    if(!tab||tab.classList.contains('hide')){ clearInterval(rptAutoTimer); rptAutoTimer=null; return; }
+    rptRefreshAuto();
+  },60000);
+}
+function rptRefreshAuto(){
+  if(!_rptData) return;
+  var inp=document.getElementById('rpt-date-inp');
+  var dateRu=_rptIsoToRu(inp?inp.value:_rptTodayIso());
+  apiFetch('/api/dailyrep?date='+encodeURIComponent(dateRu),{},ONEC_BASE).then(function(r){return r.json();}).then(function(d){
+    if(!_rptData||!d) return;
+    _rptData.auto_pay=d.auto_pay||{};
+    _rptApplyAuto(_rptData);
+    rptRender();
+    rptSave();
+  }).catch(function(){});
 }
 function rptLoad(){
   var inp=document.getElementById('rpt-date-inp');
@@ -8673,7 +8713,11 @@ function rptLoad(){
   var box=document.getElementById('rpt-body');
   if(box) box.innerHTML='<div style="color:var(--muted);padding:20px">Загрузка…</div>';
   apiFetch('/api/dailyrep?date='+encodeURIComponent(dateRu),{},ONEC_BASE).then(function(r){return r.json();}).then(function(d){
-    _rptData=(d&&d.date)?d:_rptEmpty(); _rptData.date=dateRu; rptRender();
+    _rptData=(d&&d.date)?d:_rptEmpty();
+    _rptData.date=dateRu;
+    _rptData.auto_pay=(d&&d.auto_pay)||{};
+    _rptApplyAuto(_rptData);
+    rptRender();
   }).catch(function(){_rptData=_rptEmpty(); _rptData.date=_rptIsoToRu(inp?inp.value:_rptTodayIso()); rptRender();});
 }
 function rptSave(){
@@ -8699,6 +8743,7 @@ function rptSendTg(){
 }
 
 function _rptSumKassas(fk){var s=0;if(_rptData)_rptData.kassas.forEach(function(k){s+=_rptN(k[fk]);});return s;}
+function _rptGrandTotal(){var s=0;RPT_FIELDS.forEach(function(f){if(f.k!=='ostatok')s+=_rptSumKassas(f.k);});return s;}
 function _rptRashodTotal(){var s=0;if(_rptData)(_rptData.rashod_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
 function _rptAvansTotal(){var s=0;if(_rptData)(_rptData.avans_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
 function _rptOplataTotal(){var s=0;if(_rptData)(_rptData.oplata_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
@@ -8720,9 +8765,18 @@ function rptRender(){
     h+='</div><button class="btn ghost" style="padding:2px 8px;font-size:12px;color:var(--red)" onclick="rptDelKassa(\''+k.id+'\')">✕</button></div>';
     RPT_FIELDS.forEach(function(f){
       var val=_rptN(k[f.k]);
-      h+='<div class="rpt-field"><span>'+esc(f.l)+'</span>';
-      h+='<input type="number" inputmode="numeric" value="'+(val||'')+'" placeholder="0" oninput="rptKassaVal(\''+k.id+'\',\''+f.k+'\',this.value)"></div>';
+      var isAuto=RPT_AUTO_KEYS.indexOf(f.k)>=0;
+      h+='<div class="rpt-field"><span>'+esc(f.l)+(isAuto?' <span style="font-size:10px;color:var(--muted)" title="Считается само из чеков 1С">🔄</span>':'')+'</span>';
+      if(isAuto){
+        h+='<span style="font-weight:'+(f.k==='obshiy'?'700':'400')+'">'+_rptFmt(val)+'</span>';
+      } else {
+        h+='<input type="number" inputmode="numeric" value="'+(val||'')+'" placeholder="0" oninput="rptKassaVal(\''+k.id+'\',\''+f.k+'\',this.value)">';
+      }
+      h+='</div>';
     });
+    if(k._unmatched){
+      h+='<div class="rpt-field" style="color:var(--red)">⚠️ Новый способ оплаты в 1С (не распознан): '+_rptFmt(k._unmatched)+'</div>';
+    }
     h+='</div>';
   });
   h+='<button class="btn ghost" style="width:100%;margin-bottom:12px" onclick="rptAddKassa()">➕ Добавить кассу</button>';
@@ -8805,6 +8859,7 @@ function rptRender(){
   // Итого (авто-сумма по кассам)
   h+='<div class="rpt-kassa"><div class="rpt-section-head"><span>Итого по всем кассам</span></div>';
   h+='<div id="rpt-summary">';
+  h+='<div class="rpt-field" style="font-weight:700;font-size:15px"><span>💰 Общий итог (выручка)</span><span>'+_rptFmt(_rptGrandTotal())+'</span></div>';
   RPT_FIELDS.forEach(function(f){var v=_rptSumKassas(f.k);h+='<div class="rpt-field"><span>'+esc(f.l)+'</span><span style="font-weight:'+(f.k==='obshiy'?'700':'400')+'">'+_rptFmt(v)+'</span></div>';});
   h+='<div class="rpt-field" style="border-top:1px solid var(--line);margin-top:4px;padding-top:4px"><span>Расходдор (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptRashodTotal())+'</span></div>';
   h+='<div class="rpt-field"><span>Авансы (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptAvansTotal())+'</span></div>';
@@ -8824,6 +8879,7 @@ function rptRender(){
 function rptRefreshSummary(){
   var el=document.getElementById('rpt-summary'); if(!el) return;
   var h='';
+  h+='<div class="rpt-field" style="font-weight:700;font-size:15px"><span>💰 Общий итог (выручка)</span><span>'+_rptFmt(_rptGrandTotal())+'</span></div>';
   RPT_FIELDS.forEach(function(f){var v=_rptSumKassas(f.k);h+='<div class="rpt-field"><span>'+esc(f.l)+'</span><span style="font-weight:'+(f.k==='obshiy'?'700':'400')+'">'+_rptFmt(v)+'</span></div>';});
   h+='<div class="rpt-field" style="border-top:1px solid var(--line);margin-top:4px;padding-top:4px"><span>Расходдор (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptRashodTotal())+'</span></div>';
   h+='<div class="rpt-field"><span>Авансы (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptAvansTotal())+'</span></div>';
