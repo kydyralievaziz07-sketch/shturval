@@ -626,7 +626,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.29.4<br>Авто Рент больше не зависает на «Загружаю…»: таймаут + авто-повтор при перезапуске сервера/сбое сети
+      Штурвал v4.29.5<br>Аренда: дату сдачи (конца) снова можно двигать назад (напр. клиент вернул авто раньше); дата начала у сотрудников по-прежнему заморожена
   </aside>
 
   <!-- MAIN -->
@@ -8163,7 +8163,7 @@
     if(type==='rental'){
       var _rLock=!!(id&&rec)&&!rentIsOwner();
       var _rStartAttr=_rLock?' disabled':' onchange="rfSyncEndMin()"';
-      var _rEndMin=_rLock?ruToIso(rec&&rec.end):ruToIso(rec&&rec.start);
+      var _rEndMin=ruToIso(rec&&rec.start);
       html=
         '<label>Машина (модель) *</label><select id="rf-model"><option value="">— выбрать —</option>'+_carOpts(rec&&rec.model)+'</select>'+
         '<label>Арендатор</label><input id="rf-renter" value="'+esc(rec&&rec.renter||'')+'" placeholder="имя">'+
@@ -8239,9 +8239,8 @@
       if(id && !rentIsOwner()){
         var _rrec=(rentD().rentals||[]).filter(function(x){return x.id===id;})[0];
         if(_rrec){
-          var _oS=ruToIso(_rrec.start), _oE=ruToIso(_rrec.end);
+          var _oS=ruToIso(_rrec.start);
           if(_oS&&_isoS!==_oS){ msg.textContent='Дату начала нельзя менять после сохранения.'; return; }
-          if(_oE&&_isoE<_oE){ msg.textContent='Дату конца можно только продлевать — не раньше '+isoToRu(_oE)+'.'; return; }
         }
       }
     } else if(type==='expense'){
