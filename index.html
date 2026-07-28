@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.64.0<br>Схождение: Изъятие теперь считается от «Общий» (сумма всех способов оплаты), а не от «Наличные»
+      Штурвал v4.65.0<br>Схождение: добавлена вторая проверка — сходится ли расчётное Изъятие с суммой «Наличные+Мбанк (от изъятия)»
   </aside>
 
   <!-- MAIN -->
@@ -8801,13 +8801,20 @@ function _rptReconcile(){
   var obschiy=_rptGrandTotal();
   var ostatok=_rptN(_rptData&&_rptData.ostatok_total);
   var izyatie=obschiy-_rptRashodTotal()-_rptAvansTotal()-_rptOplataTotal()-_rptFondTotal()-ostatok;
-  return {obschiy:obschiy, ostatok:ostatok, izyatie:izyatie};
+  var izyatieSplit=_rptN(_rptData&&_rptData.nalichnye_total)+_rptN(_rptData&&_rptData.mbank_total);
+  return {obschiy:obschiy, ostatok:ostatok, izyatie:izyatie, izyatieSplit:izyatieSplit, diff:izyatieSplit-izyatie};
 }
 function _rptReconcileHtml(){
   var r=_rptReconcile();
   var h='';
   h+='<div class="rpt-field"><span>Остаток (вписывают сами)</span><span style="font-weight:700">'+_rptFmt(r.ostatok)+'</span></div>';
   h+='<div class="rpt-field"><span>Изъятие (расчёт: Общий−Расходы−Авансы−Оплата−Фонд−Остаток)</span><span style="font-weight:700">'+_rptFmt(r.izyatie)+'</span></div>';
+  h+='<div class="rpt-field"><span>Наличные+Мбанк (от изъятия, факт)</span><span>'+_rptFmt(r.izyatieSplit)+'</span></div>';
+  if(Math.abs(r.diff)<1){
+    h+='<div class="rpt-field" style="font-weight:700"><span>✅ Сходится</span><span></span></div>';
+  } else {
+    h+='<div class="rpt-field" style="font-weight:700;color:var(--red)"><span>⚠️ Не сходится</span><span>'+(r.diff>0?'излишек ':'недостача ')+_rptFmt(Math.abs(r.diff))+'</span></div>';
+  }
   return h;
 }
 
@@ -8916,8 +8923,8 @@ function rptRender(){
   h+='</div>';
   h+='<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">';
   h+='<div class="rpt-field"><span>Остаток</span><input type="number" inputmode="numeric" value="'+(_rptN(d.ostatok_total)||'')+'" placeholder="0" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" oninput="_rptData.ostatok_total=_rptN(this.value);rptRefreshSummary();_rptAutoSave()"></div>';
-  h+='<div class="rpt-field"><span>Наличные (от изъятия)</span><input type="number" inputmode="numeric" value="'+(_rptN(d.nalichnye_total)||'')+'" placeholder="0" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" oninput="_rptData.nalichnye_total=_rptN(this.value);_rptAutoSave()"></div>';
-  h+='<div class="rpt-field"><span>Мбанк (от изъятия)</span><input type="number" inputmode="numeric" value="'+(_rptN(d.mbank_total)||'')+'" placeholder="0" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" oninput="_rptData.mbank_total=_rptN(this.value);_rptAutoSave()"></div>';
+  h+='<div class="rpt-field"><span>Наличные (от изъятия)</span><input type="number" inputmode="numeric" value="'+(_rptN(d.nalichnye_total)||'')+'" placeholder="0" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" oninput="_rptData.nalichnye_total=_rptN(this.value);rptRefreshSummary();_rptAutoSave()"></div>';
+  h+='<div class="rpt-field"><span>Мбанк (от изъятия)</span><input type="number" inputmode="numeric" value="'+(_rptN(d.mbank_total)||'')+'" placeholder="0" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" oninput="_rptData.mbank_total=_rptN(this.value);rptRefreshSummary();_rptAutoSave()"></div>';
   h+='<div class="rpt-field"><span>Счётчик</span><input type="number" inputmode="numeric" value="'+(_rptN(d.schetchik)||'')+'" placeholder="0" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" oninput="_rptData.schetchik=_rptN(this.value);_rptAutoSave()"></div>';
   h+='<div class="rpt-field"><span>Н</span><label style="cursor:pointer;display:flex;align-items:center;gap:4px"><input type="checkbox" '+(d.n_status?'checked':'')+' onchange="_rptData.n_status=this.checked;_rptAutoSave()"> ✅</label></div>';
   h+='</div></div>';

@@ -7189,6 +7189,14 @@ class Handler(BaseHTTPRequestHandler):
             lines.append("🧮 Схождение")
             lines.append("Остаток-%s" % _fmt(ostatok_sum))
             lines.append("Изъятие-%s" % _fmt(izyatie))
+            izyatie_split = _n(report.get("nalichnye_total")) + _n(report.get("mbank_total"))
+            split_diff = izyatie_split - izyatie
+            lines.append("Наличные+Мбанк (от изъятия, факт)-%s" % _fmt(izyatie_split))
+            if abs(split_diff) < 1:
+                lines.append("✅ Сходится")
+            else:
+                lines.append("⚠️ Не сходится: %s %s" % ("излишек" if split_diff > 0 else "недостача",
+                                                          _fmt(abs(split_diff))))
 
             loss_items = report.get("loss_items", [])
             if loss_items:
