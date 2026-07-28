@@ -7167,9 +7167,6 @@ class Handler(BaseHTTPRequestHandler):
             for key, label in PAY_FIELDS:
                 lines.append("%s-%s" % (label, _fmt(sum(_n(k.get(key)) for k in kassas))))
             lines.append("")
-            lines.append("Наличные (от изъятия)-%s" % _fmt(report.get("nalichnye_total", 0)))
-            lines.append("Мбанк (от изъятия)-%s" % _fmt(report.get("mbank_total", 0)))
-            lines.append("")
             lines.append("Счетчик-%s" % _fmt(report.get("schetchik", 0)))
             lines.append("Н" + ("✅" if report.get("n_status") else ""))
 
@@ -7189,9 +7186,11 @@ class Handler(BaseHTTPRequestHandler):
             lines.append("🧮 Схождение")
             lines.append("Остаток-%s" % _fmt(ostatok_sum))
             lines.append("Изъятие-%s" % _fmt(izyatie))
-            izyatie_split = _n(report.get("nalichnye_total")) + _n(report.get("mbank_total"))
+            nalichnye_izyatie = _n(report.get("nalichnye_total"))
+            mbank_izyatie = _n(report.get("mbank_total"))
+            izyatie_split = nalichnye_izyatie + mbank_izyatie
             split_diff = izyatie_split - izyatie
-            lines.append("Наличные+Мбанк (от изъятия, факт)-%s" % _fmt(izyatie_split))
+            lines.append("Наличные - %s мбанк-%s" % (_fmt(nalichnye_izyatie), _fmt(mbank_izyatie)))
             if abs(split_diff) < 1:
                 lines.append("✅ Сходится")
             else:

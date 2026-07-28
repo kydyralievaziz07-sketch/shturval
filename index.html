@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.65.1<br>Telegram-отчёт: «Наличные»/«Мбанк (от изъятия)» через тире, как везде в отчёте
+      Штурвал v4.66.0<br>Схождение: «Наличные»/«Мбанк (от изъятия)» одной строкой внутри блока, убраны из общего подвала отчёта
   </aside>
 
   <!-- MAIN -->
@@ -8809,7 +8809,7 @@ function _rptReconcileHtml(){
   var h='';
   h+='<div class="rpt-field"><span>Остаток (вписывают сами)</span><span style="font-weight:700">'+_rptFmt(r.ostatok)+'</span></div>';
   h+='<div class="rpt-field"><span>Изъятие (расчёт: Общий−Расходы−Авансы−Оплата−Фонд−Остаток)</span><span style="font-weight:700">'+_rptFmt(r.izyatie)+'</span></div>';
-  h+='<div class="rpt-field"><span>Наличные+Мбанк (от изъятия, факт)</span><span>'+_rptFmt(r.izyatieSplit)+'</span></div>';
+  h+='<div class="rpt-field"><span>Наличные − '+_rptFmt(_rptN(_rptData&&_rptData.nalichnye_total))+' мбанк-'+_rptFmt(_rptN(_rptData&&_rptData.mbank_total))+'</span><span>'+_rptFmt(r.izyatieSplit)+'</span></div>';
   if(Math.abs(r.diff)<1){
     h+='<div class="rpt-field" style="font-weight:700"><span>✅ Сходится</span><span></span></div>';
   } else {
