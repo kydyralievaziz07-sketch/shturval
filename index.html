@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.57.0<br>Telegram-отчёт переписан под старый формат кассиров (простой текст, «Расход»/«Изъятие» по кассам, «Контроль потерь» внизу)
+      Штурвал v4.58.0<br>«Онл.пер» в кассах снова редактируется вручную (убрано из авто-полей)
   </aside>
 
   <!-- MAIN -->
@@ -8674,7 +8674,7 @@ const RPT_FIELDS=[
 // Способы оплаты, которые считаются сами из чеков 1С (сумма по кассе за день) — не вводятся
 // вручную. Остальные поля (М бизнес, Онл.нал, Безналичный, Остаток) не приходят из 1С отдельно
 // и остаются ручными.
-const RPT_AUTO_KEYS=['obshiy','mbank','optima1','optima2','zero','cash2u','onl_per','payda','m_plus'];
+const RPT_AUTO_KEYS=['obshiy','mbank','optima1','optima2','zero','cash2u','payda','m_plus'];
 function _rptTodayIso(){var d=new Date(),m=d.getMonth()+1,dy=d.getDate();return d.getFullYear()+'-'+(m<10?'0'+m:m)+'-'+(dy<10?'0'+dy:dy);}
 function _rptIsoToRu(s){if(!s)return '';var p=s.split('-');return p.length<3?s:p[2]+'.'+p[1]+'.'+p[0];}
 function _rptRuToIso(s){if(!s)return '';var p=s.split('.');return p.length<3?s:p[2]+'-'+p[1]+'-'+p[0];}
