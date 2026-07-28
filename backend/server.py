@@ -7125,9 +7125,9 @@ class Handler(BaseHTTPRequestHandler):
             PAY_FIELDS = [
                 ("obshiy", "Общий"), ("mbank", "Мбанк пер"), ("optima1", "Оптима 1"),
                 ("optima2", "Оптима 2"), ("zero", "ЗЕРО"), ("m_biz", "М бизнес"),
-                ("rashod_k", "Расход"), ("cash2u", "Cash2u"), ("onl_per", "Онл.пер"),
+                ("cash2u", "Cash2u"), ("onl_per", "Онл.пер"),
                 ("onl_nal", "Онл.нал"), ("payda", "PAIDA опти"), ("m_plus", "М+"),
-                ("beznal", "Безналичный"), ("ostatok", "Остаток"),
+                ("beznal", "Безналичный"),
             ]
             for k in kassas:
                 name = k.get("name", "Касса")
@@ -7160,15 +7160,17 @@ class Handler(BaseHTTPRequestHandler):
             for key, label in PAY_FIELDS:
                 lines.append("%s-%s" % (label, _fmt(sum(_n(k.get(key)) for k in kassas))))
             lines.append("")
-            lines.append("Мбанк:%s" % _fmt(report.get("mbank_total", 0)))
+            lines.append("Наличные (от изъятия):%s" % _fmt(report.get("nalichnye_total", 0)))
+            lines.append("Мбанк (от изъятия):%s" % _fmt(report.get("mbank_total", 0)))
             lines.append("")
             lines.append("Счетчик-%s" % _fmt(report.get("schetchik", 0)))
             lines.append("Н" + ("✅" if report.get("n_status") else ""))
 
             # Изъятие считается по формуле (Наличные − Расходы − Авансы − Оплата − Фонд −
-            # Остаток) — единственное, что вписывают вручную, это Остаток по каждой кассе.
+            # Остаток) — единственное, что вписывают вручную, это Остаток (одним числом на
+            # весь день, по кассам его больше нет — как и Расход).
             nalichnye = sum(_n(k.get("obshiy")) for k in kassas)
-            ostatok_sum = sum(_n(k.get("ostatok")) for k in kassas)
+            ostatok_sum = _n(report.get("ostatok_total"))
             izyatie = (nalichnye - sum(_n(r.get("sum")) for r in report.get("rashod_rows", []))
                        - sum(_n(r.get("sum")) for r in report.get("avans_rows", []))
                        - sum(_n(r.get("sum")) for r in report.get("oplata_rows", []))
