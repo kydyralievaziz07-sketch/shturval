@@ -7175,10 +7175,11 @@ class Handler(BaseHTTPRequestHandler):
 
             # Изъятие считается по формуле (Наличные − Расходы − Авансы − Оплата − Фонд −
             # Остаток) — единственное, что вписывают вручную, это Остаток (одним числом на
-            # весь день, по кассам его больше нет — как и Расход).
-            nalichnye = sum(_n(k.get("obshiy")) for k in kassas)
+            # весь день, по кассам его больше нет — как и Расход). Считаем от "Общий"
+            # (сумма ВСЕХ способов оплаты), не от "Наличные" — так подтвердил владелец.
+            obschiy_total = sum(_real_itog(k) for k in kassas)
             ostatok_sum = _n(report.get("ostatok_total"))
-            izyatie = (nalichnye - sum(_n(r.get("sum")) for r in report.get("rashod_rows", []))
+            izyatie = (obschiy_total - sum(_n(r.get("sum")) for r in report.get("rashod_rows", []))
                        - sum(_n(r.get("sum")) for r in report.get("avans_rows", []))
                        - sum(_n(r.get("sum")) for r in report.get("oplata_rows", []))
                        - sum(_n(r.get("sum")) for r in report.get("fond_rows", []))

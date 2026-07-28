@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.63.0<br>Telegram-отчёт: «Общий» = настоящая сумма всех способов оплаты (было перепутано с «Наличные»), как уже в приложении
+      Штурвал v4.64.0<br>Схождение: Изъятие теперь считается от «Общий» (сумма всех способов оплаты), а не от «Наличные»
   </aside>
 
   <!-- MAIN -->
@@ -8798,16 +8798,16 @@ function _rptFondTotal(){var s=0;if(_rptData)(_rptData.fond_rows||[]).forEach(fu
 // Схождение кассы: Наличные − Расходдор − Авансы − Оплата за товар − Фонд − Остаток
 // должно сойтись с фактическим Изъятием (сумма поля «Изъятие» по всем кассам).
 function _rptReconcile(){
-  var nalichnye=_rptSumKassas('obshiy');
+  var obschiy=_rptGrandTotal();
   var ostatok=_rptN(_rptData&&_rptData.ostatok_total);
-  var izyatie=nalichnye-_rptRashodTotal()-_rptAvansTotal()-_rptOplataTotal()-_rptFondTotal()-ostatok;
-  return {nalichnye:nalichnye, ostatok:ostatok, izyatie:izyatie};
+  var izyatie=obschiy-_rptRashodTotal()-_rptAvansTotal()-_rptOplataTotal()-_rptFondTotal()-ostatok;
+  return {obschiy:obschiy, ostatok:ostatok, izyatie:izyatie};
 }
 function _rptReconcileHtml(){
   var r=_rptReconcile();
   var h='';
   h+='<div class="rpt-field"><span>Остаток (вписывают сами)</span><span style="font-weight:700">'+_rptFmt(r.ostatok)+'</span></div>';
-  h+='<div class="rpt-field"><span>Изъятие (расчёт: Наличные−Расходы−Авансы−Оплата−Фонд−Остаток)</span><span style="font-weight:700">'+_rptFmt(r.izyatie)+'</span></div>';
+  h+='<div class="rpt-field"><span>Изъятие (расчёт: Общий−Расходы−Авансы−Оплата−Фонд−Остаток)</span><span style="font-weight:700">'+_rptFmt(r.izyatie)+'</span></div>';
   return h;
 }
 
