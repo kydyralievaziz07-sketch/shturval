@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.59.0<br>В «Ассортименте» можно выбрать свой период календарём (даты «с … по») — расчёт по чистой прибыли за любой отрезок
+      Штурвал v4.60.0<br>«Ежедневный отчёт»: блок «🧮 Схождение» — проверяет, сходится ли Изъятие с Наличные−Расходы−Авансы−Оплата−Фонд−Остаток (и в приложении, и в Telegram)
   </aside>
 
   <!-- MAIN -->
@@ -8798,6 +8798,29 @@ function _rptRashodTotal(){var s=0;if(_rptData)(_rptData.rashod_rows||[]).forEac
 function _rptAvansTotal(){var s=0;if(_rptData)(_rptData.avans_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
 function _rptOplataTotal(){var s=0;if(_rptData)(_rptData.oplata_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
 function _rptFondTotal(){var s=0;if(_rptData)(_rptData.fond_rows||[]).forEach(function(r){s+=_rptN(r.sum);});return s;}
+// Схождение кассы: Наличные − Расходдор − Авансы − Оплата за товар − Фонд − Остаток
+// должно сойтись с фактическим Изъятием (сумма поля «Изъятие» по всем кассам).
+function _rptReconcile(){
+  var nalichnye=_rptSumKassas('obshiy');
+  var ostatok=_rptSumKassas('ostatok');
+  var izyatieFact=_rptSumKassas('izyatie_k');
+  var izyatieOzhid=nalichnye-_rptRashodTotal()-_rptAvansTotal()-_rptOplataTotal()-_rptFondTotal()-ostatok;
+  return {nalichnye:nalichnye, ostatok:ostatok, izyatieFact:izyatieFact, izyatieOzhid:izyatieOzhid, diff:izyatieFact-izyatieOzhid};
+}
+function _rptReconcileHtml(){
+  var r=_rptReconcile();
+  var ok=Math.abs(r.diff)<1;
+  var h='';
+  h+='<div class="rpt-field"><span>Остаток (по кассам)</span><span style="font-weight:700">'+_rptFmt(r.ostatok)+'</span></div>';
+  h+='<div class="rpt-field"><span>Изъятие (по кассам, факт)</span><span>'+_rptFmt(r.izyatieFact)+'</span></div>';
+  h+='<div class="rpt-field"><span>Изъятие (должно быть)</span><span>'+_rptFmt(r.izyatieOzhid)+'</span></div>';
+  if(ok){
+    h+='<div class="rpt-field" style="font-weight:700"><span>✅ Сходится</span><span></span></div>';
+  } else {
+    h+='<div class="rpt-field" style="font-weight:700;color:var(--red)"><span>⚠️ Не сходится</span><span>'+(r.diff>0?'излишек ':'недостача ')+_rptFmt(Math.abs(r.diff))+'</span></div>';
+  }
+  return h;
+}
 
 function rptRender(){
   var d=_rptData; if(!d){document.getElementById('rpt-body').innerHTML='';return;}
@@ -8910,6 +8933,12 @@ function rptRender(){
   h+='<div class="rpt-field"><span>Н</span><label style="cursor:pointer;display:flex;align-items:center;gap:4px"><input type="checkbox" '+(d.n_status?'checked':'')+' onchange="_rptData.n_status=this.checked;_rptAutoSave()"> ✅</label></div>';
   h+='</div></div>';
 
+  // Схождение: Наличные − Расходдор − Авансы − Оплата за товар − Фонд − Остаток должно
+  // сойтись с фактическим Изъятием (по формуле владельца). Разница = недостача/излишек.
+  h+='<div class="rpt-kassa"><div class="rpt-section-head"><span>🧮 Схождение</span></div>';
+  h+='<div id="rpt-reconcile">'+_rptReconcileHtml()+'</div>';
+  h+='</div>';
+
   // Контроль потерь: считается сам из чеков 1С (0/1 сом за штуку или скидка ≥80%).
   // Только просмотр — ни ввода, ни удаления строк тут нет, изменить нельзя.
   var loss=d.loss_items||[];
@@ -8942,6 +8971,7 @@ function rptRefreshSummary(){
   h+='<div class="rpt-field"><span>Оплата за товар (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptOplataTotal())+'</span></div>';
   h+='<div class="rpt-field"><span>Фонд (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptFondTotal())+'</span></div>';
   el.innerHTML=h;
+  var recEl=document.getElementById('rpt-reconcile'); if(recEl) recEl.innerHTML=_rptReconcileHtml();
 }
 
 // Кассы

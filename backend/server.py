@@ -7159,6 +7159,28 @@ class Handler(BaseHTTPRequestHandler):
             lines.append("Счетчик-%s" % _fmt(report.get("schetchik", 0)))
             lines.append("Н" + ("✅" if report.get("n_status") else ""))
 
+            # Схождение: Наличные − Расходдор − Авансы − Оплата за товар − Фонд − Остаток
+            # должно сойтись с фактическим Изъятием (по кассам).
+            nalichnye = sum(_n(k.get("obshiy")) for k in kassas)
+            ostatok_sum = sum(_n(k.get("ostatok")) for k in kassas)
+            izyatie_fact = sum(_n(k.get("izyatie_k")) for k in kassas)
+            izyatie_ozhid = (nalichnye - sum(_n(r.get("sum")) for r in report.get("rashod_rows", []))
+                              - sum(_n(r.get("sum")) for r in report.get("avans_rows", []))
+                              - sum(_n(r.get("sum")) for r in report.get("oplata_rows", []))
+                              - sum(_n(r.get("sum")) for r in report.get("fond_rows", []))
+                              - ostatok_sum)
+            diff = izyatie_fact - izyatie_ozhid
+            lines.append("")
+            lines.append("")
+            lines.append("🧮 Схождение")
+            lines.append("Остаток-%s" % _fmt(ostatok_sum))
+            lines.append("Изъятие факт-%s" % _fmt(izyatie_fact))
+            lines.append("Изъятие должно быть-%s" % _fmt(izyatie_ozhid))
+            if abs(diff) < 1:
+                lines.append("✅ Сходится")
+            else:
+                lines.append("⚠️ Не сходится: %s %s" % ("излишек" if diff > 0 else "недостача", _fmt(abs(diff))))
+
             loss_items = report.get("loss_items", [])
             if loss_items:
                 lines.append("")
