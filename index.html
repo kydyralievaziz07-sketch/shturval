@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.67.0<br>Аренда: дату сдачи (конца) снова можно двигать назад (напр. клиент вернул авто раньше); дата начала у сотрудников по-прежнему заморожена
+      Штурвал v4.68.0<br>Кассиры теперь тоже видят вкладку «Отчёты» (ежедневный по кассам) и работают в ней; секция «Контроль потерь» с себестоимостью — только у владельца
   </aside>
 
   <!-- MAIN -->
@@ -1835,7 +1835,7 @@
     // у Wildberries закупочной цены нет, показывать эти вкладки там нечего
     if(tab==='assort') return isBizmart()&&(isOwner()||canSee('assort')||canSee('sales')||canSee('analytics'));
     if(tab==='report') return isBizmart()&&(isOwner()||canSee('assort')||canSee('sales')||canSee('analytics'));
-    if(tab==='reportdash') return isOwner()||canSee('dailyrep');
+    if(tab==='reportdash') return isBizmart()||canSee('dailyrep');   // «Отчёты» (ежедневный по кассам) — всем кассирам Бизмарта
     return canSee(tab);
   }
   // временно скрытые модули — прячем ИКОНКУ у тех, кто видит их только через «all».
@@ -8935,23 +8935,25 @@ function rptRender(){
   h+='</div>';
 
   // Контроль потерь: считается сам из чеков 1С (0/1 сом за штуку или скидка ≥80%).
-  // Только просмотр — ни ввода, ни удаления строк тут нет, изменить нельзя.
-  var loss=d.loss_items||[];
-  var lossKindLabel={zero:'0 сом', one:'1 сом', big:'скидка ≥80%'};
-  h+='<div class="rpt-kassa"><div class="rpt-section-head"><span>⚠️ Контроль потерь (0/1 сом, скидка ≥80%)</span></div>';
-  if(!loss.length){
-    h+='<div style="color:var(--muted);font-size:13px;padding:6px 0">Подозрительных продаж за день нет.</div>';
-  } else {
-    var lossTotal=loss.reduce(function(s,r){return s+(r.cost||0);},0);
-    h+='<div class="rpt-field" style="font-weight:700"><span>Списано по себестоимости</span><span style="color:var(--red)">'+_rptFmt(lossTotal)+'</span></div>';
-    loss.forEach(function(r){
-      h+='<div class="rpt-field" style="align-items:flex-start">';
-      h+='<span>'+esc(r.name)+' ×'+r.qty+' <span style="font-size:11px;color:var(--muted)">('+(lossKindLabel[r.kind]||r.kind)+', '+esc(r.kassa)+')</span></span>';
-      h+='<span style="text-align:right;white-space:nowrap"><span style="color:var(--muted);text-decoration:line-through;font-size:12px">'+_rptFmt(r.price)+'</span> → '+_rptFmt(r.sale)+' <span style="font-size:11px;color:var(--red)">(себест. '+_rptFmt(r.cost)+')</span></span>';
-      h+='</div>';
-    });
+  // Только просмотр. Несёт СЕБЕСТОИМОСТЬ — показываем ТОЛЬКО владельцу, кассирам скрыто.
+  if(isOwner()){
+    var loss=d.loss_items||[];
+    var lossKindLabel={zero:'0 сом', one:'1 сом', big:'скидка ≥80%'};
+    h+='<div class="rpt-kassa"><div class="rpt-section-head"><span>⚠️ Контроль потерь (0/1 сом, скидка ≥80%)</span></div>';
+    if(!loss.length){
+      h+='<div style="color:var(--muted);font-size:13px;padding:6px 0">Подозрительных продаж за день нет.</div>';
+    } else {
+      var lossTotal=loss.reduce(function(s,r){return s+(r.cost||0);},0);
+      h+='<div class="rpt-field" style="font-weight:700"><span>Списано по себестоимости</span><span style="color:var(--red)">'+_rptFmt(lossTotal)+'</span></div>';
+      loss.forEach(function(r){
+        h+='<div class="rpt-field" style="align-items:flex-start">';
+        h+='<span>'+esc(r.name)+' ×'+r.qty+' <span style="font-size:11px;color:var(--muted)">('+(lossKindLabel[r.kind]||r.kind)+', '+esc(r.kassa)+')</span></span>';
+        h+='<span style="text-align:right;white-space:nowrap"><span style="color:var(--muted);text-decoration:line-through;font-size:12px">'+_rptFmt(r.price)+'</span> → '+_rptFmt(r.sale)+' <span style="font-size:11px;color:var(--red)">(себест. '+_rptFmt(r.cost)+')</span></span>';
+        h+='</div>';
+      });
+    }
+    h+='</div>';
   }
-  h+='</div>';
 
   document.getElementById('rpt-body').innerHTML=h;
 }

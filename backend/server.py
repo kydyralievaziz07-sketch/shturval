@@ -8401,7 +8401,9 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 auto = {"pay": {}, "loss_items": []}
             val["auto_pay"] = auto.get("pay", {})
-            val["loss_items"] = auto.get("loss_items", [])
+            # «Контроль потерь» несёт СЕБЕСТОИМОСТЬ — отдаём только владельцу, кассирам нет
+            _is_owner = "all" in (user.get("sections") or [])
+            val["loss_items"] = auto.get("loss_items", []) if _is_owner else []
             return self._send(200, val)
         if self.path.startswith("/api/assortment"):
             from urllib.parse import urlparse, parse_qs
