@@ -4925,10 +4925,22 @@ def _cat_path_resolver():
         return list(reversed(chain))
     return path
 
-def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
-    """Аггрегирует прибыль по каждому товару из чеков за последние `days` дней,
-    раскладывает по верхним группам 1С и берёт топ-`top_n` по чистой прибыли в каждой.
-    Возвраты учтены с минусом. Склад не используется."""
+def _daterange_list(date_from, date_to, cap=400):
+    """Список дат 'YYYY-MM-DD' от date_from до date_to включительно (макс. `cap` дней)."""
+    import datetime
+    a = datetime.date.fromisoformat(str(date_from)[:10])
+    b = datetime.date.fromisoformat(str(date_to)[:10])
+    if b < a:
+        a, b = b, a
+    out = []; d = a
+    while d <= b and len(out) < cap:
+        out.append(d.isoformat()); d += datetime.timedelta(days=1)
+    return out
+
+def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_to=None):
+    """Аггрегирует прибыль по каждому товару из чеков за последние `days` дней ИЛИ за
+    произвольный период date_from…date_to (если заданы). Раскладывает по верхним группам
+    1С и берёт топ-`top_n` по чистой прибыли в каждой. Возвраты с минусом. Склад не используется."""
     goods = get_goods()
     top = _cat_top_resolver()
     # карта название товара → category_id (предпочитаем запись с заполненной категорией)
@@ -4940,10 +4952,17 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
         cid = g.get("CATEGORY_ID") or ""
         if t not in name2cat or (cid and not name2cat[t]):
             name2cat[t] = cid
-    # аггрегируем чеки по дням (сегодня + предыдущие days-1 дней)
-    today = _today_str()
-    dates = [today] + [time.strftime("%Y-%m-%d", time.localtime(time.time() - i * 86400))
-                       for i in range(1, days)]
+    # список дат: либо произвольный период (календарь), либо последние `days` дней
+    if date_from and date_to:
+        dates = _daterange_list(date_from, date_to)
+        res_from = dates[0] if dates else str(date_from)[:10]
+        res_to = dates[-1] if dates else str(date_to)[:10]
+    else:
+        today = _today_str()
+        dates = [today] + [time.strftime("%Y-%m-%d", time.localtime(time.time() - i * 86400))
+                           for i in range(1, days)]
+        res_from = dates[-1]; res_to = today
+    ndays = len(dates)
     agg = {}
     days_ok = 0; days_fail = 0
     # Тянем дни ПАРАЛЛЕЛЬНО: 1С отдаёт чеки по одному дню (широкий диапазон = HTTP 406),
@@ -4955,7 +4974,7 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
             return yaros_get("/receipts/v2?from=%d&to=%d" % (f, t0)).get("receipts", [])
         except Exception:
             return None
-    workers = 8 if days > 14 else 4
+    workers = 8 if ndays > 14 else 4
     fetched = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
         for recs in ex.map(_pull, dates):
@@ -5137,8 +5156,8 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN):
         "rows": au_rows[:AU_CAP], "rows_total": len(au_rows), "rows_capped": len(au_rows) > AU_CAP,
     }
     res = {
-        "period_days": days, "top_n": top_n,
-        "from": dates[-1], "to": today,
+        "period_days": ndays, "top_n": top_n,
+        "from": res_from, "to": res_to,
         "total_revenue": round(tot_rev), "total_profit": round(tot_profit),
         "avg_margin": round(tot_profit / tot_rev * 100, 1) if tot_rev else 0,
         "total_products": len(agg), "days_ok": days_ok, "days_fail": days_fail,
@@ -5206,6 +5225,49 @@ def get_assortment(days=ASSORT_DAYS):
     if age > ASSORT_TTL * 2:      # снимок заметно устарел (1С долго не отвечала)
         out["stale"] = True
     return out
+
+# ── Произвольный период (календарь) во вкладке «Ассортимент»/«Отчёт» ──
+_assort_range_cache = {}   # "from_to" -> {"data":..., "t":..., "refreshing":False}
+_ASSORT_RANGE_MAX = 400    # предел размаха периода в днях
+
+def get_assortment_range(date_from, date_to):
+    """Ассортимент/отчёт за произвольный период. Считает ФОНОМ (как get_assortment):
+    первый запрос отдаёт {computing:true}, фронт перезапрашивает. Свой кэш по ключу
+    'from_to', TTL как у остальных снимков."""
+    import datetime
+    try:
+        a = datetime.date.fromisoformat(str(date_from)[:10])
+        b = datetime.date.fromisoformat(str(date_to)[:10])
+    except Exception:
+        return {"error": "Неверные даты периода.", "groups": [], "floors": [], "tree": []}
+    if b < a:
+        a, b = b, a
+    if (b - a).days + 1 > _ASSORT_RANGE_MAX:
+        return {"error": "Слишком большой период (максимум %d дней)." % _ASSORT_RANGE_MAX,
+                "groups": [], "floors": [], "tree": []}
+    df, dt = a.isoformat(), b.isoformat()
+    key = df + "_" + dt
+    st = _assort_range_cache.setdefault(key, {"data": None, "t": 0, "refreshing": False})
+    fresh = st["data"] is not None and (time.time() - st["t"]) < ASSORT_TTL
+    if not fresh and not st["refreshing"]:
+        st["refreshing"] = True
+        def _job():
+            try:
+                st["data"] = build_assortment(date_from=df, date_to=dt)
+                st["t"] = time.time()
+            except Exception:
+                pass
+            finally:
+                st["refreshing"] = False
+        threading.Thread(target=_job, daemon=True).start()
+    if st["data"] is not None:
+        out = dict(st["data"])
+        if not fresh:
+            out["stale"] = True   # показываем прошлый расчёт, новый считается фоном
+        return out
+    return {"computing": True, "period_days": (b - a).days + 1, "from": df, "to": dt,
+            "groups": [], "floors": [], "tree": [],
+            "error": "Идёт расчёт за выбранный период — обновите через минуту."}
 
 
 # ====== ИИ-ПОМОЩНИК МАГАЗИНА (Anthropic Claude) ======
@@ -8306,8 +8368,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/assortment"):
             from urllib.parse import urlparse, parse_qs
             _co = (self._user() or {}).get("company") or COMPANY_ID
+            _q = parse_qs(urlparse(self.path).query)
+            _rf = (_q.get("from", [""])[0] or "").strip()
+            _rt = (_q.get("to", [""])[0] or "").strip()
             try:
-                days = int(parse_qs(urlparse(self.path).query).get("days", ["30"])[0])
+                days = int(_q.get("days", ["30"])[0])
             except ValueError:
                 days = 30
             if _co != BIZMART_ID:
@@ -8316,6 +8381,8 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception as e:
                     return self._send(200, {"error": "Нет связи с Wildberries: " + str(e), "groups": []})
             try:
+                if _rf and _rt:   # произвольный период с календаря
+                    return self._send(200, get_assortment_range(_rf, _rt))
                 return self._send(200, get_assortment(days))
             except Exception as e:
                 return self._send(200, {"error": "Нет связи с 1С: " + str(e), "groups": []})

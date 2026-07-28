@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.58.0<br>«Онл.пер» в кассах снова редактируется вручную (убрано из авто-полей)
+      Штурвал v4.59.0<br>В «Ассортименте» можно выбрать свой период календарём (даты «с … по») — расчёт по чистой прибыли за любой отрезок
   </aside>
 
   <!-- MAIN -->
@@ -1036,12 +1036,18 @@
     <!-- ASSORTMENT — анализ ассортимента по чистой прибыли (ABC по группам) -->
     <section id="tab-assort" class="hide">
       <div id="assort-status" class="note" style="margin-bottom:14px">⏳ Считаю анализ по чистой прибыли…</div>
-      <div class="period" id="assortperiod" style="margin-bottom:12px;flex-wrap:wrap">
+      <div class="period" id="assortperiod" style="margin-bottom:12px;flex-wrap:wrap;align-items:center">
         <button data-ad="1" onclick="setAssortPeriod(1)">1 день</button>
         <button data-ad="7" onclick="setAssortPeriod(7)">Неделя</button>
         <button class="active" data-ad="30" onclick="setAssortPeriod(30)">Месяц</button>
         <button data-ad="90" onclick="setAssortPeriod(90)">Квартал</button>
         <button data-ad="365" onclick="setAssortPeriod(365)">Год</button>
+        <span style="width:1px;height:24px;background:var(--line);margin:0 6px;display:inline-block"></span>
+        <span style="font-size:13px;color:var(--muted)">📅 Свой период:</span>
+        <input type="date" id="assort-from" onchange="syncAssortTo()" style="background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:6px 8px;font-size:13px">
+        <span style="color:var(--muted);font-size:13px">—</span>
+        <input type="date" id="assort-to" style="background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:6px 8px;font-size:13px">
+        <button data-ad="range" onclick="setAssortRange()">Показать</button>
       </div>
       <div id="assort-kpis" class="kpis"></div>
       <div style="display:flex;gap:8px;align-items:center;margin:6px 0 14px;flex-wrap:wrap">
@@ -3512,36 +3518,53 @@
   let salesAutoTimer=null, salesTimer=null, salesDate='';   // '' = сегодня (живьём)
   function salesTodayStr(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
   // ===== АНАЛИЗ АССОРТИМЕНТА по чистой прибыли (вкладка «Ассортимент») =====
-  let _assortTimer=null, assortDays=30; const _assortByDays={};
-  function setAssortPeriod(days){
-    assortDays=days;
+  let _assortTimer=null, assortDays=30, assortRange=null; const _assortByDays={};
+  function assortSelKey(){ return assortRange ? (assortRange.from+'_'+assortRange.to) : assortDays; }
+  function assortSelQuery(){ return assortRange ? ('from='+assortRange.from+'&to='+assortRange.to) : ('days='+assortDays); }
+  function _assortBtns(activeAttr){
     const bar=document.getElementById('assortperiod');
-    if(bar) Array.prototype.forEach.call(bar.querySelectorAll('button'),b=>b.classList.toggle('active',+b.getAttribute('data-ad')===days));
+    if(bar) Array.prototype.forEach.call(bar.querySelectorAll('button'),b=>b.classList.toggle('active',b.getAttribute('data-ad')===String(activeAttr)));
+  }
+  function syncAssortTo(){   // подстраховка: «по» не раньше «с»
+    const f=document.getElementById('assort-from'), t=document.getElementById('assort-to');
+    if(f&&t){ t.min=f.value||''; if(t.value&&f.value&&t.value<f.value) t.value=f.value; }
+  }
+  function setAssortPeriod(days){
+    assortRange=null; assortDays=days;
+    _assortBtns(days);
     renderAssort();     // покажем что уже есть (кэш или сообщение)
+    loadAssort();
+  }
+  function setAssortRange(){
+    const f=(document.getElementById('assort-from')||{}).value, t=(document.getElementById('assort-to')||{}).value;
+    if(!f||!t){ alert('Выбери обе даты периода — «с» и «по».'); return; }
+    assortRange={from:(f<=t?f:t), to:(f<=t?t:f)};
+    _assortBtns('range');
+    renderAssort();
     loadAssort();
   }
   async function loadAssort(attempt){
     attempt=attempt||1;
-    const days=assortDays;
+    const key=assortSelKey();
     const st=document.getElementById('assort-status');
-    if(_assortByDays[days] && assortDays===days) renderAssort();
+    if(_assortByDays[key] && assortSelKey()===key) renderAssort();
     try{
-      const r=await apiFetch('/api/assortment?days='+days,{},ONEC_BASE); if(!r.ok) throw 0;
+      const r=await apiFetch('/api/assortment?'+assortSelQuery(),{},ONEC_BASE); if(!r.ok) throw 0;
       const d=await r.json();
       if(d.computing){
-        if(!_assortByDays[days] && assortDays===days && st){ st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d';
+        if(!_assortByDays[key] && assortSelKey()===key && st){ st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d';
           st.innerHTML='⏳ <b>Считаю анализ по чистой прибыли…</b> первый расчёт занимает до пары минут (чеки из 1С за период). Жду, не закрывай (попытка '+attempt+'/6)…'; }
-        if(assortDays===days && attempt<6){ clearTimeout(_assortTimer); _assortTimer=setTimeout(()=>loadAssort(attempt+1),12000); }
+        if(assortSelKey()===key && attempt<6){ clearTimeout(_assortTimer); _assortTimer=setTimeout(()=>loadAssort(attempt+1),12000); }
         return;
       }
-      if(d.error && !(d.groups&&d.groups.length)){ if(!_assortByDays[days] && assortDays===days && st){ st.style.borderColor='#ff6b6b'; st.innerHTML='⚠️ '+esc(d.error); } return; }
-      _assortByDays[days]=d;
-      if(days===30){
+      if(d.error && !(d.groups&&d.groups.length)){ if(!_assortByDays[key] && assortSelKey()===key && st){ st.style.borderColor='#ff6b6b'; st.innerHTML='⚠️ '+esc(d.error); } return; }
+      _assortByDays[key]=d;
+      if(!assortRange && assortDays===30){
         window._assortData=d;   // «канонический» месячный снимок — используется в ABC и отчёте
         if(document.getElementById('an-abc')) anAbc();   // обновить ABC во вкладке «Аналитика»
         if(typeof _reportData!=='undefined'){ _reportData[30]=d; if(reportDays===30 && document.getElementById('report-body')) renderReport(); }
       }
-      if(assortDays!==days) return;   // пока грузилось, юзер переключил период — не рисуем устаревшее
+      if(assortSelKey()!==key) return;   // пока грузилось, юзер переключил период — не рисуем устаревшее
       const sel=document.getElementById('assort-group'); const cur=sel?sel.value:'';
       if(sel){
         sel.innerHTML='<option value="">Все группы</option>'+
@@ -3551,7 +3574,7 @@
       if(st){ st.style.borderStyle='solid'; st.style.borderColor=d.stale?'#ffb84d':'#39d98a';
         st.innerHTML=(d.stale?'🟠 <b>Показываю последний расчёт</b> (1С долго не отвечала) · ':'🟢 <b>Анализ по чистой прибыли</b> · ')+
           'период '+esc(d.from||'')+' … '+esc(d.to||'')+' ('+(d.period_days||0)+' дн.) · обновлено '+esc(d.updated||'')+
-          ' · <span style="color:var(--muted)">пересчитывается само, раз в 6 ч</span>'; }
+          (assortRange?' · <span style="color:var(--muted)">свой период</span>':' · <span style="color:var(--muted)">пересчитывается само, раз в 6 ч</span>'); }
       const km=(label,som)=>'<div class="card kpi"><div class="label">'+label+'</div><div class="value"><span class="money" data-som="'+(som||0)+'">'+fmt(som||0)+'</span></div></div>';
       const kp=document.getElementById('assort-kpis');
       if(kp) kp.innerHTML=
@@ -3561,13 +3584,13 @@
         kpiCard('Средняя маржа',(d.avg_margin||0)+'%');
       renderAssort();
     }catch(e){
-      if(assortDays===days && st){ st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d';
+      if(assortSelKey()===key && st){ st.style.borderStyle='dashed'; st.style.borderColor='#ffb84d';
         if(attempt<6){ st.innerHTML='⏳ <b>Сервер 1С просыпается…</b> жду (попытка '+attempt+'/6)…'; clearTimeout(_assortTimer); _assortTimer=setTimeout(()=>loadAssort(attempt+1),12000); }
         else st.innerHTML='⚠️ Не удалось загрузить анализ. Попробуй обновить позже.'; }
     }
   }
   function renderAssort(){
-    const d=_assortByDays[assortDays]; if(!d){ return; }
+    const d=_assortByDays[assortSelKey()]; if(!d){ return; }
     const sel=document.getElementById('assort-group'); const pick=sel?sel.value:'';
     const box=document.getElementById('assort-body'); if(!box) return;
     const qEl=document.getElementById('assort-search'); const q=(qEl?qEl.value:'').trim().toLowerCase();
@@ -3637,7 +3660,7 @@
     box.innerHTML=html;
   }
   function exportAssort(){
-    const d=_assortByDays[assortDays]; if(!d||!(d.groups||[]).length){ alert('Анализ ещё не загрузился.'); return; }
+    const d=_assortByDays[assortSelKey()]; if(!d||!(d.groups||[]).length){ alert('Анализ ещё не загрузился.'); return; }
     const rows=[['BIZMART — анализ ассортимента по чистой прибыли'],
       ['Период',(d.from||'')+' … '+(d.to||''),(d.period_days||0)+' дн.'],
       ['Выручка',d.total_revenue,'Чистая прибыль',d.total_profit,'Маржа',(d.avg_margin||0)+'%'],
