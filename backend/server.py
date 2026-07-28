@@ -7122,17 +7122,23 @@ class Handler(BaseHTTPRequestHandler):
             kassas = report.get("kassas", [])
             lines = [date_str, "", "     Bizmart🐫 (%d)" % len(kassas), ""]
 
+            # "Общий" — настоящий итог (сумма ВСЕХ способов оплаты), не путать с "Наличные"
+            # (бывший "Общий" = наличные из 1С). Соответствует RPT_FIELDS во фронтенде
+            # (itog + obshiy переименован в "Наличные").
             PAY_FIELDS = [
-                ("obshiy", "Общий"), ("mbank", "Мбанк пер"), ("optima1", "Оптима 1"),
+                ("obshiy", "Наличные"), ("mbank", "Мбанк пер"), ("optima1", "Оптима 1"),
                 ("optima2", "Оптима 2"), ("zero", "ЗЕРО"), ("m_biz", "М бизнес"),
                 ("cash2u", "Cash2u"), ("onl_per", "Онл.пер"),
                 ("onl_nal", "Онл.нал"), ("payda", "PAIDA опти"), ("m_plus", "М+"),
                 ("beznal", "Безналичный"),
             ]
+            def _real_itog(rec):
+                return sum(_n(rec.get(key)) for key, _ in PAY_FIELDS)
             for k in kassas:
                 name = k.get("name", "Касса")
                 lines.append(name + (" ✅" if k.get("status") else ""))
                 lines.append("")
+                lines.append("Общий-%s" % _fmt(_real_itog(k)))
                 for key, label in PAY_FIELDS:
                     lines.append("%s-%s" % (label, _fmt(k.get(key, 0))))
                 lines.append("")
@@ -7157,6 +7163,7 @@ class Handler(BaseHTTPRequestHandler):
             _section(report.get("oplata_rows", []), "Оплата за товар")
             _section(report.get("fond_rows", []), "Фонд")
 
+            lines.append("Общий-%s" % _fmt(sum(_real_itog(k) for k in kassas)))
             for key, label in PAY_FIELDS:
                 lines.append("%s-%s" % (label, _fmt(sum(_n(k.get(key)) for k in kassas))))
             lines.append("")
