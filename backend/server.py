@@ -7167,8 +7167,8 @@ class Handler(BaseHTTPRequestHandler):
             for key, label in PAY_FIELDS:
                 lines.append("%s-%s" % (label, _fmt(sum(_n(k.get(key)) for k in kassas))))
             lines.append("")
-            lines.append("Наличные (от изъятия):%s" % _fmt(report.get("nalichnye_total", 0)))
-            lines.append("Мбанк (от изъятия):%s" % _fmt(report.get("mbank_total", 0)))
+            lines.append("Наличные (от изъятия)-%s" % _fmt(report.get("nalichnye_total", 0)))
+            lines.append("Мбанк (от изъятия)-%s" % _fmt(report.get("mbank_total", 0)))
             lines.append("")
             lines.append("Счетчик-%s" % _fmt(report.get("schetchik", 0)))
             lines.append("Н" + ("✅" if report.get("n_status") else ""))
