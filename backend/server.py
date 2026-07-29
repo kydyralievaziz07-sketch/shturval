@@ -4706,9 +4706,9 @@ def _rpt_pay_key(name):
     """Название способа оплаты из чека 1С (AllPaymentMethods[].name) → ключ поля кассы
     в дневном отчёте (см. RPT_FIELDS во фронтенде). Реальные значения сверены вживую
     2026-07-27 через /receipts/v2: 'Наличный', 'Мбанк', 'Оптима 1', 'Оптима 2 ',
-    'Payda Оптима ', 'М+', 'Онлайн  перевод' (пробелы у 1С нестабильны — нормализуем).
-    'Онл.нал' и 'Безналичный' 1С пока НИ РАЗУ не присылала — паттерны ниже на будущее,
-    сейчас эти поля всегда будут 0."""
+    'Payda Оптима ', 'М+', 'Онлайн  перевод', 'Онлайн  наличка' (пробелы у 1С
+    нестабильны — нормализуем). Способ без соответствия ниже (например
+    "Безналичный"/карта — такого поля больше нет) попадает в "_unmatched"."""
     n = re.sub(r"\s+", " ", (name or "").strip().lower())
     if "payda" in n or "пайда" in n:
         return "payda"
@@ -4729,8 +4729,6 @@ def _rpt_pay_key(name):
         return "zero"
     if "cash2u" in n:
         return "cash2u"
-    if "безнал" in n or "карт" in n:
-        return "beznal"
     if n.replace(" ", "") in ("м+", "m+"):
         return "m_plus"
     return None
@@ -7127,10 +7125,9 @@ class Handler(BaseHTTPRequestHandler):
             # (itog + obshiy переименован в "Наличные").
             PAY_FIELDS = [
                 ("obshiy", "Наличные"), ("mbank", "Мбанк пер"), ("optima1", "Оптима 1"),
-                ("optima2", "Оптима 2"), ("zero", "ЗЕРО"), ("m_biz", "М бизнес"),
+                ("optima2", "Оптима 2"), ("zero", "ЗЕРО"),
                 ("cash2u", "Cash2u"), ("onl_per", "Онл.пер"),
                 ("onl_nal", "Онл.нал"), ("payda", "PAIDA опти"), ("m_plus", "М+"),
-                ("beznal", "Безналичный"),
             ]
             def _real_itog(rec):
                 return sum(_n(rec.get(key)) for key, _ in PAY_FIELDS)
@@ -7141,6 +7138,7 @@ class Handler(BaseHTTPRequestHandler):
                 lines.append("Общий-%s" % _fmt(_real_itog(k)))
                 for key, label in PAY_FIELDS:
                     lines.append("%s-%s" % (label, _fmt(k.get(key, 0))))
+                lines.append("Остаток-%s" % _fmt(k.get("ostatok", 0)))
                 lines.append("")
                 lines.append("")
 
@@ -7166,16 +7164,16 @@ class Handler(BaseHTTPRequestHandler):
             lines.append("Общий-%s" % _fmt(sum(_real_itog(k) for k in kassas)))
             for key, label in PAY_FIELDS:
                 lines.append("%s-%s" % (label, _fmt(sum(_n(k.get(key)) for k in kassas))))
+            lines.append("Остаток-%s" % _fmt(sum(_n(k.get("ostatok")) for k in kassas)))
             lines.append("")
             lines.append("Счетчик-%s" % _fmt(report.get("schetchik", 0)))
             lines.append("Н" + ("✅" if report.get("n_status") else ""))
 
             # Изъятие считается по формуле (Наличные − Расходы − Авансы − Оплата − Фонд −
-            # Остаток) — единственное, что вписывают вручную, это Остаток (одним числом на
-            # весь день, по кассам его больше нет — как и Расход). Считаем от "Общий"
+            # Остаток) — Остаток вписывают вручную по каждой кассе. Считаем от "Общий"
             # (сумма ВСЕХ способов оплаты), не от "Наличные" — так подтвердил владелец.
             obschiy_total = sum(_real_itog(k) for k in kassas)
-            ostatok_sum = _n(report.get("ostatok_total"))
+            ostatok_sum = sum(_n(k.get("ostatok")) for k in kassas)
             izyatie = (obschiy_total - sum(_n(r.get("sum")) for r in report.get("rashod_rows", []))
                        - sum(_n(r.get("sum")) for r in report.get("avans_rows", []))
                        - sum(_n(r.get("sum")) for r in report.get("oplata_rows", []))

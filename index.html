@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.68.0<br>Кассиры теперь тоже видят вкладку «Отчёты» (ежедневный по кассам) и работают в ней; секция «Контроль потерь» с себестоимостью — только у владельца
+      Штурвал v4.69.0<br>Кассы: «Остаток» снова по каждой кассе, «М бизнес» и «Безналичный» убраны совсем
   </aside>
 
   <!-- MAIN -->
@@ -8682,25 +8682,23 @@ const RPT_FIELDS=[
   {k:'optima1', l:'Оптима 1'},
   {k:'optima2', l:'Оптима 2'},
   {k:'zero',    l:'ЗЕРО'},
-  {k:'m_biz',   l:'М бизнес'},
   {k:'cash2u',  l:'Cash2u'},
   {k:'onl_per', l:'Онл.пер'},
   {k:'onl_nal', l:'Онл.нал'},
   {k:'payda',   l:'PAIDA опти'},
   {k:'m_plus',  l:'М+'},
-  {k:'beznal',  l:'Безналичный'},
+  {k:'ostatok', l:'Остаток'},
 ];
 // Способы оплаты, которые считаются сами из чеков 1С (сумма по кассе за день) — не вводятся
-// вручную. Остальные поля (М бизнес, Онл.нал, Безналичный, Остаток) не приходят из 1С отдельно
-// и остаются ручными.
-const RPT_AUTO_KEYS=['obshiy','mbank','optima1','optima2','zero','cash2u','payda','m_plus','onl_nal','beznal'];
+// вручную. Остаток по кассе — ручной, никогда не приходит из 1С.
+const RPT_AUTO_KEYS=['obshiy','mbank','optima1','optima2','zero','cash2u','payda','m_plus','onl_nal'];
 function _rptTodayIso(){var d=new Date(),m=d.getMonth()+1,dy=d.getDate();return d.getFullYear()+'-'+(m<10?'0'+m:m)+'-'+(dy<10?'0'+dy:dy);}
 function _rptIsoToRu(s){if(!s)return '';var p=s.split('-');return p.length<3?s:p[2]+'.'+p[1]+'.'+p[0];}
 function _rptRuToIso(s){if(!s)return '';var p=s.split('.');return p.length<3?s:p[2]+'-'+p[1]+'-'+p[0];}
 function _rptN(v){return parseFloat(String(v||'0').replace(/[\s ]/g,'').replace(',','.'))||0;}
 function _rptFmt(n){return n?String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g,' '):'0';}
 function _rptNewKassa(num){var o={id:'k'+Date.now()+'_'+num,name:num+'-Касса',status:true};RPT_FIELDS.forEach(function(f){o[f.k]=0;});return o;}
-function _rptEmpty(){return {date:_rptIsoToRu(_rptTodayIso()),kassas:[_rptNewKassa(1),_rptNewKassa(2),_rptNewKassa(3)],rashod_rows:[],avans_rows:[],oplata_rows:[],fond_rows:[],mbank_total:0,nalichnye_total:0,schetchik:0,n_status:false,ostatok_total:0};}
+function _rptEmpty(){return {date:_rptIsoToRu(_rptTodayIso()),kassas:[_rptNewKassa(1),_rptNewKassa(2),_rptNewKassa(3)],rashod_rows:[],avans_rows:[],oplata_rows:[],fond_rows:[],mbank_total:0,nalichnye_total:0,schetchik:0,n_status:false};}
 // Наложить авто-суммы способов оплаты (из auto_pay, посчитано бэкендом из чеков 1С) на кассы —
 // по номеру в названии кассы ("1-Касса", "Касса №1" → 1).
 function _rptApplyAuto(d){
@@ -8785,7 +8783,7 @@ function rptSendTg(){
 }
 
 function _rptSumKassas(fk){var s=0;if(_rptData)_rptData.kassas.forEach(function(k){s+=_rptN(k[fk]);});return s;}
-const RPT_NONREVENUE_KEYS=['itog'];
+const RPT_NONREVENUE_KEYS=['itog','ostatok'];
 function _rptGrandTotal(){var s=0;RPT_FIELDS.forEach(function(f){if(RPT_NONREVENUE_KEYS.indexOf(f.k)<0)s+=_rptSumKassas(f.k);});return s;}
 // «Общий» по кассе — реальный итог (сумма всех способов оплаты этой кассы, без Остатка).
 // Считается на лету при рендере, нигде не хранится.
@@ -8798,7 +8796,7 @@ function _rptFondTotal(){var s=0;if(_rptData)(_rptData.fond_rows||[]).forEach(fu
 // должно сойтись с фактическим Изъятием (сумма поля «Изъятие» по всем кассам).
 function _rptReconcile(){
   var obschiy=_rptGrandTotal();
-  var ostatok=_rptN(_rptData&&_rptData.ostatok_total);
+  var ostatok=_rptSumKassas('ostatok');
   var izyatie=obschiy-_rptRashodTotal()-_rptAvansTotal()-_rptOplataTotal()-_rptFondTotal()-ostatok;
   var izyatieSplit=_rptN(_rptData&&_rptData.nalichnye_total)+_rptN(_rptData&&_rptData.mbank_total);
   return {obschiy:obschiy, ostatok:ostatok, izyatie:izyatie, izyatieSplit:izyatieSplit, diff:izyatieSplit-izyatie};
@@ -8806,7 +8804,7 @@ function _rptReconcile(){
 function _rptReconcileHtml(){
   var r=_rptReconcile();
   var h='';
-  h+='<div class="rpt-field"><span>Остаток (вписывают сами)</span><span style="font-weight:700">'+_rptFmt(r.ostatok)+'</span></div>';
+  h+='<div class="rpt-field"><span>Остаток (по кассам, вписывают сами)</span><span style="font-weight:700">'+_rptFmt(r.ostatok)+'</span></div>';
   h+='<div class="rpt-field"><span>Изъятие (расчёт: Общий−Расходы−Авансы−Оплата−Фонд−Остаток)</span><span style="font-weight:700">'+_rptFmt(r.izyatie)+'</span></div>';
   h+='<div class="rpt-field"><span>Наличные − '+_rptFmt(_rptN(_rptData&&_rptData.nalichnye_total))+' мбанк-'+_rptFmt(_rptN(_rptData&&_rptData.mbank_total))+'</span><span>'+_rptFmt(r.izyatieSplit)+'</span></div>';
   if(Math.abs(r.diff)<1){
@@ -8921,7 +8919,6 @@ function rptRender(){
   h+='<div class="rpt-field"><span>Фонд (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptFondTotal())+'</span></div>';
   h+='</div>';
   h+='<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">';
-  h+='<div class="rpt-field"><span>Остаток</span><input type="number" inputmode="numeric" value="'+(_rptN(d.ostatok_total)||'')+'" placeholder="0" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" oninput="_rptData.ostatok_total=_rptN(this.value);rptRefreshSummary();_rptAutoSave()"></div>';
   h+='<div class="rpt-field"><span>Наличные (от изъятия)</span><input type="number" inputmode="numeric" value="'+(_rptN(d.nalichnye_total)||'')+'" placeholder="0" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" oninput="_rptData.nalichnye_total=_rptN(this.value);rptRefreshSummary();_rptAutoSave()"></div>';
   h+='<div class="rpt-field"><span>Мбанк (от изъятия)</span><input type="number" inputmode="numeric" value="'+(_rptN(d.mbank_total)||'')+'" placeholder="0" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" oninput="_rptData.mbank_total=_rptN(this.value);rptRefreshSummary();_rptAutoSave()"></div>';
   h+='<div class="rpt-field"><span>Счётчик</span><input type="number" inputmode="numeric" value="'+(_rptN(d.schetchik)||'')+'" placeholder="0" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;padding:2px 4px" oninput="_rptData.schetchik=_rptN(this.value);_rptAutoSave()"></div>';
