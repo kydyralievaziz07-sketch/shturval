@@ -7205,7 +7205,7 @@ class Handler(BaseHTTPRequestHandler):
             discrepancies = []
             for k in kassas:
                 m = re.search(r"\d+", k.get("name", ""))
-                row = real_pay.get(m.group()) if m else None
+                row = real_pay.get(int(m.group())) if m else None
                 if not row:
                     continue
                 for key, label in PAY_FIELDS:
