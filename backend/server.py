@@ -7195,6 +7195,32 @@ class Handler(BaseHTTPRequestHandler):
                 lines.append("⚠️ Не сходится: %s %s" % ("излишек" if split_diff > 0 else "недостача",
                                                           _fmt(abs(split_diff))))
 
+            # Сверка с 1С: кассиры пишут способы оплаты сами (руками), тут сравниваем
+            # написанное с реальными суммами из чеков — берём их САМИ (не из того, что
+            # прислал клиент), иначе кассир мог бы подправить и auto_pay в запросе.
+            try:
+                real_pay = rpt_auto_data_for_date(date_str).get("pay", {})
+            except Exception:
+                real_pay = {}
+            discrepancies = []
+            for k in kassas:
+                m = re.search(r"\d+", k.get("name", ""))
+                row = real_pay.get(m.group()) if m else None
+                if not row:
+                    continue
+                for key, label in PAY_FIELDS:
+                    written = _n(k.get(key))
+                    real = _n(row.get(key))
+                    if abs(written - real) >= 1:
+                        discrepancies.append((k.get("name", "Касса"), label, written, real))
+            if discrepancies:
+                lines.append("")
+                lines.append("")
+                lines.append("⚠️ Расхождения с 1С")
+                for name, label, written, real in discrepancies:
+                    lines.append("%s, %s: написано %s, по факту %s" % (
+                        name, label, _fmt(written), _fmt(real)))
+
             loss_items = report.get("loss_items", [])
             if loss_items:
                 lines.append("")
@@ -8398,9 +8424,11 @@ class Handler(BaseHTTPRequestHandler):
                 auto = rpt_auto_data_for_date(date_ru)
             except Exception:
                 auto = {"pay": {}, "loss_items": []}
-            val["auto_pay"] = auto.get("pay", {})
-            # «Контроль потерь» несёт СЕБЕСТОИМОСТЬ — отдаём только владельцу, кассирам нет
+            # auto_pay — реальные суммы по способам оплаты из 1С, нужны ТОЛЬКО для сверки
+            # написанного кассиром с фактом. Кассирам не отдаём — иначе подправят цифры под
+            # факт и проверка расхождений потеряет смысл. Как и «Контроль потерь» (себестоимость).
             _is_owner = "all" in (user.get("sections") or [])
+            val["auto_pay"] = auto.get("pay", {}) if _is_owner else {}
             val["loss_items"] = auto.get("loss_items", []) if _is_owner else []
             return self._send(200, val)
         if self.path.startswith("/api/assortment"):

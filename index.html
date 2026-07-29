@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.69.0<br>Кассы: «Остаток» снова по каждой кассе, «М бизнес» и «Безналичный» убраны совсем
+      Штурвал v4.70.0<br>Кассы: способы оплаты снова вводятся вручную; внизу (только владелец) — «⚠️ Расхождения с 1С», сверка написанного с реальными чеками
   </aside>
 
   <!-- MAIN -->
@@ -8691,7 +8691,10 @@ const RPT_FIELDS=[
 ];
 // Способы оплаты, которые считаются сами из чеков 1С (сумма по кассе за день) — не вводятся
 // вручную. Остаток по кассе — ручной, никогда не приходит из 1С.
-const RPT_AUTO_KEYS=['obshiy','mbank','optima1','optima2','zero','cash2u','payda','m_plus','onl_nal'];
+// Все способы оплаты снова вписываются вручную по каждой кассе (кассиры сами считают
+// и пишут числа, как раньше). Реальные данные из 1С (auto_pay) больше НЕ подставляются
+// в поля — используются только для сверки, см. _rptDiscrepancies() внизу отчёта.
+const RPT_AUTO_KEYS=[];
 function _rptTodayIso(){var d=new Date(),m=d.getMonth()+1,dy=d.getDate();return d.getFullYear()+'-'+(m<10?'0'+m:m)+'-'+(dy<10?'0'+dy:dy);}
 function _rptIsoToRu(s){if(!s)return '';var p=s.split('-');return p.length<3?s:p[2]+'.'+p[1]+'.'+p[0];}
 function _rptRuToIso(s){if(!s)return '';var p=s.split('.');return p.length<3?s:p[2]+'-'+p[1]+'-'+p[0];}
@@ -8815,6 +8818,36 @@ function _rptReconcileHtml(){
   return h;
 }
 
+// Сверка с 1С: кассиры вписывают способы оплаты сами, а тут сравниваем написанное
+// с реальными данными из чеков 1С (auto_pay) — чтобы расхождение не прошло незамеченным.
+function _rptDiscrepancies(){
+  var out=[];
+  var auto=(_rptData&&_rptData.auto_pay)||{};
+  var fields=RPT_FIELDS.filter(function(f){return f.k!=='itog'&&f.k!=='ostatok';});
+  (_rptData&&_rptData.kassas||[]).forEach(function(k){
+    var m=(k.name||'').match(/\d+/);
+    var row=m?auto[m[0]]:null;
+    if(!row) return;
+    fields.forEach(function(f){
+      var written=_rptN(k[f.k]);
+      var real=_rptN(row[f.k]);
+      if(Math.abs(written-real)>=1){
+        out.push({kassa:k.name, label:f.l, written:written, real:real});
+      }
+    });
+  });
+  return out;
+}
+function _rptDiscrepancyHtml(){
+  var list=_rptDiscrepancies();
+  if(!list.length) return '<div style="color:var(--muted);font-size:13px;padding:6px 0">Расхождений с 1С не найдено.</div>';
+  var h='';
+  list.forEach(function(x){
+    h+='<div class="rpt-field" style="color:var(--red)"><span>'+esc(x.kassa)+', '+esc(x.label)+'</span><span>написано '+_rptFmt(x.written)+', по факту '+_rptFmt(x.real)+'</span></div>';
+  });
+  return h;
+}
+
 function rptRender(){
   var d=_rptData; if(!d){document.getElementById('rpt-body').innerHTML='';return;}
   var h='';
@@ -8931,6 +8964,15 @@ function rptRender(){
   h+='<div id="rpt-reconcile">'+_rptReconcileHtml()+'</div>';
   h+='</div>';
 
+  // Расхождения с 1С: кассиры пишут способы оплаты сами руками, тут сверяем с реальными
+  // суммами из чеков (auto_pay). Владелец видит расхождение, кассир — нет (backend уже
+  // не отдаёт auto_pay не-владельцу, но проверяем isOwner() и тут для чистоты интерфейса).
+  if(isOwner()){
+    h+='<div class="rpt-kassa"><div class="rpt-section-head"><span>⚠️ Расхождения с 1С</span></div>';
+    h+='<div id="rpt-discrepancy">'+_rptDiscrepancyHtml()+'</div>';
+    h+='</div>';
+  }
+
   // Контроль потерь: считается сам из чеков 1С (0/1 сом за штуку или скидка ≥80%).
   // Только просмотр. Несёт СЕБЕСТОИМОСТЬ — показываем ТОЛЬКО владельцу, кассирам скрыто.
   if(isOwner()){
@@ -8966,6 +9008,7 @@ function rptRefreshSummary(){
   h+='<div class="rpt-field"><span>Фонд (итого)</span><span style="color:var(--danger,#e53)">−'+_rptFmt(_rptFondTotal())+'</span></div>';
   el.innerHTML=h;
   var recEl=document.getElementById('rpt-reconcile'); if(recEl) recEl.innerHTML=_rptReconcileHtml();
+  var discEl=document.getElementById('rpt-discrepancy'); if(discEl) discEl.innerHTML=_rptDiscrepancyHtml();
 }
 
 // Кассы
