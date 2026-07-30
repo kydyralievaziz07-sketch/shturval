@@ -775,6 +775,7 @@ def rent_build(period=None, company=None):
                      "caranalysis": car_an, "plan": plan_block,
                      "abc": abc, "weekdays": weekdays, "best_weekday": best_wd, "daily": daily,
                      "clients": clients,
+                     "audit": sorted(d.get("audit", []), key=lambda x: x.get("ts", 0), reverse=True)[:200],
                      "notes": sorted(d.get("notes", []), key=lambda x: x.get("ts", 0), reverse=True),
                      "rtasks": sorted(d.get("rtasks", []), key=lambda x: (x.get("status") == "done", -x.get("ts", 0))),
                      "staff": [{"login": (v.get("login") or "").lower(), "name": (v.get("name") or v.get("login") or ""),
@@ -784,9 +785,30 @@ def rent_build(period=None, company=None):
     _RENT_BUILD_CACHE[ckey] = (time.time(), result)
     return result
 
+def _rent_diff(before, after, fields):
+    """Список изменённых полей [{f, old, new}] между старой и новой записью — для журнала."""
+    out = []
+    for f in fields:
+        a = before.get(f, ""); b = after.get(f, "")
+        if str(a) != str(b):
+            out.append({"f": f, "old": a, "new": b})
+    return out
+
+def _rent_log(d, action, tp, rec_id, label, changes, who, now_ms):
+    """Пишет запись в журнал изменений d['audit'] (храним последние 800)."""
+    if not changes:
+        return
+    log = d.setdefault("audit", [])
+    log.append({"ts": now_ms, "by": who or "", "action": action, "type": tp,
+                "id": rec_id, "label": label or "", "changes": changes})
+    if len(log) > 800:
+        del log[:len(log) - 800]
+
 def rent_apply(action, p, company=None, user=None):
     """Изменение данных аренды. Возвращает свежий rent_build().
-    Автор записи фиксируется в поле `by`. Машины и план правит только владелец."""
+    Автор записи фиксируется в поле `by`. Машины и план правит только владелец.
+    Завершённую аренду сотрудник менять/удалять НЕ может (только владелец) — защита от занижения
+    выручки задним числом; все правки/удаления пишутся в журнал изменений d['audit']."""
     d = rent_doc(company)
     user = user or {}
     is_owner = bool(user.get("owner")) or ("all" in (user.get("sections") or []))
@@ -829,11 +851,28 @@ def rent_apply(action, p, company=None, user=None):
     elif action == "edit_rental":
         r = find(d["rentals"], p.get("id"))
         if r:
+            # ЗАЩИТА: завершённую аренду сотрудник менять не может (только владелец) —
+            # иначе можно задним числом укоротить период/занизить сумму и забрать разницу.
+            if (not is_owner) and str(r.get("status") or "").startswith("Заверш"):
+                return {"error": "Завершённую аренду может изменить только владелец. Обратитесь к нему."}
+            _before = dict(r)
             for f in ("model", "renter", "phone", "start", "end", "return_time", "price", "got", "status", "note"):
                 if f in p:
                     r[f] = p[f]
             stamp_edit(r)
+            _rent_log(d, "edit", "аренда", r.get("id"),
+                      ((r.get("model") or "") + (" · " + r.get("renter") if r.get("renter") else "")),
+                      _rent_diff(_before, r, ("model", "renter", "phone", "start", "end", "return_time", "price", "got", "status", "note")),
+                      who, now_ms)
     elif action == "del_rental":
+        _dr = find(d["rentals"], p.get("id"))
+        if _dr and (not is_owner) and str(_dr.get("status") or "").startswith("Заверш"):
+            return {"error": "Завершённую аренду может удалить только владелец."}
+        if _dr:
+            _rent_log(d, "del", "аренда", _dr.get("id"),
+                      ((_dr.get("model") or "") + (" · " + _dr.get("renter") if _dr.get("renter") else "")),
+                      [{"f": k, "old": _dr.get(k, ""), "new": ""} for k in ("start", "end", "price", "got", "status")],
+                      who, now_ms)
         d["rentals"] = keep(d["rentals"], p.get("id"))
     elif action == "add_expense":
         d["expenses"].append(stamp_new({"id": _rent_newid(d, "EX"), "ts": now_ms,
@@ -842,11 +881,18 @@ def rent_apply(action, p, company=None, user=None):
     elif action == "edit_expense":
         e = find(d["expenses"], p.get("id"))
         if e:
+            _before = dict(e)
             for f in ("date", "model", "cat", "desc", "sum"):
                 if f in p:
                     e[f] = p[f]
             stamp_edit(e)
+            _rent_log(d, "edit", "расход", e.get("id"), (e.get("cat") or e.get("desc") or ""),
+                      _rent_diff(_before, e, ("date", "model", "cat", "desc", "sum")), who, now_ms)
     elif action == "del_expense":
+        _de = find(d["expenses"], p.get("id"))
+        if _de:
+            _rent_log(d, "del", "расход", _de.get("id"), (_de.get("cat") or _de.get("desc") or ""),
+                      [{"f": k, "old": _de.get(k, ""), "new": ""} for k in ("date", "cat", "sum")], who, now_ms)
         d["expenses"] = keep(d["expenses"], p.get("id"))
     elif action == "add_handed":
         d["handed"].append(stamp_new({"id": _rent_newid(d, "HD"), "ts": now_ms,
@@ -854,11 +900,18 @@ def rent_apply(action, p, company=None, user=None):
     elif action == "edit_handed":
         h = find(d["handed"], p.get("id"))
         if h:
+            _before = dict(h)
             for f in ("date", "sum", "comment"):
                 if f in p:
                     h[f] = p[f]
             stamp_edit(h)
+            _rent_log(d, "edit", "сдано", h.get("id"), (h.get("comment") or ""),
+                      _rent_diff(_before, h, ("date", "sum", "comment")), who, now_ms)
     elif action == "del_handed":
+        _dh = find(d["handed"], p.get("id"))
+        if _dh:
+            _rent_log(d, "del", "сдано", _dh.get("id"), (_dh.get("comment") or ""),
+                      [{"f": k, "old": _dh.get(k, ""), "new": ""} for k in ("date", "sum")], who, now_ms)
         d["handed"] = keep(d["handed"], p.get("id"))
     elif action == "add_car":
         d["cars"].append(stamp_new({"id": _rent_newid(d, "M"), "ts": now_ms,
