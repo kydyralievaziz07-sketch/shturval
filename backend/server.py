@@ -8316,7 +8316,7 @@ class Handler(BaseHTTPRequestHandler):
         # Instagram OAuth — ПУБЛИЧНЫЙ (браузер открывает напрямую без заголовков авторизации)
         if self.path.startswith("/api/bizmart/ig-connect"):
             import urllib.parse as _up
-            APP_ID = "1565669398224182"
+            APP_ID = "3097486700451674"
             REDIRECT = "https://shturval-backend.onrender.com/api/bizmart/ig-callback"
             SCOPE = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_messages,instagram_business_manage_comments"
             auth_url = ("https://api.instagram.com/oauth/authorize?client_id=%s&redirect_uri=%s&scope=%s&response_type=code"
@@ -8332,7 +8332,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.end_headers()
                 self.wfile.write(("<h2>Ошибка: %s</h2>" % err).encode()); return
             try:
-                APP_ID = "1565669398224182"
+                APP_ID = "3097486700451674"
                 APP_SECRET = CFG.get("IG_APP_SECRET_BIZMART_POSTING", "")
                 REDIRECT = "https://shturval-backend.onrender.com/api/bizmart/ig-callback"
                 data = _up.urlencode({"client_id": APP_ID, "client_secret": APP_SECRET,
@@ -8789,7 +8789,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send(500, {"error": str(e)})
         if self.path.startswith("/api/bizmart/ig-connect"):
-            APP_ID = "1565669398224182"
+            APP_ID = "3097486700451674"
             REDIRECT = "https://shturval-backend.onrender.com/api/bizmart/ig-callback"
             SCOPE = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_messages,instagram_business_manage_comments"
             import urllib.parse as _up
@@ -8806,7 +8806,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.end_headers()
                 self.wfile.write(("<h2>Ошибка: %s</h2>" % err).encode()); return
             try:
-                APP_ID = "1565669398224182"
+                APP_ID = "3097486700451674"
                 APP_SECRET = CFG.get("IG_APP_SECRET_BIZMART_POSTING", "")
                 REDIRECT = "https://shturval-backend.onrender.com/api/bizmart/ig-callback"
                 data = _up.urlencode({"client_id": APP_ID, "client_secret": APP_SECRET,
