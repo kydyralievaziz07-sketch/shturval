@@ -7182,13 +7182,13 @@ class Handler(BaseHTTPRequestHandler):
                 ("cash2u", "Cash2u"), ("onl_per", "Онл.пер"),
                 ("onl_nal", "Онл.нал"), ("payda", "PAIDA опти"), ("m_plus", "М+"),
             ]
-            def _real_itog(rec):
-                return sum(_n(rec.get(key)) for key, _ in PAY_FIELDS)
+            def _written_itog(rec):
+                return _n(rec.get("itog"))
             for k in kassas:
                 name = k.get("name", "Касса")
                 lines.append(name + (" ✅" if k.get("status") else ""))
                 lines.append("")
-                lines.append("Общий-%s" % _fmt(_real_itog(k)))
+                lines.append("Общий-%s" % _fmt(_written_itog(k)))
                 for key, label in PAY_FIELDS:
                     lines.append("%s-%s" % (label, _fmt(k.get(key, 0))))
                 lines.append("Остаток-%s" % _fmt(k.get("ostatok", 0)))
@@ -7214,7 +7214,7 @@ class Handler(BaseHTTPRequestHandler):
             _section(report.get("oplata_rows", []), "Оплата за товар")
             _section(report.get("fond_rows", []), "Фонд")
 
-            lines.append("Общий-%s" % _fmt(sum(_real_itog(k) for k in kassas)))
+            lines.append("Общий-%s" % _fmt(sum(_written_itog(k) for k in kassas)))
             for key, label in PAY_FIELDS:
                 lines.append("%s-%s" % (label, _fmt(sum(_n(k.get(key)) for k in kassas))))
             lines.append("Остаток-%s" % _fmt(sum(_n(k.get("ostatok")) for k in kassas)))
@@ -7223,9 +7223,8 @@ class Handler(BaseHTTPRequestHandler):
             lines.append("Н" + ("✅" if report.get("n_status") else ""))
 
             # Изъятие считается по формуле (Наличные − Расходы − Авансы − Оплата − Фонд −
-            # Остаток) — Остаток вписывают вручную по каждой кассе. Считаем от "Общий"
-            # (сумма ВСЕХ способов оплаты), не от "Наличные" — так подтвердил владелец.
-            obschiy_total = sum(_real_itog(k) for k in kassas)
+            # Остаток) — Остаток и Общий вписывают вручную по каждой кассе.
+            obschiy_total = sum(_written_itog(k) for k in kassas)
             ostatok_sum = sum(_n(k.get("ostatok")) for k in kassas)
             izyatie = (obschiy_total - sum(_n(r.get("sum")) for r in report.get("rashod_rows", []))
                        - sum(_n(r.get("sum")) for r in report.get("avans_rows", []))
@@ -7266,6 +7265,10 @@ class Handler(BaseHTTPRequestHandler):
                     real = _n(row.get(key))
                     if abs(written - real) >= 1:
                         discrepancies.append((k.get("name", "Касса"), label, written, real))
+                real_total = sum(_n(row.get(key)) for key, _ in PAY_FIELDS)
+                written_total = _written_itog(k)
+                if abs(written_total - real_total) >= 1:
+                    discrepancies.append((k.get("name", "Касса"), "Общий", written_total, real_total))
             if discrepancies:
                 lines.append("")
                 lines.append("")
