@@ -6173,12 +6173,17 @@ def expenses_view(company=None):
                       "expense": e[p], "net": round(ss[p]["profit"] - e[p])}
     # ПО МЕСЯЦАМ — для анализа сезонности (выручка/прибыль/расходы/чистая по каждому месяцу).
     mrev = {}
+    sales_by_day = []   # дневные продажи — чтобы фронт мог посчитать выручку/прибыль за ЛЮБОЙ период
     if supa_on() and co == BIZMART_ID:
         try:
             sd = _supa("GET", "sales_daily",
                        "?company_id=eq.%s&select=date,sales,profit&order=date.asc" % _q(co))
             for r in (sd or []):
-                mm = (r.get("date") or "")[:7]
+                dd = r.get("date") or ""
+                if dd:
+                    sales_by_day.append({"date": dd, "sales": round(_num(r.get("sales"))),
+                                         "profit": round(_num(r.get("profit")))})
+                mm = dd[:7]
                 if not mm:
                     continue
                 m = mrev.setdefault(mm, {"sales": 0.0, "profit": 0.0})
@@ -6198,7 +6203,7 @@ def expenses_view(company=None):
     # Список отдаём шире (было 200 — из-за этого фронт недосчитывал «Расходы за месяц»,
     # когда строк за месяц больше 200). Итоговые суммы всё равно берём из periods (по ВСЕМ строкам).
     res = {"expenses": rows[:10000], "by_category": by_cat, "periods": periods,
-           "by_month": by_month, "total_count": len(rows)}
+           "by_month": by_month, "sales_by_day": sales_by_day, "total_count": len(rows)}
     if co != BIZMART_ID and co not in GG_CATALOG_COMPANIES:
         res["note"] = ("«Расходы» включают и то, что вы внесли вручную, и реальные удержания "
                         "Wildberries (комиссия/логистика/хранение/штрафы). " + _WB_NOTE)

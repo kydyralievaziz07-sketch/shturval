@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.72.0<br>Кассы: «Общий» тоже можно менять вручную (не считается автоматически) — сверка с 1С теперь проверяет и его
+      Штурвал v4.73.0<br>В «Финансах» можно выбрать свой период календарём (даты «с … по») — выручка, прибыль, расходы и чистая считаются за любой отрезок
   </aside>
 
   <!-- MAIN -->
@@ -1190,10 +1190,16 @@
     <section id="tab-fin" class="hide">
       <div id="fin-status" class="note" style="margin-bottom:14px">⏳ Загружаю данные…</div>
       <div class="toolbar" style="margin-bottom:10px">
-        <div class="period" id="finperiod">
+        <div class="period" id="finperiod" style="flex-wrap:wrap;align-items:center">
           <button data-fp="today">День</button>
           <button class="active" data-fp="week">Неделя</button>
           <button data-fp="month">Месяц</button>
+          <span style="width:1px;height:22px;background:var(--line);margin:0 4px;display:inline-block"></span>
+          <span style="font-size:13px;color:var(--muted)">📅 Свой период:</span>
+          <input type="date" id="fin-from" onchange="syncFinTo()" style="background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:5px 8px;font-size:13px">
+          <span style="color:var(--muted);font-size:13px">—</span>
+          <input type="date" id="fin-to" style="background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:5px 8px;font-size:13px">
+          <button data-fp="range" onclick="setFinRange()">Показать</button>
         </div>
         <button class="btn" onclick="openExpense()">💸 Добавить расход</button>
       </div>
@@ -3085,42 +3091,61 @@
   function openM(id){ const m=document.getElementById(id); if(m) m.classList.add('open'); }
   function closeM(id){ const m=document.getElementById(id); if(m) m.classList.remove('open'); }
   // ---- ФИНАНСЫ: деньги по периодам + расходы ----
-  let finPeriod='week', _expData=null, _saving=false;
+  let finPeriod='week', _expData=null, _saving=false, finRange=null;
   const finPLabel={today:'сегодня',week:'за неделю',month:'за месяц'};
-  function setFinPeriod(p){ finPeriod=p; document.querySelectorAll('#finperiod button,#expperiod button').forEach(b=>b.classList.toggle('active',b.dataset.fp===p)); renderFinMoney(); renderExpensesList(); }
-  document.querySelectorAll('#finperiod button,#expperiod button').forEach(b=>b.addEventListener('click',()=>setFinPeriod(b.dataset.fp)));
+  function finLabel(){ return finRange?('с '+finRange.from+' по '+finRange.to):finPLabel[finPeriod]; }
+  function syncFinTo(){ const f=document.getElementById('fin-from'),t=document.getElementById('fin-to'); if(f&&t){ t.min=f.value||''; if(t.value&&f.value&&t.value<f.value) t.value=f.value; } }
+  function setFinPeriod(p){ finRange=null; finPeriod=p; document.querySelectorAll('#finperiod button,#expperiod button').forEach(b=>b.classList.toggle('active',b.dataset.fp===p)); renderFinMoney(); renderExpensesList(); }
+  function setFinRange(){ const f=(document.getElementById('fin-from')||{}).value,t=(document.getElementById('fin-to')||{}).value;
+    if(!f||!t){ alert('Выбери обе даты периода — «с» и «по».'); return; }
+    finRange={from:(f<=t?f:t),to:(f<=t?t:f)}; finPeriod='range';
+    document.querySelectorAll('#finperiod button,#expperiod button').forEach(b=>b.classList.toggle('active',b.dataset.fp==='range'));
+    renderFinMoney(); renderExpensesList(); }
+  // диапазон дат для текущего выбора (для фильтра списка и сумм)
+  function _finInP(dt){
+    if(finRange) return dt>=finRange.from && dt<=finRange.to;
+    const today=salesTodayStr();
+    if(finPeriod==='today') return dt===today;
+    if(finPeriod==='week'){ const d=new Date(); d.setDate(d.getDate()-6); const wk=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); return dt>=wk; }
+    return dt.slice(0,7)===today.slice(0,7);
+  }
+  document.querySelectorAll('#finperiod button,#expperiod button').forEach(b=>{ if(b.dataset.fp&&b.dataset.fp!=='range') b.addEventListener('click',()=>setFinPeriod(b.dataset.fp)); });
   function renderFinMoney(){
     const box=document.getElementById('fin-money'); if(!box||!_expData) return;
-    const p=(_expData.periods||{})[finPeriod]||{};
+    let p=(_expData.periods||{})[finPeriod]||{};
+    if(finRange){   // свой период — считаем сами: расходы из списка, выручка/прибыль из дневных продаж
+      const exp=(_expData.expenses||[]).filter(x=>_finInP(x.date||'')).reduce((s,x)=>s+(+x.amount||0),0);
+      const sd=(_expData.sales_by_day||[]).filter(x=>_finInP(x.date||''));
+      const sales=sd.reduce((s,x)=>s+(+x.sales||0),0), profit=sd.reduce((s,x)=>s+(+x.profit||0),0);
+      p={sales:sales, profit:profit, expense:exp, net:Math.round(profit-exp)};
+    }
     const km=(l,s,c)=>'<div class="card kpi"><div class="label">'+l+'</div><div class="value"'+(c?' style="color:'+c+'"':'')+'><span class="money" data-som="'+(s||0)+'">'+fmt(s||0)+'</span></div></div>';
-    box.innerHTML=km('Выручка '+finPLabel[finPeriod],p.sales)+km('Прибыль с товара',p.profit)+
+    box.innerHTML=km('Выручка '+finLabel(),p.sales)+km('Прибыль с товара',p.profit)+
       km('Расходы',p.expense,'#ffb84d')+km('Чистая прибыль',p.net,((p.net||0)>=0?'#39d98a':'#ff6b6b'));
     renderMoney();
-    const ep=document.getElementById('fin-exp-period'); if(ep) ep.textContent='— '+finPLabel[finPeriod];
+    const ep=document.getElementById('fin-exp-period'); if(ep) ep.textContent='— '+finLabel();
   }
   function renderExpensesList(){
     if(!_expData) return;
-    const today=salesTodayStr();
-    const wkAgo=(function(){const d=new Date();d.setDate(d.getDate()-6);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');})();
-    const inP=(dt)=>finPeriod==='today'?dt===today:(finPeriod==='week'?dt>=wkAgo:dt.slice(0,7)===today.slice(0,7));
+    const inP=(dt)=>_finInP(dt);
     const list=(_expData.expenses||[]).filter(x=>inP(x.date||''));
     // список расходов (одна разметка — для «Финансов» и для отдельной вкладки «Расходы»)
-    const listHTML=list.length?'<table><tbody>'+list.map(x=>'<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc((x.date||'').slice(5))+'</td><td>'+esc(x.category||'—')+(x.note?' <span style="color:var(--muted);font-size:12px">· '+esc(x.note)+'</span>':'')+'</td><td style="text-align:right;white-space:nowrap"><span class="money" data-som="'+x.amount+'">'+fmt(x.amount)+'</span></td><td style="width:26px;text-align:right"><span onclick="delExpense('+x.id+')" title="Удалить" style="cursor:pointer;color:var(--muted)">✕</span></td></tr>').join('')+'</tbody></table>':'<span style="color:var(--muted);font-size:13px">Расходов '+finPLabel[finPeriod]+' нет</span>';
+    const listHTML=list.length?'<table><tbody>'+list.map(x=>'<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc((x.date||'').slice(5))+'</td><td>'+esc(x.category||'—')+(x.note?' <span style="color:var(--muted);font-size:12px">· '+esc(x.note)+'</span>':'')+'</td><td style="text-align:right;white-space:nowrap"><span class="money" data-som="'+x.amount+'">'+fmt(x.amount)+'</span></td><td style="width:26px;text-align:right"><span onclick="delExpense('+x.id+')" title="Удалить" style="cursor:pointer;color:var(--muted)">✕</span></td></tr>').join('')+'</tbody></table>':'<span style="color:var(--muted);font-size:13px">Расходов '+finLabel()+' нет</span>';
     ['fin-expenses','exp-list'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML=listHTML;});
     // по категориям
     const byCat={}; list.forEach(x=>{const c=(x.category||'—'); byCat[c]=(byCat[c]||0)+(+x.amount||0);});   // за тот же период, что выбран
     const cats=Object.keys(byCat).map(c=>({category:c,amount:byCat[c]})).sort((a,b)=>b.amount-a.amount);
     const mx=Math.max.apply(null,cats.map(c=>c.amount).concat([1]));
-    const catsHTML=cats.length?cats.map(c=>'<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>'+esc(c.category)+'</span><span class="money" data-som="'+c.amount+'">'+fmt(c.amount)+'</span></div><div class="progress"><div style="width:'+Math.round(c.amount/mx*100)+'%"></div></div></div>').join(''):'<span style="color:var(--muted);font-size:13px">Расходов '+finPLabel[finPeriod]+' нет</span>';
+    const catsHTML=cats.length?cats.map(c=>'<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>'+esc(c.category)+'</span><span class="money" data-som="'+c.amount+'">'+fmt(c.amount)+'</span></div><div class="progress"><div style="width:'+Math.round(c.amount/mx*100)+'%"></div></div></div>').join(''):'<span style="color:var(--muted);font-size:13px">Расходов '+finLabel()+' нет</span>';
     ['fin-exp-cats','exp-cats-box'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML=catsHTML;});
     // подписи периода
-    ['fin-cats-period','fin-exp-period','exp-cats-period','exp-list-period'].forEach(id=>{const el=document.getElementById(id); if(el) el.textContent='— '+finPLabel[finPeriod];});
+    ['fin-cats-period','fin-exp-period','exp-cats-period','exp-list-period'].forEach(id=>{const el=document.getElementById(id); if(el) el.textContent='— '+finLabel();});
     // итог для отдельной вкладки «Расходы» (без выручки/прибыли — можно дать сотруднику)
     const et=document.getElementById('exp-total');
-    if(et){ // итог берём из серверного periods (считается по ВСЕМ строкам), а не из урезанного списка
+    if(et){ // пресеты берут итог из серверного periods (по ВСЕМ строкам); свой период — из отфильтрованного списка
       const sp=(_expData.periods||{})[finPeriod]||{};
-      const total=(sp.expense!=null)?sp.expense:list.reduce((s,x)=>s+(+x.amount||0),0);
-      et.innerHTML='<div class="card kpi"><div class="label">Расходы '+finPLabel[finPeriod]+'</div><div class="value" style="color:#ffb84d"><span class="money" data-som="'+total+'">'+fmt(total)+'</span></div></div>'
+      const total=(!finRange && sp.expense!=null)?sp.expense:list.reduce((s,x)=>s+(+x.amount||0),0);
+      et.innerHTML='<div class="card kpi"><div class="label">Расходы '+finLabel()+'</div><div class="value" style="color:#ffb84d"><span class="money" data-som="'+total+'">'+fmt(total)+'</span></div></div>'
         +'<div class="card kpi"><div class="label">Записей</div><div class="value">'+list.length+'</div></div>'; }
     renderMoney();
   }
