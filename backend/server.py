@@ -4994,6 +4994,8 @@ def _daterange_list(date_from, date_to, cap=400):
         out.append(d.isoformat()); d += datetime.timedelta(days=1)
     return out
 
+_ASSORT_CHUNK = 16   # ПАМЯТЬ: сколько дней чеков держим в памяти одновременно при сборке периода
+
 def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_to=None):
     """Аггрегирует прибыль по каждому товару из чеков за последние `days` дней ИЛИ за
     произвольный период date_from…date_to (если заданы). Раскладывает по верхним группам
@@ -5032,12 +5034,19 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_t
         except Exception:
             return None
     workers = 8 if ndays > 14 else 4
-    fetched = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
-        for recs in ex.map(_pull, dates):
-            fetched.append(recs)
+    # ПАМЯТЬ: тянем и агрегируем чеки ПОРЦИЯМИ по дням (порция = _ASSORT_CHUNK дней), а не
+    # весь период разом. Иначе год/квартал = сотни МБ сырых чеков в памяти одновременно → OOM
+    # на 512 МБ. Генератор отдаёт дни по одному, удерживая в памяти лишь текущую порцию.
+    def _iter_days():
+        for _i in range(0, ndays, _ASSORT_CHUNK):
+            _chunk = dates[_i:_i + _ASSORT_CHUNK]
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as _ex:
+                _recs = list(_ex.map(_pull, _chunk))
+            for _pair in zip(_chunk, _recs):
+                yield _pair
+            _recs = None   # освобождаем порцию перед следующей
     susp = []   # контроль потерь: подозрительные позиции (0 сом / 1 сом / скидка ≥80%)
-    for dd, recs in zip(dates, fetched):
+    for dd, recs in _iter_days():
         if recs is None:
             days_fail += 1
             continue
@@ -5226,6 +5235,8 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_t
         "generated_ts": int(time.time()),
         "updated": time.strftime("%d.%m.%Y %H:%M"),
     }
+    agg = None; susp = None   # промежуточные структуры больше не нужны
+    import gc; gc.collect()   # вернуть память после тяжёлой сборки (особенно год/квартал)
     return res
 
 def _assort_refresh(days=ASSORT_DAYS, force=False):
