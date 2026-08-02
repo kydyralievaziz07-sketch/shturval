@@ -5286,6 +5286,7 @@ def get_assortment(days=ASSORT_DAYS):
 # ── Произвольный период (календарь) во вкладке «Ассортимент»/«Отчёт» ──
 _assort_range_cache = {}   # "from_to" -> {"data":..., "t":..., "refreshing":False}
 _ASSORT_RANGE_MAX = 400    # предел размаха периода в днях
+_ASSORT_RANGE_KEEP = 3     # держим в памяти только последние N снимков произвольных периодов (экономия RAM)
 
 def get_assortment_range(date_from, date_to):
     """Ассортимент/отчёт за произвольный период. Считает ФОНОМ (как get_assortment):
@@ -5305,6 +5306,14 @@ def get_assortment_range(date_from, date_to):
     df, dt = a.isoformat(), b.isoformat()
     key = df + "_" + dt
     st = _assort_range_cache.setdefault(key, {"data": None, "t": 0, "refreshing": False})
+    # НЕ копим память: снимки произвольных периодов тяжёлые (тысячи товаров) — держим
+    # только последние N, вытесняя самые старые (кроме текущего и считающихся сейчас).
+    if len(_assort_range_cache) > _ASSORT_RANGE_KEEP:
+        drop = sorted((k for k, v in _assort_range_cache.items()
+                       if k != key and not v.get("refreshing")),
+                      key=lambda k: _assort_range_cache[k].get("t", 0))
+        for k in drop[:len(_assort_range_cache) - _ASSORT_RANGE_KEEP]:
+            _assort_range_cache.pop(k, None)
     fresh = st["data"] is not None and (time.time() - st["t"]) < ASSORT_TTL
     if not fresh and not st["refreshing"]:
         st["refreshing"] = True
