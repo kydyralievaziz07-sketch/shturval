@@ -78,6 +78,8 @@ def load_secret():
     cfg["IG_USERNAME"] = env("IG_USERNAME")          # ник Instagram (для ссылки по умолчанию)
     # Bizmart автопостинг — отдельный токен страницы Facebook (постоянный, не истекает)
     cfg["IG_TOKEN_BIZMART_KG"] = env("IG_TOKEN_BIZMART_KG")   # Page Access Token для @bizmart_kg
+    cfg["IG_APP_SECRET_BIZMART_POSTING"] = env("IG_APP_SECRET_BIZMART_POSTING")  # секрет Instagram-приложения bizmart-posting-IG (OAuth подключения)
+    cfg["BIZ_IG_USERNAME"] = env("BIZ_IG_USERNAME")   # аккаунт автопостинга по умолчанию (если пусто — bizmart_kg)
     cfg["TG_BOT_TOKEN"] = env("TG_BOT_TOKEN")        # токен Telegram-бота (для кросс-постинга)
     cfg["TG_CHANNEL_BIZMART"] = env("TG_CHANNEL_BIZMART")  # @канал или -100xxx Telegram
     cfg["TG_BOT_USERNAME"] = env("TG_BOT_USERNAME")       # @username бота (для показа)
@@ -2307,11 +2309,25 @@ def igbot_source_del(url):
 # Публикация через Facebook Graph API (graph.facebook.com) — Business account через Page Token.
 # Telegram — через Bot API (если TG_BOT_TOKEN задан).
 
-BIZ_IG_ID = "26536556892687654"   # @bizmart_kg (Instagram Login ID)
+BIZ_IG_ID = "26536556892687654"   # запасной id (устарел; реальный берём из ig_accounts)
+
+def biz_default_ig_id():
+    """ig_id аккаунта автопостинга по умолчанию — из таблицы ig_accounts.
+    Раньше тут была захардкоженная константа, которой нет ни в одном аккаунте, —
+    из-за неё публикация уходила «в пустоту»."""
+    want = (CFG.get("BIZ_IG_USERNAME") or "bizmart_kg").lower()
+    try:
+        rows = _supa("GET", "ig_accounts", "?select=ig_id,username&company_id=eq.%s" % COMPANY_ID) or []
+        for r in rows:
+            if (r.get("username") or "").lower() == want:
+                return r.get("ig_id") or BIZ_IG_ID
+    except Exception as e:
+        print("[bizmart] не удалось взять ig_id из ig_accounts: %s" % e)
+    return BIZ_IG_ID
 
 def _biz_ig_token(ig_id=None):
     """Токен для публикации: сначала из ig_accounts (Instagram Login), потом из env."""
-    tok = ig_token_for(ig_id or BIZ_IG_ID)
+    tok = ig_token_for(ig_id or biz_default_ig_id())
     return tok if tok else CFG.get("IG_TOKEN_BIZMART_KG", "")
 
 def _biz_ig_req(method, path, params=None, body=None, ig_id=None):
@@ -2346,7 +2362,7 @@ def biz_ig_publish(row):
     caption = row.get("caption") or ""
     media_url = row.get("media_url") or ""
     cover_url = row.get("cover_url") or ""
-    ig_id = row.get("ig_account_id") or BIZ_IG_ID
+    ig_id = row.get("ig_account_id") or biz_default_ig_id()
 
     if mtype == "PHOTO":
         body = {"image_url": media_url, "caption": caption}
@@ -7107,7 +7123,7 @@ class Handler(BaseHTTPRequestHandler):
                 "media_url": p.get("media_url") or "",
                 "cover_url": p.get("cover_url") or None,
                 "caption": p.get("caption") or "",
-                "ig_account_id": p.get("ig_account_id") or BIZ_IG_ID,
+                "ig_account_id": p.get("ig_account_id") or biz_default_ig_id(),
                 "tg_channel": p.get("tg_channel") or None,
                 "status": "queued",
             }

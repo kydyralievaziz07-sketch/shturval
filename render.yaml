@@ -64,6 +64,8 @@ services:
         sync: false
       - key: IG_APP_SECRET_BIZMART_POSTING
         sync: false
+      - key: BIZ_IG_USERNAME
+        sync: false
 
       # --- WhatsApp ---
       - key: WA_TOKEN
