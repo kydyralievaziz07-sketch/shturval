@@ -8384,6 +8384,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.end_headers()
                 self.wfile.write(("<h2>✅ Готово!</h2><p>@%s подключён. Токен сохранён. Можно закрыть страницу.</p>" % username).encode())
                 print("[ig-callback] Токен @%s (%s) сохранён" % (username, ig_id))
+            except urllib.error.HTTPError as e:
+                body = ""
+                try: body = e.read().decode()[:800]
+                except Exception: pass
+                print("[ig-callback] HTTP %s от Meta: %s" % (e.code, body))
+                self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.end_headers()
+                self.wfile.write(("<h2>Ошибка Meta (HTTP %s)</h2><pre>%s</pre>" % (e.code, body)).encode())
             except Exception as e:
                 self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.end_headers()
                 self.wfile.write(("<h2>Ошибка</h2><pre>%s</pre>" % str(e)).encode())
@@ -8858,6 +8865,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.end_headers()
                 self.wfile.write(("<h2>✅ Готово!</h2><p>@%s подключён. Токен сохранён. Можно закрыть страницу.</p>" % username).encode())
                 print("[ig-callback] Токен @%s (%s) сохранён" % (username, ig_id))
+            except urllib.error.HTTPError as e:
+                body = ""
+                try: body = e.read().decode()[:800]
+                except Exception: pass
+                print("[ig-callback] HTTP %s от Meta: %s" % (e.code, body))
+                self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.end_headers()
+                self.wfile.write(("<h2>Ошибка Meta (HTTP %s)</h2><pre>%s</pre>" % (e.code, body)).encode())
             except Exception as e:
                 self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.end_headers()
                 self.wfile.write(("<h2>Ошибка</h2><pre>%s</pre>" % str(e)).encode())
