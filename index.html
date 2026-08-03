@@ -1195,6 +1195,11 @@
           <button class="active" data-fp="week">Неделя</button>
           <button data-fp="month">Месяц</button>
           <span style="width:1px;height:22px;background:var(--line);margin:0 4px;display:inline-block"></span>
+          <span style="font-size:13px;color:var(--muted)">🗓 Месяц:</span>
+          <select id="fin-month" onchange="setFinMonth(this.value)" style="background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:5px 8px;font-size:13px">
+            <option value="">— выбрать —</option>
+          </select>
+          <span style="width:1px;height:22px;background:var(--line);margin:0 4px;display:inline-block"></span>
           <span style="font-size:13px;color:var(--muted)">📅 Свой период:</span>
           <input type="date" id="fin-from" onchange="syncFinTo()" style="background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:5px 8px;font-size:13px">
           <span style="color:var(--muted);font-size:13px">—</span>
@@ -3091,13 +3096,39 @@
   function openM(id){ const m=document.getElementById(id); if(m) m.classList.add('open'); }
   function closeM(id){ const m=document.getElementById(id); if(m) m.classList.remove('open'); }
   // ---- ФИНАНСЫ: деньги по периодам + расходы ----
-  let finPeriod='week', _expData=null, _saving=false, finRange=null;
+  let finPeriod='week', _expData=null, _saving=false, finRange=null, finMonth=null;
   const finPLabel={today:'сегодня',week:'за неделю',month:'за месяц'};
-  function finLabel(){ return finRange?('с '+finRange.from+' по '+finRange.to):finPLabel[finPeriod]; }
+  const MONTHS_FULL_RU=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
+  function monthFullLabel(ym){ const p=(ym||'').split('-'); if(p.length<2) return ym||''; return (MONTHS_FULL_RU[(+p[1])-1]||p[1])+' '+p[0]; }
+  function finLabel(){
+    if(finMonth) return 'за '+monthFullLabel(finMonth);
+    return finRange?('с '+finRange.from+' по '+finRange.to):finPLabel[finPeriod];
+  }
+  // Список месяцев берём из данных (by_month), а не хардкодом 12 штук:
+  // показываем только те, за которые реально есть продажи или расходы.
+  function fillFinMonths(){
+    const sel=document.getElementById('fin-month'); if(!sel||!_expData) return;
+    const months=((_expData.by_month)||[]).map(m=>m.month).filter(Boolean).sort().reverse();
+    const cur=sel.value;
+    sel.innerHTML='<option value="">— выбрать —</option>'+months.map(m=>'<option value="'+m+'">'+monthFullLabel(m)+'</option>').join('');
+    if(cur&&months.indexOf(cur)>=0) sel.value=cur;
+  }
+  function setFinMonth(ym){
+    if(!ym){ finMonth=null; setFinPeriod('week'); return; }
+    finMonth=ym;
+    const y=+ym.slice(0,4), mo=+ym.slice(5,7);
+    const last=new Date(y, mo, 0).getDate();   // 0-й день следующего месяца = последний текущего
+    finRange={from:ym+'-01', to:ym+'-'+String(last).padStart(2,'0')};
+    finPeriod='range';
+    document.querySelectorAll('#finperiod button,#expperiod button').forEach(b=>b.classList.remove('active'));
+    renderFinMoney(); renderExpensesList();
+  }
   function syncFinTo(){ const f=document.getElementById('fin-from'),t=document.getElementById('fin-to'); if(f&&t){ t.min=f.value||''; if(t.value&&f.value&&t.value<f.value) t.value=f.value; } }
-  function setFinPeriod(p){ finRange=null; finPeriod=p; document.querySelectorAll('#finperiod button,#expperiod button').forEach(b=>b.classList.toggle('active',b.dataset.fp===p)); renderFinMoney(); renderExpensesList(); }
+  function _finClearMonth(){ finMonth=null; const s=document.getElementById('fin-month'); if(s) s.value=''; }
+  function setFinPeriod(p){ finRange=null; _finClearMonth(); finPeriod=p; document.querySelectorAll('#finperiod button,#expperiod button').forEach(b=>b.classList.toggle('active',b.dataset.fp===p)); renderFinMoney(); renderExpensesList(); }
   function setFinRange(){ const f=(document.getElementById('fin-from')||{}).value,t=(document.getElementById('fin-to')||{}).value;
     if(!f||!t){ alert('Выбери обе даты периода — «с» и «по».'); return; }
+    _finClearMonth();
     finRange={from:(f<=t?f:t),to:(f<=t?t:f)}; finPeriod='range';
     document.querySelectorAll('#finperiod button,#expperiod button').forEach(b=>b.classList.toggle('active',b.dataset.fp==='range'));
     renderFinMoney(); renderExpensesList(); }
@@ -3150,7 +3181,7 @@
     renderMoney();
   }
   async function loadExpenses(){
-    try{ const r=await apiFetch('/api/expenses',{},ONEC_BASE); _expData=await r.json(); renderFinMoney(); renderExpensesList(); renderFinCharts(); }catch(e){}
+    try{ const r=await apiFetch('/api/expenses',{},ONEC_BASE); _expData=await r.json(); fillFinMonths(); renderFinMoney(); renderExpensesList(); renderFinCharts(); }catch(e){}
   }
   // Диаграммы по месяцам (сезонность): столбики выручка/прибыль/расходы + доля выручки
   function renderFinCharts(){
