@@ -2309,21 +2309,20 @@ def igbot_source_del(url):
 # Публикация через Facebook Graph API (graph.facebook.com) — Business account через Page Token.
 # Telegram — через Bot API (если TG_BOT_TOKEN задан).
 
-BIZ_IG_ID = "26536556892687654"   # запасной id (устарел; реальный берём из ig_accounts)
-
 def biz_default_ig_id():
-    """ig_id аккаунта автопостинга по умолчанию — из таблицы ig_accounts.
-    Раньше тут была захардкоженная константа, которой нет ни в одном аккаунте, —
-    из-за неё публикация уходила «в пустоту»."""
-    want = (CFG.get("BIZ_IG_USERNAME") or "bizmart_kg").lower()
+    """ig_id аккаунта автопостинга — только из таблицы ig_accounts (BIZ_IG_USERNAME).
+    Никаких захардкоженных id: раньше тут была константа с номером, которого нет
+    ни в одном аккаунте, и публикация уходила «в пустоту»."""
+    want = (CFG.get("BIZ_IG_USERNAME") or "bizmart_man").lower()
     try:
         rows = _supa("GET", "ig_accounts", "?select=ig_id,username&company_id=eq.%s" % COMPANY_ID) or []
         for r in rows:
             if (r.get("username") or "").lower() == want:
-                return r.get("ig_id") or BIZ_IG_ID
+                return r.get("ig_id") or ""
+        print("[bizmart] аккаунт @%s не найден в ig_accounts" % want)
     except Exception as e:
         print("[bizmart] не удалось взять ig_id из ig_accounts: %s" % e)
-    return BIZ_IG_ID
+    return ""
 
 def _biz_ig_token(ig_id=None):
     """Токен для публикации: сначала из ig_accounts (Instagram Login), потом из env."""
