@@ -130,10 +130,12 @@ services:
         sync: false
       - key: SUPABASE_KEY
         sync: false
-      # вход владельца Freeways (логин + пароль). Объявлены здесь, чтобы деплой их не стёр.
+      # вход владельца Freeways (логин + пароль + флаг owner). Объявлены здесь, чтобы деплой их не стёр.
       - key: OWNER_LOGIN
         sync: false
       - key: SITE_PASSWORD
+        sync: false
+      - key: USERS_JSON
         sync: false
 
   # --- Valbreeze (маркетплейс Wildberries, аккаунт Joru) — отдельный дашборд ---
