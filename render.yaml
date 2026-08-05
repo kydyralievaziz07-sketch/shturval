@@ -67,6 +67,12 @@ services:
       - key: BIZ_IG_USERNAME
         sync: false
 
+      # --- GPS-трекинг автопарка (Wialon / GPS Realcom) ---
+      - key: WIALON_HOST
+        sync: false
+      - key: WIALON_TOKEN
+        sync: false
+
       # --- WhatsApp ---
       - key: WA_TOKEN
         sync: false

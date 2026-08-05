@@ -672,7 +672,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.75.0<br>Прокат: аренду можно править полностью, а вся история правок «было → стало» переехала в отдельную вкладку «История изменений» (у владельца)
+      Штурвал v4.76.0<br>Авто Рент: новая вкладка «GPS · Пробег» — пробег каждой машины за любой период по данным трекеров и напоминание о замене масла
   </aside>
 
   <!-- MAIN -->
@@ -707,6 +707,7 @@
     <section id="tab-rentlist" class="hide"><div id="rent-list"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-rentalert" class="hide"><div id="rent-alert"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-rentaudit" class="hide"><div id="rent-audit"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
+    <section id="tab-rentgps" class="hide"><div id="rent-gps"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-rentexp" class="hide"><div id="rent-exp"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-renthanded" class="hide"><div id="rent-handed"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-rentanalysis" class="hide"><div id="rent-analysis"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
@@ -1782,6 +1783,7 @@
     rentlist :["Аренда авто","Кто, что и на сколько взял"],
     rentalert :["Требует внимания","Сдачи авто и должники"],
     rentaudit :["История изменений","Кто и что менял: было → стало"],
+    rentgps :["GPS · Пробег","Километры по трекерам и замена масла"],
     rentexp  :["Расходы","Куда уходят деньги по аренде"],
     renthanded:["Сдано","Передано руководителю"],
     rentanalysis:["Анализ по машинам","Какая машина сколько зарабатывает"],
@@ -1805,7 +1807,7 @@
     wainbox:{icon:'🟢',label:'WhatsApp + бот'},
     ai:{icon:'🤖',label:'ИИ-помощник'}, sim:{icon:'📊',label:'Симулятор'},
     rentdash:{icon:'📊',label:'Дашборд'}, renttasks:{icon:'🗂',label:'Задачи'}, rentnotes:{icon:'📌',label:'Заметки'}, rentcars:{icon:'🚗',label:'Машины'},
-    rentlist:{icon:'🔑',label:'Аренда авто'}, rentalert:{icon:'🔔',label:'Требует внимания'}, rentaudit:{icon:'📋',label:'История изменений'}, rentexp:{icon:'🧾',label:'Расходы'},
+    rentlist:{icon:'🔑',label:'Аренда авто'}, rentalert:{icon:'🔔',label:'Требует внимания'}, rentaudit:{icon:'📋',label:'История изменений'}, rentgps:{icon:'🛰',label:'GPS · Пробег'}, rentexp:{icon:'🧾',label:'Расходы'},
     renthanded:{icon:'📤',label:'Сдано'},
     rentanalysis:{icon:'📊',label:'Анализ по машинам'}, rentplan:{icon:'🎯',label:'План'},
     rentclients:{icon:'🧑',label:'Клиенты'}, rentcalendar:{icon:'📆',label:'Календарь'}
@@ -1814,7 +1816,7 @@
     {key:'crm',  icon:'🧲', label:'CRM',     tabs:['crmdash','deals','tasks','clients','iginbox','wainbox']},
     {key:'mkt',  icon:'📣', label:'Реклама', tabs:['ads','adsreport','adsanalysis','wbads']},
     {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','assort','report','analytics','supl','fin','exp']},
-    {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','renttasks','rentnotes','rentcars','rentlist','rentalert','rentexp','renthanded','rentanalysis','rentplan','rentclients','rentcalendar','rentaudit']},
+    {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','renttasks','rentnotes','rentcars','rentlist','rentalert','rentexp','renthanded','rentanalysis','rentplan','rentclients','rentcalendar','rentgps','rentaudit']},
     {key:'dailyrep', icon:'📋', label:'Отчёты', tabs:['reportdash']},
     {key:'team', icon:'👥', label:'Команда', tabs:['myday','hr']},
     {key:'ai',   icon:'🤖', label:'ИИ',      tabs:['ai','sim']}
@@ -1828,6 +1830,8 @@
       // «rent» = весь раздел; иначе по под-доступу: rentcars→rent_cars, rentdash→rent_dash и т.п.
       // «История изменений» — только владельцу кабинета (контроль за сотрудниками)
       if(tab==='rentaudit') return isCabinetOwner();
+      // «GPS · Пробег» — владельцу кабинета (данные трекеров есть только у Бизмарта)
+      if(tab==='rentgps') return isCabinetOwner();
       if(isOwner()||canSee('rent')) return true;
       // «Требует внимания» — только владельцу (должники/сдачи авто)
       if(tab==='rentalert') return (USER.sections||[]).some(function(s){return s.indexOf('rent')===0;});
@@ -1895,6 +1899,7 @@
     else if(tab==='rentlist') rentDispatch('list');
     else if(tab==='rentalert') rentDispatch('alert');
     else if(tab==='rentaudit') rentDispatch('audit');
+    else if(tab==='rentgps') rentDispatch('gps');
     else if(tab==='rentexp') rentDispatch('exp');
     else if(tab==='renthanded') rentDispatch('handed');
     else if(tab==='rentanalysis') rentDispatch('analysis');
@@ -7993,7 +7998,7 @@
   }
   function rAddBtn(type,label){ return '<button class="btn" style="padding:6px 14px;font-size:13px;margin-bottom:12px" onclick="openRentForm(\''+type+'\')">➕ '+label+'</button>'; }
 
-  var RENT_CONT={dash:'rent-dash',tasks:'rent-tasks',notes:'rent-notes',cars:'rent-cars',list:'rent-list',alert:'rent-alert',exp:'rent-exp',handed:'rent-handed',analysis:'rent-analysis',plan:'rent-plan',clients:'rent-clients',calendar:'rent-calendar',audit:'rent-audit'};
+  var RENT_CONT={dash:'rent-dash',tasks:'rent-tasks',notes:'rent-notes',cars:'rent-cars',list:'rent-list',alert:'rent-alert',exp:'rent-exp',handed:'rent-handed',analysis:'rent-analysis',plan:'rent-plan',clients:'rent-clients',calendar:'rent-calendar',audit:'rent-audit',gps:'rent-gps'};
   function rentDispatch(view){
     RENT_CUR=view;
     if(RENT){ rentRenderCur(); return; }
@@ -8027,7 +8032,8 @@
     if(el) el.innerHTML='<div class="card" style="border-color:var(--red)"><b>Не удалось загрузить данные аренды.</b><div style="color:var(--muted);font-size:13px;margin-top:6px">'+esc(RENT_ERR)+'</div><button class="btn ghost" style="margin-top:10px;padding:6px 12px;font-size:13px" onclick="RENT_ERR=\'\';rentDispatch(RENT_CUR)">↻ Повторить</button></div>';
   }
   function rentRenderCur(){
-    ({dash:renderRentDash,tasks:renderRentTasks,notes:renderRentNotes,cars:renderRentCars,list:renderRentList,alert:renderRentAlert,exp:renderRentExp,handed:renderRentHanded,analysis:renderRentAnalysis,plan:renderRentPlan,clients:renderRentClients,calendar:renderRentCalendar,audit:renderRentAudit}[RENT_CUR]||renderRentDash)();
+    if(RENT_CUR==='gps'){ if(TRACK) renderRentGps(); else { renderRentGps({calc:true}); trackLoad(); } return; }
+    ({dash:renderRentDash,tasks:renderRentTasks,notes:renderRentNotes,cars:renderRentCars,list:renderRentList,alert:renderRentAlert,exp:renderRentExp,handed:renderRentHanded,analysis:renderRentAnalysis,plan:renderRentPlan,clients:renderRentClients,calendar:renderRentCalendar,audit:renderRentAudit,gps:renderRentGps}[RENT_CUR]||renderRentDash)();
   }
   // отправка изменения на сервер
   function rentPost(action,payload){
@@ -8099,6 +8105,110 @@
   function _rentFieldRu(f){ return ({model:'машина',renter:'арендатор',phone:'телефон',start:'дата начала',end:'дата сдачи',return_time:'время сдачи',price:'цена/сутки',got:'получено',status:'статус',note:'заметка',date:'дата',cat:'категория',desc:'описание',sum:'сумма',comment:'комментарий'})[f]||f; }
   function _rentIsReduction(f,ov,nv){ if(f==='price'||f==='got'||f==='sum') return rnum(nv)<rnum(ov); if(f==='end'){ var a=ruToIso(ov),b=ruToIso(nv); return !!(a&&b&&b<a); } return false; }
   function _auditWhen(ts){ try{ var d=new Date(ts),p=function(n){return(n<10?'0':'')+n;}; return p(d.getDate())+'.'+p(d.getMonth()+1)+' '+p(d.getHours())+':'+p(d.getMinutes()); }catch(e){ return ''; } }
+
+  // ---------- GPS · ПРОБЕГ (данные трекеров Wialon) ----------
+  var TRACK=null, TRACK_PER='30d', TRACK_IV=5000, _trackTimer=null, _trackTries=0;
+  function trackFmt(n){ return (n===null||n===undefined)?'—':nfmt(Math.round(n)); }
+  function trackLoad(){
+    var b=document.getElementById('rent-gps'); if(!b) return;
+    var url='/api/track?period='+encodeURIComponent(TRACK_PER)+'&interval='+TRACK_IV;
+    apiFetch(url).then(function(r){ return r.json(); }).then(function(d){
+      if(d && d.ready===false){                       // считается в фоне — ждём
+        _trackTries++;
+        renderRentGps({calc:true});
+        if(_trackTries<40){ clearTimeout(_trackTimer); _trackTimer=setTimeout(trackLoad,4000); }
+        return;
+      }
+      _trackTries=0; TRACK=d; if(d&&d.interval_km) TRACK_IV=d.interval_km;
+      renderRentGps();
+    }).catch(function(e){
+      b.innerHTML='<div class="card"><span style="color:var(--red)">Не удалось получить данные GPS: '+esc(String(e))+'</span></div>';
+    });
+  }
+  function trackSetPer(p){ TRACK_PER=p; TRACK=null; _trackTries=0; renderRentGps({calc:true}); trackLoad(); }
+  function trackSetRange(){
+    var a=document.getElementById('trk-from'), b2=document.getElementById('trk-to');
+    if(!a||!b2||!a.value||!b2.value) return;
+    trackSetPer(a.value+':'+b2.value);
+  }
+  function trackSetIv(v){
+    TRACK_IV=parseInt(v,10)||5000; TRACK=null; _trackTries=0; renderRentGps({calc:true});
+    if(rentIsOwner()) apiFetch('/api/rent',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'set_oil_interval',km:TRACK_IV})}).catch(function(){});
+    trackLoad();
+  }
+  function _trkPerBtns(){
+    var opts=[['7d','7 дней'],['30d','30 дней'],['2026-07','Июль'],['2026-08','Август']];
+    var b=opts.map(function(o){ return '<button class="btn'+(TRACK_PER===o[0]?'':' ghost')+'" onclick="trackSetPer(\''+o[0]+'\')">'+o[1]+'</button>'; }).join(' ');
+    return '<div class="card" style="margin-bottom:14px"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+b+
+      '<span style="color:var(--muted);font-size:12px;margin-left:6px">свой период:</span>'+
+      '<input type="date" id="trk-from" style="padding:6px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);color:var(--text)">'+
+      '<input type="date" id="trk-to" style="padding:6px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);color:var(--text)">'+
+      '<button class="btn ghost" onclick="trackSetRange()">Показать</button></div></div>';
+  }
+  function _trkOilCard(){
+    var R=(TRACK&&TRACK.rows)||[], iv=TRACK_IV;
+    var due=R.filter(function(r){return r.oil_state==='due';});
+    var soon=R.filter(function(r){return r.oil_state==='soon';});
+    var ok=R.filter(function(r){return r.oil_state==='ok';});
+    var none=R.filter(function(r){return r.oil_state==='none'||r.oil_state==='unknown';});
+    var ivSel='<select onchange="trackSetIv(this.value)" style="padding:6px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);color:var(--text)">'+
+      [5000,7000,8000,10000].map(function(v){ return '<option value="'+v+'"'+(iv===v?' selected':'')+'>каждые '+nfmt(v)+' км</option>'; }).join('')+'</select>';
+    var row=function(r,extra){
+      var after=(r.oil_km===null||r.oil_km===undefined)?'—':(trackFmt(r.oil_km)+' км');
+      return '<tr><td '+RT_TD+'><b>'+esc(r.model||'')+'</b></td>'+
+        '<td '+RT_TD+' style="text-align:center;color:var(--muted)">'+esc(r.oil_date||'нет записи')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right"><b>'+after+'</b></td>'+
+        '<td '+RT_TD+' style="text-align:right;color:var(--muted)">'+esc(extra||'')+'</td></tr>';
+    };
+    var block=function(title,color,list,fx){
+      if(!list.length) return '';
+      return '<h3 style="margin:14px 0 8px;color:'+color+'">'+title+' ('+list.length+')</h3>'+
+        rtable(['Машина','Последняя замена','Проехала после','' ], list.map(function(r){ return row(r,fx(r)); }).join(''));
+    };
+    var html='<div class="card" style="margin-top:16px"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">'+
+      '<h3 style="margin:0">🛢 Замена масла</h3>'+ivSel+'</div>';
+    html+=block('🔴 Уже пора — интервал превышен','#ff6b6b',due,function(r){ return 'перебег '+trackFmt(Math.abs(r.oil_left))+' км'; });
+    html+=block('🟡 На этой неделе','#ffb84d',soon,function(r){ return (r.oil_eta_days!==null&&r.oil_eta_days!==undefined)?('через '+r.oil_eta_days+' дн.'):('осталось '+trackFmt(r.oil_left)+' км'); });
+    html+=block('🟢 Запас есть','#4ade80',ok,function(r){ return 'осталось '+trackFmt(r.oil_left)+' км'; });
+    html+=block('⚪️ Замена не записана','var(--muted)',none,function(){ return 'внесите замену в Расходы'; });
+    html+='<div style="font-size:12px;color:var(--muted);margin-top:10px">Замены берутся из раздела «Расходы» — записи со словом «масло». '+
+      'Долив (антифриз, «3 л масла в дорогу», мелкие суммы) за замену не считается. Пробег после замены — по одометру трекера.</div></div>';
+    return html;
+  }
+  function renderRentGps(opt){
+    var b=document.getElementById('rent-gps'); if(!b) return;
+    var note='<div class="note" style="margin-bottom:14px">🛰 <b>GPS · Пробег</b> — сколько километров прошла каждая машина за выбранный период, по данным трекеров. Ниже — когда меняли масло и сколько проехали с тех пор.</div>';
+    if(opt&&opt.calc){
+      b.innerHTML=note+_trkPerBtns()+'<div class="card"><span style="color:var(--muted)">⏳ Считаю пробег по трекерам — это занимает до минуты…</span></div>';
+      return;
+    }
+    if(!TRACK){ b.innerHTML=note+'<div class="card"><span style="color:var(--muted)">Загрузка…</span></div>'; return; }
+    if(TRACK.error){ b.innerHTML=note+_trkPerBtns()+'<div class="card"><span style="color:var(--red)">'+esc(TRACK.error)+'</span></div>'; return; }
+    var R=TRACK.rows||[];
+    var kpi='<div class="kpis" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">'+
+      kpiCard('🛣 Всего за период', nfmt(TRACK.total_km)+' км')+
+      kpiCard('🚗 В среднем на машину', nfmt(TRACK.avg_km)+' км')+
+      kpiCard('📅 Период', esc(TRACK.period_label||''))+'</div>';
+    var rows=R.map(function(r,i){
+      var seen='';
+      if(r.last_seen){
+        var m=Math.round((Date.now()/1000-r.last_seen)/60);
+        seen=m<120?(m+' мин назад'):(m<2880?(Math.round(m/60)+' ч назад'):(Math.round(m/1440)+' дн назад'));
+      }
+      return '<tr><td '+RT_TD+' style="color:var(--muted)">'+(i+1)+'</td>'+
+        '<td '+RT_TD+'><b>'+esc(r.model||'')+'</b>'+(r.plate?('<div style="font-size:11px;color:var(--muted)">'+esc(r.plate)+'</div>'):'')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right"><b>'+trackFmt(r.km)+'</b> км</td>'+
+        '<td '+RT_TD+' style="text-align:right">'+trackFmt(r.per_day)+' км</td>'+
+        '<td '+RT_TD+' style="text-align:center;color:var(--muted);font-size:12px">'+esc(seen)+'</td></tr>';
+    }).join('');
+    var table=rtable(['#','Машина','Пробег за период','В среднем в день','Сигнал'], rows);
+    var un=(TRACK.unmatched&&TRACK.unmatched.length)?
+      ('<div class="note" style="margin-top:12px">⚠️ Не нашёл в GPS: '+TRACK.unmatched.map(esc).join(', ')+'</div>'):'';
+    b.innerHTML=note+_trkPerBtns()+kpi+table+un+_trkOilCard()+
+      '<div style="font-size:12px;color:var(--muted);margin-top:10px">Обновлено '+esc(TRACK.synced||'')+' · источник: GPS Realcom (Wialon)</div>';
+    if(typeof renderMoney==='function') renderMoney();
+  }
   var RENT_AUDIT_RED=false;
   function rentAuditFilter(v){ RENT_AUDIT_RED=!!v; renderRentAudit(); }
   function _auditWhenFull(ts){ try{ var d=new Date(ts),p=function(n){return(n<10?'0':'')+n;}; return p(d.getDate())+'.'+p(d.getMonth()+1)+'.'+d.getFullYear()+' '+p(d.getHours())+':'+p(d.getMinutes()); }catch(e){ return ''; } }

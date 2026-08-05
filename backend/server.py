@@ -5,7 +5,7 @@
 Токен хранится здесь, на сервере, и НЕ попадает в код сайта.
 Запуск: python3 server.py   (или двойной клик по «Запустить-сервер.command»)
 """
-import os, json, time, threading, urllib.request, urllib.error, urllib.parse, hmac, hashlib, gzip, re
+import os, json, time, threading, urllib.request, urllib.error, urllib.parse, hmac, hashlib, gzip, re, calendar
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # Часовой пояс — Бишкек (UTC+6). Чтобы «сегодня», время сообщений, явка, касса
@@ -275,6 +275,7 @@ SECTION_OF = [
     ("/api/sales-history", "sales"), ("/api/sales", "sales"),
     ("/api/suppliers", "supl"), ("/api/expenses", "fin"),
     ("/api/rent", "rent"),
+    ("/api/track", "rent"),
     ("/api/market", "market"),
     ("/api/chats", "chats"), ("/api/chat", "chats"), ("/api/send", "chats"),
     ("/api/bot-feedback", "chats"),
@@ -318,7 +319,7 @@ def _allowed(user, path):
     if path.startswith("/api/overview"):
         return _can(user, "crm") or _can(user, "dash")
     # Авто Рент: доступ даёт «rent» (весь раздел) ИЛИ любое под-разрешение «rent_*» (отдельные вкладки)
-    if path.startswith("/api/rent"):
+    if path.startswith("/api/rent") or path.startswith("/api/track"):
         s = (user or {}).get("sections", [])
         return ("all" in s) or ("rent" in s) or any(str(x).startswith("rent_") for x in s)
     sec = _section_for(path)
@@ -834,7 +835,7 @@ def rent_apply(action, p, company=None, user=None):
     if action in ("add_car", "edit_car", "del_car") and not can_cars:
         return {"error": "Машины может менять владелец или сотрудник с доступом «Машины: полный»"}
     # План и оплата — только владелец
-    if action in ("set_plan", "set_commission", "set_currency", "set_fx") and not is_owner:
+    if action in ("set_plan", "set_commission", "set_currency", "set_fx", "set_oil_interval") and not is_owner:
         return {"error": "План и оплату может менять только владелец"}
     def keep(lst, _id):
         return [x for x in lst if x.get("id") != _id]
@@ -949,6 +950,10 @@ def rent_apply(action, p, company=None, user=None):
     elif action == "set_currency":
         cur = (str(p.get("currency") or "").strip())[:8] or "сом"
         d["currency"] = cur
+    elif action == "set_oil_interval":             # через сколько км менять масло (вкладка GPS)
+        iv = _rnum(p.get("km"))
+        d["oil_interval"] = int(iv) if iv and 1000 <= iv <= 30000 else 5000
+        _TRACK_CACHE.clear()                       # интервал влияет на статусы — пересчитать
     elif action == "set_fx":                       # курс сом за 1$ (для перевода оклада в зарплате)
         fx = _rnum(p.get("som_per_usd"))
         d["som_per_usd"] = fx if fx and fx > 0 else 87
@@ -1269,6 +1274,304 @@ def chatplace_call(name, arguments):
         return json.loads(result["content"][0]["text"])
     except Exception:
         return result
+
+# ====== GPS-ТРЕКИНГ АВТОПАРКА (Wialon Remote API, хостинг GPS Realcom) ======
+# Пробег считаем по одометру трекера (параметр io_16, метры) — сверено с суммой
+# координат: расхождение до 2%. Расчёт долгий (13 машин × 3 запроса), поэтому
+# считаем в фоне и отдаём из кэша; фронт опрашивает, пока не готово.
+WIA_TZ = 6 * 3600                 # Бишкек, UTC+6
+WIA_ODO_KEYS = ("io_16", "odometer", "total_mileage", "mileage", "can_mileage")
+_WIA_SESS = []                    # пул sid для параллельных запросов
+_WIA_LOCK = threading.Lock()
+_TRACK_CACHE = {}                 # (company|period|interval) -> (ts, data)
+_TRACK_CALC = set()               # какие ключи считаются прямо сейчас
+_TRACK_TTL = 900                  # 15 минут
+
+# Ручные соответствия «машина в Штурвале» → «объект в Wialon» там, где номера
+# записаны с опечаткой или отсутствуют (проверено вручную 05.08.2026).
+TRACK_ALIASES = {
+    "аккорд (зелёный)": "honda accord зеленый",
+    "аккорд (зеленый)": "honda accord зеленый",
+    "к5": "к5 01kg950",
+    "toyota camry 30": "camry 30.",
+    "toyota camry 55": "камри 55",
+    "toyota camry 70": "camry 01kg776aji",
+    "accord темный": "honda accord 602axt",
+    "accord тёмный": "honda accord 602axt",
+    "honda step": "honda step баклажан",
+    "honda step black": "honda step 01kg590akb",
+    "honda odissey a": "honda odyssey 06kg041akj",
+    "одиссей": "honda odyssey 06kg551aoj",
+    "аккорд": "honda accord 06kg820aim",
+    "срв": "honda crv",
+    "seltos": "seltos",
+}
+# объекты, которые в расчёт не берём (владелец просил убрать)
+TRACK_SKIP = ("uburu", "убару")
+
+def wia_on():
+    return bool(CFG.get("WIALON_HOST") and CFG.get("WIALON_TOKEN"))
+
+def _wia_raw(svc, params, sid=None, timeout=90):
+    q = {"svc": svc, "params": json.dumps(params, ensure_ascii=False)}
+    if sid:
+        q["sid"] = sid
+    url = CFG["WIALON_HOST"].rstrip("/") + "/wialon/ajax.html?" + urllib.parse.urlencode(q)
+    with urllib.request.urlopen(url, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+def wia_login():
+    """Новая сессия по токену. Возвращает sid."""
+    res = _wia_raw("token/login", {"token": CFG["WIALON_TOKEN"]}, timeout=40)
+    if not isinstance(res, dict) or not res.get("eid"):
+        raise RuntimeError("Wialon: вход по токену не удался (%s)" % str(res)[:120])
+    return res["eid"]
+
+def _wia_sess_get():
+    """Берём свободную сессию из пула (get_messages привязан к своей сессии,
+    поэтому параллелить можно только по разным sid)."""
+    with _WIA_LOCK:
+        if _WIA_SESS:
+            return _WIA_SESS.pop()
+    return wia_login()
+
+def _wia_sess_put(sid):
+    with _WIA_LOCK:
+        if len(_WIA_SESS) < 6:
+            _WIA_SESS.append(sid)
+
+def wia_units(sid=None):
+    """Список объектов с последней позицией (flags 1025 = база + последнее сообщение)."""
+    own = sid is None
+    sid = sid or _wia_sess_get()
+    try:
+        res = _wia_raw("core/search_items", {
+            "spec": {"itemsType": "avl_unit", "propName": "sys_name",
+                     "propValueMask": "*", "sortType": "sys_name"},
+            "force": 1, "flags": 1025, "from": 0, "to": 0}, sid)
+        return [u for u in (res.get("items") or [])
+                if not any(s in (u.get("nm") or "").lower() for s in TRACK_SKIP)]
+    finally:
+        if own:
+            _wia_sess_put(sid)
+
+def _wia_odo(msgs):
+    for m in msgs or []:
+        p = m.get("p") or {}
+        for k in WIA_ODO_KEYS:
+            v = p.get(k)
+            if isinstance(v, (int, float)) and v > 0:
+                return float(v)
+    return None
+
+def wia_mileage(uid, t_from, t_to, sid):
+    """Пробег объекта за интервал, км. Берём одометр в первом и последнем сообщении."""
+    r = _wia_raw("messages/load_interval", {"itemId": uid, "timeFrom": int(t_from),
+                 "timeTo": int(t_to), "flags": 0, "flagsMask": 0,
+                 "loadCount": 4294967295}, sid, timeout=120)
+    n = (r or {}).get("count") or 0
+    if not n:
+        return None, 0
+    first = _wia_raw("messages/get_messages", {"indexFrom": 0, "indexTo": min(4, n - 1)}, sid)
+    last = _wia_raw("messages/get_messages", {"indexFrom": max(0, n - 5), "indexTo": n - 1}, sid)
+    a, b = _wia_odo(first), _wia_odo(last)
+    if a is None or b is None or b < a:
+        return None, n
+    return round((b - a) / 1000.0, 1), n
+
+def track_bounds(period):
+    """Границы периода → (t_from, t_to, подпись). Форматы: '7d', '30d',
+    'YYYY-MM', 'YYYY-MM-DD:YYYY-MM-DD'. По умолчанию — 30 дней."""
+    now = int(time.time())
+    p = (period or "").strip()
+    if p.endswith("d") and p[:-1].isdigit():
+        days = max(1, min(370, int(p[:-1])))
+        return now - days * 86400, now, "последние %d дн." % days
+    if re.match(r"^\d{4}-\d{2}$", p):
+        y, m = int(p[:4]), int(p[5:7])
+        t1 = calendar.timegm((y, m, 1, 0, 0, 0, 0, 0)) - WIA_TZ
+        ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
+        t2 = calendar.timegm((ny, nm, 1, 0, 0, 0, 0, 0)) - WIA_TZ
+        return t1, min(t2, now), "%02d.%d" % (m, y)
+    if re.match(r"^\d{4}-\d{2}-\d{2}:\d{4}-\d{2}-\d{2}$", p):
+        a, b = p.split(":")
+        t1 = calendar.timegm(tuple(int(x) for x in a.split("-")) + (0, 0, 0, 0, 0, 0)) - WIA_TZ
+        t2 = calendar.timegm(tuple(int(x) for x in b.split("-")) + (0, 0, 0, 0, 0, 0)) - WIA_TZ + 86400
+        return t1, min(t2, now), "%s — %s" % (_ru_date(a), _ru_date(b))
+    return now - 30 * 86400, now, "последние 30 дн."
+
+def _ru_date(iso):
+    try:
+        y, m, d = iso.split("-")
+        return "%s.%s.%s" % (d, m, y)
+    except Exception:
+        return iso
+
+def _track_norm(s):
+    s = (s or "").lower()
+    for a, b in (("к", "k"), ("а", "a"), ("в", "b"), ("е", "e"), ("о", "o"),
+                 ("р", "p"), ("с", "c"), ("т", "t"), ("х", "x"), ("м", "m"), ("н", "h")):
+        s = s.replace(a, b)
+    return re.sub(r"[^a-z0-9]", "", s)
+
+def _track_plates(s):
+    return set(re.findall(r"\d{2}[a-z]{0,2}\d{3}[a-z]{0,3}", _track_norm(s)))
+
+def track_match(cars, units):
+    """Сопоставляет машины Штурвала с объектами Wialon: сперва по госномеру,
+    затем по ручному словарю TRACK_ALIASES. Возвращает {car_id: unit}."""
+    out, used = {}, set()
+    for c in cars:
+        keys = _track_plates(c.get("plate", "")) | _track_plates(c.get("model", ""))
+        hit = None
+        for u in units:
+            if u["id"] in used:
+                continue
+            if keys and (keys & _track_plates(u.get("nm", ""))):
+                hit = u
+                break
+        if not hit:
+            alias = TRACK_ALIASES.get((c.get("model") or "").strip().lower())
+            if alias:
+                for u in units:
+                    if u["id"] in used:
+                        continue
+                    if _track_norm(alias) in _track_norm(u.get("nm", "")):
+                        hit = u
+                        break
+        if hit:
+            used.add(hit["id"])
+            out[c.get("id")] = hit
+    return out
+
+def track_oil(doc):
+    """Из расходов достаём замены масла по машинам: {модель: {date, sum, desc, ts}}.
+    Замена — если в записи есть «замен» или сумма от 2500; иначе это долив."""
+    last = {}
+    for e in doc.get("expenses", []):
+        txt = ((e.get("desc") or "") + " " + (e.get("cat") or "")).lower()
+        if "масл" not in txt and "oil" not in txt:
+            continue
+        try:
+            s = float(re.sub(r"[^\d.]", "", str(e.get("sum") or "0")) or 0)
+        except Exception:
+            s = 0
+        # долив отличаем от замены: «3 л масла + антифриз в дорогу» — это долив,
+        # даже если сумма крупная; замена — либо прямо написано «замена», либо цена работы
+        topup = any(w in txt for w in ("долив", "антифриз", "дорог", "л масла", "л. масла"))
+        if "замен" not in txt and (topup or s < 2500):
+            continue
+        d = (e.get("date") or "").strip()
+        m = re.match(r"^(\d{2})\.(\d{2})\.(\d{4})$", d)
+        if not m:
+            continue
+        ts = calendar.timegm((int(m.group(3)), int(m.group(2)), int(m.group(1)), 0, 0, 0, 0, 0)) - WIA_TZ
+        key = (e.get("model") or "").strip().lower()
+        if not key:
+            continue                     # запись без машины (например «3 машины») — пропускаем
+        if key not in last or ts > last[key]["ts"]:
+            last[key] = {"date": d, "ts": ts, "sum": e.get("sum", ""), "desc": e.get("desc", "")}
+    return last
+
+def _track_build(company, period, interval_km):
+    """Тяжёлый расчёт: пробег за период + пробег после замены масла. Идёт в фоне."""
+    doc = rent_doc(company)
+    cars = [c for c in doc.get("cars", []) if not str(c.get("status") or "").startswith("Прода")]
+    units = wia_units()
+    pairs = track_match(cars, units)
+    t1, t2, label = track_bounds(period)
+    oil = track_oil(doc)
+    now = int(time.time())
+    rows, lock = [], threading.Lock()
+
+    def work(car):
+        u = pairs.get(car.get("id"))
+        if not u:
+            return
+        sid = _wia_sess_get()
+        try:
+            km, msgs = wia_mileage(u["id"], t1, t2, sid)
+            o = oil.get((car.get("model") or "").strip().lower())
+            after = None
+            if o:
+                after, _ = wia_mileage(u["id"], o["ts"], now, sid)
+        finally:
+            _wia_sess_put(sid)
+        days = max(1.0, (t2 - t1) / 86400.0)
+        pos = u.get("pos") or {}
+        row = {"car_id": car.get("id"), "model": car.get("model", ""), "plate": car.get("plate", ""),
+               "unit": u.get("nm", ""), "unit_id": u["id"],
+               "km": km, "per_day": round(km / days, 1) if km is not None else None,
+               "msgs": msgs,
+               "oil_date": (o or {}).get("date", ""), "oil_sum": (o or {}).get("sum", ""),
+               "oil_km": after,
+               "last_seen": pos.get("t", 0), "speed": pos.get("s", 0),
+               "lat": pos.get("y"), "lon": pos.get("x")}
+        # статус по маслу
+        if not o:
+            row["oil_state"] = "none"
+        elif after is None:
+            row["oil_state"] = "unknown"
+        else:
+            left = interval_km - after
+            per = row["per_day"] or 0
+            if left <= 0:
+                row["oil_state"] = "due"
+            elif per > 0 and left / per <= 7:
+                row["oil_state"] = "soon"
+            elif after >= interval_km * 0.8:
+                row["oil_state"] = "soon"
+            else:
+                row["oil_state"] = "ok"
+            row["oil_left"] = round(left, 0)
+            row["oil_eta_days"] = int(left / per) if per > 0 and left > 0 else None
+        with lock:
+            rows.append(row)
+
+    threads = []
+    for c in cars:
+        t = threading.Thread(target=work, args=(c,), daemon=True)
+        threads.append(t)
+        t.start()
+        while sum(1 for x in threads if x.is_alive()) >= 5:
+            time.sleep(0.2)
+    for t in threads:
+        t.join(timeout=300)
+
+    rows.sort(key=lambda r: -(r["km"] or -1))
+    total = sum(r["km"] or 0 for r in rows)
+    unmatched = [c.get("model", "") for c in cars if c.get("id") not in pairs]
+    return {"ready": True, "period": period or "30d", "period_label": label,
+            "from": t1, "to": t2, "interval_km": interval_km,
+            "rows": rows, "total_km": round(total, 0),
+            "avg_km": round(total / len(rows), 0) if rows else 0,
+            "unmatched": unmatched, "units_total": len(units),
+            "synced": time.strftime("%d.%m.%Y %H:%M", time.gmtime(time.time() + WIA_TZ))}
+
+def track_get(company, period, interval_km):
+    """Отдаёт готовый расчёт из кэша; если его нет — запускает фоновый и просит подождать."""
+    if not wia_on():
+        return {"ready": True, "off": True, "rows": [],
+                "error": "GPS не подключён: нет WIALON_HOST / WIALON_TOKEN"}
+    key = (company, period or "30d", int(interval_km))
+    hit = _TRACK_CACHE.get(key)
+    if hit and (time.time() - hit[0]) < _TRACK_TTL:
+        return hit[1]
+
+    def worker():
+        try:
+            data = _track_build(company, period, int(interval_km))
+            _TRACK_CACHE[key] = (time.time(), data)
+        except Exception as e:
+            _TRACK_CACHE[key] = (time.time(), {"ready": True, "rows": [],
+                                               "error": "GPS: %s" % e})
+        finally:
+            _TRACK_CALC.discard(key)
+
+    if key not in _TRACK_CALC:
+        _TRACK_CALC.add(key)
+        threading.Thread(target=worker, daemon=True).start()
+    return {"ready": False, "status": "Считаю пробег по трекерам…"}
 
 # ====== АВТО-ВОРОНКА: классификация чатов по содержанию переписки ======
 # Ключевые слова (нижний регистр). Достаточно вхождения подстроки.
@@ -8491,6 +8794,17 @@ class Handler(BaseHTTPRequestHandler):
             per = (parse_qs(urlparse(self.path).query).get("period", [""])[0] or "").strip()
             _co = (self._user() or {}).get("company") or COMPANY_ID
             return self._send(200, rent_build(per or None, _co))
+        if self.path.startswith("/api/track"):
+            # GPS-пробег автопарка (Wialon). Считается в фоне, отдаётся из кэша.
+            from urllib.parse import urlparse, parse_qs
+            q = parse_qs(urlparse(self.path).query)
+            per = (q.get("period", [""])[0] or "").strip()
+            _co = (self._user() or {}).get("company") or COMPANY_ID
+            try:
+                iv = int(q.get("interval", [None])[0] or rent_doc(_co).get("oil_interval") or 5000)
+            except Exception:
+                iv = 5000
+            return self._send(200, track_get(_co, per, max(1000, min(30000, iv))))
         if self.path.startswith("/api/gg/products"):
             from urllib.parse import urlparse, parse_qs
             q = (parse_qs(urlparse(self.path).query).get("q", [""])[0] or "").strip()
