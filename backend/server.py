@@ -809,8 +809,9 @@ def _rent_log(d, action, tp, rec_id, label, changes, who, now_ms):
 def rent_apply(action, p, company=None, user=None):
     """Изменение данных аренды. Возвращает свежий rent_build().
     Автор записи фиксируется в поле `by`. Машины и план правит только владелец.
-    Завершённую аренду сотрудник менять/удалять НЕ может (только владелец) — защита от занижения
-    выручки задним числом; все правки/удаления пишутся в журнал изменений d['audit']."""
+    Сотрудник видит и правит любую аренду, но НЕ цену за сутки и НЕ даты, и не может удалить
+    завершённую — защита от занижения выручки задним числом; все правки/удаления пишутся
+    в журнал изменений d['audit']. Телефон арендатора обязателен при заведении аренды."""
     d = rent_doc(company)
     user = user or {}
     is_owner = bool(user.get("owner")) or ("all" in (user.get("sections") or []))
@@ -845,6 +846,9 @@ def rent_apply(action, p, company=None, user=None):
             rec["edit_by"] = who; rec["edit_ts"] = now_ms
         return rec
     if action == "add_rental":
+        # Телефон арендатора обязателен при заведении новой аренды (по требованию владельца)
+        if not str(p.get("phone") or "").strip():
+            return {"error": "Укажите номер телефона арендатора — без него аренду завести нельзя."}
         d["rentals"].append(stamp_new({"id": _rent_newid(d, "RN"), "ts": now_ms,
             "model": p.get("model", ""), "renter": p.get("renter", ""), "phone": p.get("phone", ""),
             "start": p.get("start", ""), "end": p.get("end", ""), "return_time": p.get("return_time", ""),
@@ -853,10 +857,12 @@ def rent_apply(action, p, company=None, user=None):
     elif action == "edit_rental":
         r = find(d["rentals"], p.get("id"))
         if r:
-            # ЗАЩИТА: завершённую аренду сотрудник менять не может (только владелец) —
+            # ЗАЩИТА: сотрудник правит аренду свободно, КРОМЕ цены за сутки и дат —
             # иначе можно задним числом укоротить период/занизить сумму и забрать разницу.
-            if (not is_owner) and str(r.get("status") or "").startswith("Заверш"):
-                return {"error": "Завершённую аренду может изменить только владелец. Обратитесь к нему."}
+            # Присланные значения этих полей просто игнорируем (в форме они заблокированы).
+            if not is_owner:
+                for _f in ("start", "end", "price"):
+                    p.pop(_f, None)
             _before = dict(r)
             for f in ("model", "renter", "phone", "start", "end", "return_time", "price", "got", "status", "note"):
                 if f in p:
