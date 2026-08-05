@@ -626,7 +626,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.31.0<br>Прокат: завершённую аренду теперь видно и можно править — заблокированы только цена/сутки и даты, телефон клиента обязателен при новой аренде
+      Штурвал v4.32.0<br>Прокат: аренду можно править полностью, а вся история правок «было → стало» переехала в отдельную вкладку «История изменений» (у владельца)
   </aside>
 
   <!-- MAIN -->
@@ -660,6 +660,7 @@
     <section id="tab-rentcars" class="hide"><div id="rent-cars"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-rentlist" class="hide"><div id="rent-list"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-rentalert" class="hide"><div id="rent-alert"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
+    <section id="tab-rentaudit" class="hide"><div id="rent-audit"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-rentexp" class="hide"><div id="rent-exp"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-renthanded" class="hide"><div id="rent-handed"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
     <section id="tab-rentanalysis" class="hide"><div id="rent-analysis"><div class="card"><span style="color:var(--muted)">Загрузка…</span></div></div></section>
@@ -1686,6 +1687,7 @@
     rentcars :["Машины","Автопарк аренды"],
     rentlist :["Аренда авто","Кто, что и на сколько взял"],
     rentalert :["Требует внимания","Сдачи авто и должники"],
+    rentaudit :["История изменений","Кто и что менял: было → стало"],
     rentexp  :["Расходы","Куда уходят деньги по аренде"],
     renthanded:["Сдано","Передано руководителю"],
     rentanalysis:["Анализ по машинам","Какая машина сколько зарабатывает"],
@@ -1709,7 +1711,7 @@
     wainbox:{icon:'🟢',label:'WhatsApp + бот'},
     ai:{icon:'🤖',label:'ИИ-помощник'}, sim:{icon:'📊',label:'Симулятор'},
     rentdash:{icon:'📊',label:'Дашборд'}, renttasks:{icon:'🗂',label:'Задачи'}, rentnotes:{icon:'📌',label:'Заметки'}, rentcars:{icon:'🚗',label:'Машины'},
-    rentlist:{icon:'🔑',label:'Аренда авто'}, rentalert:{icon:'🔔',label:'Требует внимания'}, rentexp:{icon:'🧾',label:'Расходы'},
+    rentlist:{icon:'🔑',label:'Аренда авто'}, rentalert:{icon:'🔔',label:'Требует внимания'}, rentaudit:{icon:'📋',label:'История изменений'}, rentexp:{icon:'🧾',label:'Расходы'},
     renthanded:{icon:'📤',label:'Сдано'},
     rentanalysis:{icon:'📊',label:'Анализ по машинам'}, rentplan:{icon:'🎯',label:'План'},
     rentclients:{icon:'🧑',label:'Клиенты'}, rentcalendar:{icon:'📆',label:'Календарь'}
@@ -1718,7 +1720,7 @@
     {key:'crm',  icon:'🧲', label:'CRM',     tabs:['crmdash','deals','tasks','clients','iginbox','wainbox']},
     {key:'mkt',  icon:'📣', label:'Реклама', tabs:['ads','adsreport','adsanalysis','wbads']},
     {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','assort','report','analytics','supl','fin','exp']},
-    {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','renttasks','rentnotes','rentcars','rentlist','rentalert','rentexp','renthanded','rentanalysis','rentplan','rentclients','rentcalendar']},
+    {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','renttasks','rentnotes','rentcars','rentlist','rentalert','rentexp','renthanded','rentanalysis','rentplan','rentclients','rentcalendar','rentaudit']},
     {key:'team', icon:'👥', label:'Команда', tabs:['myday','hr']},
     {key:'ai',   icon:'🤖', label:'ИИ',      tabs:['ai','sim']}
   ];
@@ -1729,6 +1731,8 @@
     if(tab==='set'||tab==='myday') return true;
     if(tab.indexOf('rent')===0){
       // «rent» = весь раздел; иначе по под-доступу: rentcars→rent_cars, rentdash→rent_dash и т.п.
+      // «История изменений» — только владельцу кабинета (контроль за сотрудниками)
+      if(tab==='rentaudit') return isCabinetOwner();
       if(isOwner()||canSee('rent')) return true;
       // «Требует внимания» — только владельцу (должники/сдачи авто)
       if(tab==='rentalert') return (USER.sections||[]).some(function(s){return s.indexOf('rent')===0;});
@@ -1794,6 +1798,7 @@
     else if(tab==='rentcars') rentDispatch('cars');
     else if(tab==='rentlist') rentDispatch('list');
     else if(tab==='rentalert') rentDispatch('alert');
+    else if(tab==='rentaudit') rentDispatch('audit');
     else if(tab==='rentexp') rentDispatch('exp');
     else if(tab==='renthanded') rentDispatch('handed');
     else if(tab==='rentanalysis') rentDispatch('analysis');
@@ -7545,7 +7550,7 @@
   }
   function rAddBtn(type,label){ return '<button class="btn" style="padding:6px 14px;font-size:13px;margin-bottom:12px" onclick="openRentForm(\''+type+'\')">➕ '+label+'</button>'; }
 
-  var RENT_CONT={dash:'rent-dash',tasks:'rent-tasks',notes:'rent-notes',cars:'rent-cars',list:'rent-list',alert:'rent-alert',exp:'rent-exp',handed:'rent-handed',analysis:'rent-analysis',plan:'rent-plan',clients:'rent-clients',calendar:'rent-calendar'};
+  var RENT_CONT={dash:'rent-dash',tasks:'rent-tasks',notes:'rent-notes',cars:'rent-cars',list:'rent-list',alert:'rent-alert',exp:'rent-exp',handed:'rent-handed',analysis:'rent-analysis',plan:'rent-plan',clients:'rent-clients',calendar:'rent-calendar',audit:'rent-audit'};
   function rentDispatch(view){
     RENT_CUR=view;
     if(RENT){ rentRenderCur(); return; }
@@ -7579,7 +7584,7 @@
     if(el) el.innerHTML='<div class="card" style="border-color:var(--red)"><b>Не удалось загрузить данные аренды.</b><div style="color:var(--muted);font-size:13px;margin-top:6px">'+esc(RENT_ERR)+'</div><button class="btn ghost" style="margin-top:10px;padding:6px 12px;font-size:13px" onclick="RENT_ERR=\'\';rentDispatch(RENT_CUR)">↻ Повторить</button></div>';
   }
   function rentRenderCur(){
-    ({dash:renderRentDash,tasks:renderRentTasks,notes:renderRentNotes,cars:renderRentCars,list:renderRentList,alert:renderRentAlert,exp:renderRentExp,handed:renderRentHanded,analysis:renderRentAnalysis,plan:renderRentPlan,clients:renderRentClients,calendar:renderRentCalendar}[RENT_CUR]||renderRentDash)();
+    ({dash:renderRentDash,tasks:renderRentTasks,notes:renderRentNotes,cars:renderRentCars,list:renderRentList,alert:renderRentAlert,exp:renderRentExp,handed:renderRentHanded,analysis:renderRentAnalysis,plan:renderRentPlan,clients:renderRentClients,calendar:renderRentCalendar,audit:renderRentAudit}[RENT_CUR]||renderRentDash)();
   }
   // отправка изменения на сервер
   function rentPost(action,payload){
@@ -7651,20 +7656,33 @@
   function _rentFieldRu(f){ return ({model:'машина',renter:'арендатор',phone:'телефон',start:'дата начала',end:'дата сдачи',return_time:'время сдачи',price:'цена/сутки',got:'получено',status:'статус',note:'заметка',date:'дата',cat:'категория',desc:'описание',sum:'сумма',comment:'комментарий'})[f]||f; }
   function _rentIsReduction(f,ov,nv){ if(f==='price'||f==='got'||f==='sum') return rnum(nv)<rnum(ov); if(f==='end'){ var a=ruToIso(ov),b=ruToIso(nv); return !!(a&&b&&b<a); } return false; }
   function _auditWhen(ts){ try{ var d=new Date(ts),p=function(n){return(n<10?'0':'')+n;}; return p(d.getDate())+'.'+p(d.getMonth()+1)+' '+p(d.getHours())+':'+p(d.getMinutes()); }catch(e){ return ''; } }
-  function rentAuditCard(){
-    if(!rentIsOwner()) return '';
+  var RENT_AUDIT_RED=false;
+  function rentAuditFilter(v){ RENT_AUDIT_RED=!!v; renderRentAudit(); }
+  function _auditWhenFull(ts){ try{ var d=new Date(ts),p=function(n){return(n<10?'0':'')+n;}; return p(d.getDate())+'.'+p(d.getMonth()+1)+'.'+d.getFullYear()+' '+p(d.getHours())+':'+p(d.getMinutes()); }catch(e){ return ''; } }
+  function _auditAct(a){ return a==='del'?'🗑 удалил':(a==='add'?'➕ завёл':'✏️ изменил'); }
+  function renderRentAudit(){
+    var b=document.getElementById('rent-audit'); if(!b) return;
+    if(!rentIsOwner()){ b.innerHTML='<div class="card"><span style="color:var(--muted)">История изменений видна только владельцу.</span></div>'; return; }
     var A=(rentD().audit)||[];
-    if(!A.length) return '<div class="card" style="margin-top:14px"><h3>📋 Журнал изменений</h3><div style="color:var(--muted);font-size:13px">Пока правок не было. Здесь будет видно, кто и что менял в арендах и расходах: было → стало. 🔻 красным — уменьшение суммы или укорачивание срока.</div></div>';
-    var rows=A.slice(0,30).map(function(x){
+    var note='<div class="note" style="margin-bottom:14px">📋 <b>История изменений</b> — кто, когда и что менял в арендах, расходах и «сдано»: <b>было → стало</b>. <span style="color:#ff6b6b">🔻 красным</span> — уменьшили сумму или укоротили срок.</div>';
+    if(!A.length){ b.innerHTML=note+'<div class="card"><span style="color:var(--muted)">Пока правок не было. Как только кто-то изменит аренду или расход — запись появится здесь.</span></div>'; return; }
+    var isRed=function(x){ return (x.changes||[]).some(function(c){ return _rentIsReduction(c.f,c.old,c.new); }); };
+    var redN=A.filter(isRed).length;
+    var list=RENT_AUDIT_RED?A.filter(isRed):A;
+    var btns='<div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap">'+
+      '<button class="btn'+(RENT_AUDIT_RED?' ghost':'')+'" onclick="rentAuditFilter(false)">Все правки ('+A.length+')</button>'+
+      '<button class="btn'+(RENT_AUDIT_RED?'':' ghost')+'" onclick="rentAuditFilter(true)">🔻 Только уменьшения ('+redN+')</button></div>';
+    var rows=list.map(function(x){
       var chips=(x.changes||[]).map(function(c){
         var red=_rentIsReduction(c.f,c.old,c.new);
-        return '<div style="font-size:12px;margin:2px 0;'+(red?'color:#ff6b6b;font-weight:600':'color:var(--muted)')+'">'+(red?'🔻 ':'')+esc(_rentFieldRu(c.f))+': '+esc(String(c.old||'—'))+' → '+esc(String(c.new||'—'))+'</div>';
+        return '<div style="font-size:12px;margin:2px 0;'+(red?'color:#ff6b6b;font-weight:600':'color:var(--muted)')+'">'+(red?'🔻 ':'')+esc(_rentFieldRu(c.f))+': <b>'+esc(String(c.old||'—'))+'</b> → <b>'+esc(String(c.new||'—'))+'</b></div>';
       }).join('');
-      var act=(x.action==='del')?'🗑 удалил':'✏️ изменил';
-      var anyRed=(x.changes||[]).some(function(c){ return _rentIsReduction(c.f,c.old,c.new); });
-      return '<div style="padding:8px 0;border-bottom:1px solid var(--line)'+(anyRed?';background:rgba(255,107,107,.06)':'')+'"><div style="font-size:13px"><b>'+esc(x.by||'—')+'</b> '+act+' '+esc(x.type||'')+' <span style="color:var(--muted)">'+esc(x.label||'')+(x.id?(' · '+esc(x.id)):'')+'</span><span style="color:var(--muted);font-size:11px;float:right">'+esc(_auditWhen(x.ts))+'</span></div>'+chips+'</div>';
+      return '<div style="padding:10px 0;border-bottom:1px solid var(--line)'+(isRed(x)?';background:rgba(255,107,107,.06)':'')+'">'+
+        '<div style="font-size:13px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">'+
+        '<span><b>'+esc(x.by||'—')+'</b> '+_auditAct(x.action)+' '+esc(x.type||'')+' <span style="color:var(--muted)">'+esc(x.label||'')+(x.id?(' · '+esc(x.id)):'')+'</span></span>'+
+        '<span style="color:var(--muted);font-size:11px;white-space:nowrap">'+esc(_auditWhenFull(x.ts))+'</span></div>'+chips+'</div>';
     }).join('');
-    return '<div class="card" style="margin-top:14px"><h3>📋 Журнал изменений <span style="font-size:11px;color:var(--muted);font-weight:400">— кто и что менял (🔻 красным — уменьшение суммы или срока)</span></h3>'+rows+'</div>';
+    b.innerHTML=note+btns+'<div class="card">'+(rows||'<span style="color:var(--muted)">Ничего не найдено.</span>')+'</div>';
   }
   function renderRentDash(){
     var b=document.getElementById('rent-dash'); if(!b) return;
@@ -7690,7 +7708,7 @@
         '<td '+RT_TD+' style="text-align:right;color:var(--muted)">'+esc(m.margin||'')+'</td></tr>';
     }).join('');
     var months=(D.months&&D.months.length)?('<h3 style="margin:6px 0 10px">📅 По месяцам</h3>'+rtable(['Месяц','Аренд','Выручка','Расходы','Прибыль','Маржа'], mr)):'';
-    b.innerHTML=note+rentExcelToolbar()+_rentPerSel(s)+row1+row2+park+eff+months+rentAuditCard();
+    b.innerHTML=note+rentExcelToolbar()+_rentPerSel(s)+row1+row2+park+eff+months;
     if(typeof renderMoney==='function') renderMoney();
   }
   // ---------- ТРЕБУЕТ ВНИМАНИЯ (отдельная вкладка) ----------
@@ -8195,22 +8213,20 @@
     var title=(id?'✏️ Изменить ':'➕ Добавить ')+titleMap[type];
     var html='', _formLocked=false;
     if(type==='rental'){
-      // Сотрудник видит и правит любую аренду (в т.ч. завершённую),
-      // но цена/сутки и даты у него просто заблокированы — без карточки-замка
-      var _rLock=!!(id&&rec)&&!rentIsOwner();
-      var _rStartAttr=_rLock?' disabled':' onchange="rfSyncEndMin()"';
-      var _rLockAttr=_rLock?' disabled':'';
+      // Аренду правит любой сотрудник, без запертых полей —
+      // контроль идёт через вкладку «История изменений» (было → стало)
+      var _rStartAttr=' onchange="rfSyncEndMin()"';
       var _rEndMin=ruToIso(rec&&rec.start);
       html=
         '<label>Машина (модель) *</label><select id="rf-model"><option value="">— выбрать —</option>'+_carOpts(rec&&rec.model)+'</select>'+
         '<label>Арендатор</label><input id="rf-renter" value="'+esc(rec&&rec.renter||'')+'" placeholder="имя">'+
         '<label>Телефон '+(id?'':'*')+'</label><input id="rf-phone" value="'+esc(rec&&rec.phone||'')+'" placeholder="'+(id?'номер клиента':'обязательно — номер клиента')+'">'+
         '<div class="row"><div><label>Дата начала *</label><input type="date" id="rf-start" value="'+ruToIso(rec&&rec.start)+'"'+_rStartAttr+'></div>'+
-        '<div><label>Дата конца *</label><input type="date" id="rf-end" min="'+_rEndMin+'" value="'+ruToIso(rec&&rec.end)+'"'+_rLockAttr+'></div></div>'+
-        '<div class="row"><div><label>Цена/сутки, '+MUNIT()+' *</label><input type="number" inputmode="numeric" id="rf-price" value="'+((rec&&rec.price_raw)||'')+'" placeholder="0"'+_rLockAttr+'></div>'+
+        '<div><label>Дата конца *</label><input type="date" id="rf-end" min="'+_rEndMin+'" value="'+ruToIso(rec&&rec.end)+'"></div></div>'+
+        '<div class="row"><div><label>Цена/сутки, '+MUNIT()+' *</label><input type="number" inputmode="numeric" id="rf-price" value="'+((rec&&rec.price_raw)||'')+'" placeholder="0"></div>'+
         '<div><label>Получено, '+MUNIT()+'</label><input type="number" inputmode="numeric" id="rf-got" value="'+((rec&&rec.got_raw)||'')+'" placeholder="0"></div></div>'+
         '<label>Статус</label><select id="rf-status">'+_selOpts(['Активна','Завершена'],(rec&&rec.status)||'Активна')+'</select>'+
-        (_rLock?'<div style="font-size:12px;color:var(--muted);margin-top:8px">Даты и цену за сутки может менять только владелец — всё остальное правь свободно.</div>':'')+'<div style="font-size:12px;color:var(--muted);margin-top:8px">Дни и сумма посчитаются сами: дни = конец − начало, сумма = дни × цена, долг = сумма − получено.</div>';
+        '<div style="font-size:12px;color:var(--muted);margin-top:8px">Дни и сумма посчитаются сами: дни = конец − начало, сумма = дни × цена, долг = сумма − получено.</div>';
     } else if(type==='expense'){
       html=
         '<label>Дата *</label><input type="date" id="rf-date" value="'+((rec&&rec.date)?ruToIso(rec.date):todayIso())+'">'+
@@ -8272,14 +8288,6 @@
       if(!p.start||!p.end){ msg.textContent='Укажите даты начала и конца.'; return; }
       if(_isoE<_isoS){ msg.textContent='Дата конца не может быть раньше начала аренды.'; return; }
       if(!id && !p.phone){ msg.textContent='Укажите номер телефона арендатора.'; return; }
-      if(id && !rentIsOwner()){
-        // цена/сутки и даты сотруднику недоступны — отправляем прежние значения
-        var _rrec=(rentD().rentals||[]).filter(function(x){return x.id===id;})[0];
-        if(_rrec){
-          p.start=_rrec.start||p.start; p.end=_rrec.end||p.end;
-          if(_rrec.price_raw!==undefined&&_rrec.price_raw!=='') p.price=String(_rrec.price_raw);
-        }
-      }
     } else if(type==='expense'){
       p.date=isoToRu(_v('rf-date')); p.model=_v('rf-model'); p.cat=_v('rf-cat'); p.desc=_v('rf-desc'); p.sum=_v('rf-sum');
       if(!p.date){ msg.textContent='Укажите дату.'; return; }

@@ -777,7 +777,7 @@ def rent_build(period=None, company=None):
                      "caranalysis": car_an, "plan": plan_block,
                      "abc": abc, "weekdays": weekdays, "best_weekday": best_wd, "daily": daily,
                      "clients": clients,
-                     "audit": sorted(d.get("audit", []), key=lambda x: x.get("ts", 0), reverse=True)[:200],
+                     "audit": sorted(d.get("audit", []), key=lambda x: x.get("ts", 0), reverse=True)[:400],
                      "notes": sorted(d.get("notes", []), key=lambda x: x.get("ts", 0), reverse=True),
                      "rtasks": sorted(d.get("rtasks", []), key=lambda x: (x.get("status") == "done", -x.get("ts", 0))),
                      "staff": [{"login": (v.get("login") or "").lower(), "name": (v.get("name") or v.get("login") or ""),
@@ -797,21 +797,26 @@ def _rent_diff(before, after, fields):
     return out
 
 def _rent_log(d, action, tp, rec_id, label, changes, who, now_ms):
-    """Пишет запись в журнал изменений d['audit'] (храним последние 800)."""
+    """Пишет запись в журнал изменений d['audit'] (храним последние 1500)."""
     if not changes:
         return
     log = d.setdefault("audit", [])
     log.append({"ts": now_ms, "by": who or "", "action": action, "type": tp,
                 "id": rec_id, "label": label or "", "changes": changes})
-    if len(log) > 800:
-        del log[:len(log) - 800]
+    if len(log) > 1500:
+        del log[:len(log) - 1500]
+
+def _rent_log_add(d, tp, rec, fields, label, who, now_ms):
+    """Записывает в журнал создание записи (пустое → значение)."""
+    ch = [{"f": f, "old": "", "new": rec.get(f, "")} for f in fields if str(rec.get(f, "")) != ""]
+    _rent_log(d, "add", tp, rec.get("id"), label, ch, who, now_ms)
 
 def rent_apply(action, p, company=None, user=None):
     """Изменение данных аренды. Возвращает свежий rent_build().
     Автор записи фиксируется в поле `by`. Машины и план правит только владелец.
-    Сотрудник видит и правит любую аренду, но НЕ цену за сутки и НЕ даты, и не может удалить
-    завершённую — защита от занижения выручки задним числом; все правки/удаления пишутся
-    в журнал изменений d['audit']. Телефон арендатора обязателен при заведении аренды."""
+    Аренды сотрудник правит и удаляет без ограничений по полям — контроль идёт через журнал
+    d['audit'] (создание/правка/удаление, было → стало), который владелец видит во вкладке
+    «История изменений». Телефон арендатора обязателен при заведении аренды."""
     d = rent_doc(company)
     user = user or {}
     is_owner = bool(user.get("owner")) or ("all" in (user.get("sections") or []))
@@ -849,20 +854,20 @@ def rent_apply(action, p, company=None, user=None):
         # Телефон арендатора обязателен при заведении новой аренды (по требованию владельца)
         if not str(p.get("phone") or "").strip():
             return {"error": "Укажите номер телефона арендатора — без него аренду завести нельзя."}
-        d["rentals"].append(stamp_new({"id": _rent_newid(d, "RN"), "ts": now_ms,
+        _nr = stamp_new({"id": _rent_newid(d, "RN"), "ts": now_ms,
             "model": p.get("model", ""), "renter": p.get("renter", ""), "phone": p.get("phone", ""),
             "start": p.get("start", ""), "end": p.get("end", ""), "return_time": p.get("return_time", ""),
             "price": p.get("price", ""),
-            "got": p.get("got", ""), "status": (p.get("status") or "Активна"), "note": p.get("note", "")}))
+            "got": p.get("got", ""), "status": (p.get("status") or "Активна"), "note": p.get("note", "")})
+        d["rentals"].append(_nr)
+        _rent_log_add(d, "аренда", _nr, ("model", "renter", "phone", "start", "end", "price", "got", "status"),
+                      ((_nr.get("model") or "") + (" · " + _nr.get("renter") if _nr.get("renter") else "")),
+                      who, now_ms)
     elif action == "edit_rental":
         r = find(d["rentals"], p.get("id"))
         if r:
-            # ЗАЩИТА: сотрудник правит аренду свободно, КРОМЕ цены за сутки и дат —
-            # иначе можно задним числом укоротить период/занизить сумму и забрать разницу.
-            # Присланные значения этих полей просто игнорируем (в форме они заблокированы).
-            if not is_owner:
-                for _f in ("start", "end", "price"):
-                    p.pop(_f, None)
+            # Полей-запретов нет: сотрудник правит аренду целиком. Контроль — журнал
+            # изменений ниже (вкладка «История изменений» у владельца: было → стало).
             _before = dict(r)
             for f in ("model", "renter", "phone", "start", "end", "return_time", "price", "got", "status", "note"):
                 if f in p:
@@ -874,8 +879,6 @@ def rent_apply(action, p, company=None, user=None):
                       who, now_ms)
     elif action == "del_rental":
         _dr = find(d["rentals"], p.get("id"))
-        if _dr and (not is_owner) and str(_dr.get("status") or "").startswith("Заверш"):
-            return {"error": "Завершённую аренду может удалить только владелец."}
         if _dr:
             _rent_log(d, "del", "аренда", _dr.get("id"),
                       ((_dr.get("model") or "") + (" · " + _dr.get("renter") if _dr.get("renter") else "")),
@@ -883,9 +886,12 @@ def rent_apply(action, p, company=None, user=None):
                       who, now_ms)
         d["rentals"] = keep(d["rentals"], p.get("id"))
     elif action == "add_expense":
-        d["expenses"].append(stamp_new({"id": _rent_newid(d, "EX"), "ts": now_ms,
+        _ne = stamp_new({"id": _rent_newid(d, "EX"), "ts": now_ms,
             "date": p.get("date", ""), "model": p.get("model", ""), "cat": p.get("cat", ""),
-            "desc": p.get("desc", ""), "sum": p.get("sum", "")}))
+            "desc": p.get("desc", ""), "sum": p.get("sum", "")})
+        d["expenses"].append(_ne)
+        _rent_log_add(d, "расход", _ne, ("date", "model", "cat", "desc", "sum"),
+                      (_ne.get("cat") or _ne.get("desc") or ""), who, now_ms)
     elif action == "edit_expense":
         e = find(d["expenses"], p.get("id"))
         if e:
@@ -903,8 +909,10 @@ def rent_apply(action, p, company=None, user=None):
                       [{"f": k, "old": _de.get(k, ""), "new": ""} for k in ("date", "cat", "sum")], who, now_ms)
         d["expenses"] = keep(d["expenses"], p.get("id"))
     elif action == "add_handed":
-        d["handed"].append(stamp_new({"id": _rent_newid(d, "HD"), "ts": now_ms,
-            "date": p.get("date", ""), "sum": p.get("sum", ""), "comment": p.get("comment", "")}))
+        _nh = stamp_new({"id": _rent_newid(d, "HD"), "ts": now_ms,
+            "date": p.get("date", ""), "sum": p.get("sum", ""), "comment": p.get("comment", "")})
+        d["handed"].append(_nh)
+        _rent_log_add(d, "сдано", _nh, ("date", "sum", "comment"), (_nh.get("comment") or ""), who, now_ms)
     elif action == "edit_handed":
         h = find(d["handed"], p.get("id"))
         if h:
