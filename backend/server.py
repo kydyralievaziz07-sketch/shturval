@@ -1368,17 +1368,24 @@ def _wia_odo(msgs):
     return None
 
 def wia_mileage(uid, t_from, t_to, sid):
-    """Пробег объекта за интервал, км. Берём одометр в первом и последнем сообщении."""
-    r = _wia_raw("messages/load_interval", {"itemId": uid, "timeFrom": int(t_from),
-                 "timeTo": int(t_to), "flags": 0, "flagsMask": 0,
-                 "loadCount": 4294967295}, sid, timeout=120)
-    n = (r or {}).get("count") or 0
-    if not n:
-        return None, 0
-    first = _wia_raw("messages/get_messages", {"indexFrom": 0, "indexTo": min(4, n - 1)}, sid)
-    last = _wia_raw("messages/get_messages", {"indexFrom": max(0, n - 5), "indexTo": n - 1}, sid)
-    a, b = _wia_odo(first), _wia_odo(last)
-    if a is None or b is None or b < a:
+    """Пробег объекта за интервал, км = одометр в конце минус одометр в начале.
+    ВАЖНО: грузим РОВНО по одному сообщению с каждого края (loadCount=1 и load_last).
+    Полная выгрузка интервала съедала ~470 МБ на 13 машин и валила сервер по памяти."""
+    a, n = None, 0
+    for span in (48 * 3600, 7 * 86400, 31 * 86400):
+        t_end = min(int(t_to), int(t_from) + span)
+        r = _wia_raw("messages/load_interval", {"itemId": uid, "timeFrom": int(t_from),
+                     "timeTo": t_end, "flags": 0, "flagsMask": 0, "loadCount": 1}, sid)
+        n = (r or {}).get("count") or 0
+        a = _wia_odo((r or {}).get("messages"))
+        if a is not None or t_end >= int(t_to):
+            break
+    if a is None:
+        return None, n
+    r2 = _wia_raw("messages/load_last", {"itemId": uid, "lastTime": int(t_to), "lastCount": 1,
+                  "flags": 0, "flagsMask": 0, "loadCount": 1}, sid)
+    b = _wia_odo((r2 or {}).get("messages"))
+    if b is None or b < a:
         return None, n
     return round((b - a) / 1000.0, 1), n
 
@@ -1536,7 +1543,7 @@ def _track_build(company, period, interval_km):
         t = threading.Thread(target=work, args=(c,), daemon=True)
         threads.append(t)
         t.start()
-        while sum(1 for x in threads if x.is_alive()) >= 5:
+        while sum(1 for x in threads if x.is_alive()) >= 3:
             time.sleep(0.2)
     for t in threads:
         t.join(timeout=300)
