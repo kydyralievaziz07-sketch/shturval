@@ -108,7 +108,15 @@ def _index_html():
     if _INDEX_HTML_CACHE is None:
         fname = "index_%s.html" % (NICHE_TEMPLATE or COMPANY_ID)
         per_company = os.path.join(HERE, fname)
-        path = per_company if os.path.exists(per_company) else os.path.join(HERE, "index.html")
+        # Бизмарт: его кабинет живёт в КОРНЕВОМ index.html (он же на Vercel/Pages) — отдаём тот же
+        # файл, чтобы адрес Render не показывал устаревшую копию. Другие компании — как раньше.
+        root_html = os.path.join(HERE, "..", "index.html")
+        if os.path.exists(per_company):
+            path = per_company
+        elif (not NICHE_TEMPLATE) and COMPANY_ID == BIZMART_ID and os.path.exists(root_html):
+            path = root_html
+        else:
+            path = os.path.join(HERE, "index.html")
         try:
             with open(path, encoding="utf-8") as f:
                 html = f.read()

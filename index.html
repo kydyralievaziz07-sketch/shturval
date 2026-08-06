@@ -674,7 +674,9 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.77.0<br>Финансы и Расходы по месяцам: выбор месяца со стрелками ‹ ›, таблица «Помесячно» (клик по месяцу открывает его целиком) и сравнение с прошлым месяцем
+      Штурвал v4.78.0<br>Финансы и Расходы по месяцам (выбор месяца, таблица «Помесячно», сравнение с прошлым) + поиск в расходах
+      <br><br><span onclick="hardReload()" style="cursor:pointer;color:#4f8cff;text-decoration:underline">🔄 Обновить приложение</span>
+      <span style="color:var(--muted)"> — если новое не появилось</span>
   </aside>
 
   <!-- MAIN -->
@@ -1276,6 +1278,13 @@
           <button data-fp="range" onclick="setFinRange('exp')">Показать</button>
         </div>
         <button class="btn" onclick="openExpense()">💸 Добавить расход</button>
+      </div>
+      <div class="toolbar" style="margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:220px">
+          <input id="exp-q" type="search" placeholder="🔎 Поиск: категория, заметка, сумма, дата…" oninput="setExpQuery(this.value)"
+                 style="flex:1;background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:8px 12px;font-size:14px">
+          <button class="btn ghost" style="font-size:12px;padding:6px 12px" onclick="clearExpQuery()">Сбросить</button>
+        </div>
       </div>
       <div class="kpis" id="exp-total"></div>
       <div class="card" style="margin-top:16px">
@@ -3133,6 +3142,8 @@
     const st=document.getElementById('fin-status'); if(st){ st.style.borderStyle='solid'; st.style.borderColor='#39d98a'; st.innerHTML='🟢 <b>Данные из '+(isBizmart()?'1С':'Wildberries')+'</b> · склад обновлён '+esc(d.updated||''); }
     renderMoney();
   }
+  // Перезагрузка в обход кэша браузера (Safari любит держать старую версию страницы)
+  function hardReload(){ try{ location.replace(location.pathname+'?v='+Date.now()); }catch(e){ location.reload(); } }
   // общие всплывающие окна
   function openM(id){ const m=document.getElementById(id); if(m) m.classList.add('open'); }
   function closeM(id){ const m=document.getElementById(id); if(m) m.classList.remove('open'); }
@@ -3266,28 +3277,64 @@
     renderMoney();
     const ep=document.getElementById('fin-exp-period'); if(ep) ep.textContent='— '+finLabel();
   }
+  // Поиск во вкладке «Расходы»: по категории, заметке, сумме и дате
+  let expQuery='';
+  function setExpQuery(q){ expQuery=(q||'').trim().toLowerCase(); renderExpensesList(); }
+  function clearExpQuery(){ const i=document.getElementById('exp-q'); if(i) i.value=''; setExpQuery(''); }
+  // «искать по всей истории» — ставим период от самой ранней записи до сегодня
+  function expSearchAll(){
+    const ds=((_expData&&_expData.expenses)||[]).map(x=>x.date||'').filter(Boolean).sort();
+    _finClearMonth(); finRange={from:(ds[0]||'2020-01-01'), to:salesTodayStr()}; finPeriod='range';
+    document.querySelectorAll('#finperiod button,#expperiod button').forEach(b=>b.classList.remove('active'));
+    renderFinMoney(); renderExpensesList(); renderFinMonthTable();
+  }
+  function _expMatch(x){
+    if(!expQuery) return true;
+    const hay=[(x.category||''),(x.note||''),(x.date||''),String(x.amount||''),fmt(x.amount||0)].join(' ').toLowerCase();
+    return expQuery.split(/\s+/).every(w=>hay.indexOf(w)>=0);
+  }
+  function _expListHTML(list){
+    return list.length?'<table><tbody>'+list.map(x=>'<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc((x.date||'').slice(5))+'</td><td>'+esc(x.category||'—')+(x.note?' <span style="color:var(--muted);font-size:12px">· '+esc(x.note)+'</span>':'')+'</td><td style="text-align:right;white-space:nowrap"><span class="money" data-som="'+x.amount+'">'+fmt(x.amount)+'</span></td><td style="width:26px;text-align:right"><span onclick="delExpense('+x.id+')" title="Удалить" style="cursor:pointer;color:var(--muted)">✕</span></td></tr>').join('')+'</tbody></table>'
+      :'<span style="color:var(--muted);font-size:13px">'+(expQuery?'Ничего не нашлось — попробуй другое слово или смени период.':'Расходов '+finLabel()+' нет')+'</span>';
+  }
+  function _expCatsHTML(list){
+    const byCat={}; list.forEach(x=>{const c=(x.category||'—'); byCat[c]=(byCat[c]||0)+(+x.amount||0);});
+    const cats=Object.keys(byCat).map(c=>({category:c,amount:byCat[c]})).sort((a,b)=>b.amount-a.amount);
+    const mx=Math.max.apply(null,cats.map(c=>c.amount).concat([1]));
+    return cats.length?cats.map(c=>'<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>'+esc(c.category)+'</span><span class="money" data-som="'+c.amount+'">'+fmt(c.amount)+'</span></div><div class="progress"><div style="width:'+Math.round(c.amount/mx*100)+'%"></div></div></div>').join('')
+      :'<span style="color:var(--muted);font-size:13px">'+(expQuery?'Ничего не нашлось.':'Расходов '+finLabel()+' нет')+'</span>';
+  }
   function renderExpensesList(){
     if(!_expData) return;
     const inP=(dt)=>_finInP(dt);
-    const list=(_expData.expenses||[]).filter(x=>inP(x.date||''));
+    const list=(_expData.expenses||[]).filter(x=>inP(x.date||''));      // за период — для «Финансов»
+    const listQ=expQuery?list.filter(_expMatch):list;                   // + поиск — для вкладки «Расходы»
     // список расходов (одна разметка — для «Финансов» и для отдельной вкладки «Расходы»)
-    const listHTML=list.length?'<table><tbody>'+list.map(x=>'<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc((x.date||'').slice(5))+'</td><td>'+esc(x.category||'—')+(x.note?' <span style="color:var(--muted);font-size:12px">· '+esc(x.note)+'</span>':'')+'</td><td style="text-align:right;white-space:nowrap"><span class="money" data-som="'+x.amount+'">'+fmt(x.amount)+'</span></td><td style="width:26px;text-align:right"><span onclick="delExpense('+x.id+')" title="Удалить" style="cursor:pointer;color:var(--muted)">✕</span></td></tr>').join('')+'</tbody></table>':'<span style="color:var(--muted);font-size:13px">Расходов '+finLabel()+' нет</span>';
-    ['fin-expenses','exp-list'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML=listHTML;});
+    const el1=document.getElementById('fin-expenses'); if(el1) el1.innerHTML=_expListHTML(list);
+    const el2=document.getElementById('exp-list');
+    if(el2){
+      let extra='';
+      if(expQuery&&!listQ.length){   // в выбранном периоде пусто — подскажем, что есть в остальной истории
+        const all=(_expData.expenses||[]).filter(_expMatch);
+        if(all.length) extra='<div class="note" style="margin-top:10px">За другие периоды найдено <b>'+all.length+'</b> — <span onclick="expSearchAll()" style="cursor:pointer;color:#4f8cff;text-decoration:underline">искать по всей истории</span></div>';
+      }
+      el2.innerHTML=_expListHTML(listQ)+extra;
+    }
     // по категориям
-    const byCat={}; list.forEach(x=>{const c=(x.category||'—'); byCat[c]=(byCat[c]||0)+(+x.amount||0);});   // за тот же период, что выбран
-    const cats=Object.keys(byCat).map(c=>({category:c,amount:byCat[c]})).sort((a,b)=>b.amount-a.amount);
-    const mx=Math.max.apply(null,cats.map(c=>c.amount).concat([1]));
-    const catsHTML=cats.length?cats.map(c=>'<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>'+esc(c.category)+'</span><span class="money" data-som="'+c.amount+'">'+fmt(c.amount)+'</span></div><div class="progress"><div style="width:'+Math.round(c.amount/mx*100)+'%"></div></div></div>').join(''):'<span style="color:var(--muted);font-size:13px">Расходов '+finLabel()+' нет</span>';
-    ['fin-exp-cats','exp-cats-box'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML=catsHTML;});
-    // подписи периода
-    ['fin-cats-period','fin-exp-period','exp-cats-period','exp-list-period'].forEach(id=>{const el=document.getElementById(id); if(el) el.textContent='— '+finLabel();});
+    const el3=document.getElementById('fin-exp-cats'); if(el3) el3.innerHTML=_expCatsHTML(list);
+    const el4=document.getElementById('exp-cats-box'); if(el4) el4.innerHTML=_expCatsHTML(listQ);
+    // подписи периода (во вкладке «Расходы» — с пометкой о поиске)
+    const qNote=expQuery?' · поиск «'+esc(expQuery)+'»':'';
+    ['fin-cats-period','fin-exp-period'].forEach(id=>{const el=document.getElementById(id); if(el) el.textContent='— '+finLabel();});
+    ['exp-cats-period','exp-list-period'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='— '+esc(finLabel())+qNote;});
     // итог для отдельной вкладки «Расходы» (без выручки/прибыли — можно дать сотруднику)
     const et=document.getElementById('exp-total');
-    if(et){ // пресеты берут итог из серверного periods (по ВСЕМ строкам); свой период — из отфильтрованного списка
+    if(et){ // пресеты берут итог из серверного periods (по ВСЕМ строкам); свой период/поиск — из отфильтрованного списка
       const sp=(_expData.periods||{})[finPeriod]||{}, mrow=finMonth?finMonthRow(finMonth):null;
-      const total=mrow?mrow.expense:((!finRange && sp.expense!=null)?sp.expense:list.reduce((s,x)=>s+(+x.amount||0),0));
-      et.innerHTML='<div class="card kpi"><div class="label">Расходы '+finLabel()+'</div><div class="value" style="color:#ffb84d"><span class="money" data-som="'+total+'">'+fmt(total)+'</span></div></div>'
-        +'<div class="card kpi"><div class="label">Записей</div><div class="value">'+list.length+'</div></div>'; }
+      const total=expQuery?listQ.reduce((s,x)=>s+(+x.amount||0),0)
+        :(mrow?mrow.expense:((!finRange && sp.expense!=null)?sp.expense:list.reduce((s,x)=>s+(+x.amount||0),0)));
+      et.innerHTML='<div class="card kpi"><div class="label">'+(expQuery?'Найдено на сумму ':'Расходы ')+esc(finLabel())+'</div><div class="value" style="color:#ffb84d"><span class="money" data-som="'+total+'">'+fmt(total)+'</span></div></div>'
+        +'<div class="card kpi"><div class="label">'+(expQuery?'Найдено записей':'Записей')+'</div><div class="value">'+listQ.length+'</div></div>'; }
     renderMoney();
   }
   async function loadExpenses(){
