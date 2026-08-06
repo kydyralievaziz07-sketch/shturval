@@ -398,6 +398,8 @@
     .sidebar .nav a{overflow:hidden}
   }
   @media(max-width:1000px){.kpis{grid-template-columns:repeat(2,1fr)}.grid2,.grid2b{grid-template-columns:1fr}}
+  /* таблица «Помесячно» на узком экране: оставляем месяц/выручку/расходы/чистую */
+  @media(max-width:760px){.fin-m-slim{display:none}}
   @media(max-width:760px){
     /* стоп горизонтальному растягиванию страницы */
     html,body{overflow-x:hidden;max-width:100%}
@@ -672,7 +674,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.76.0<br>Авто Рент: новая вкладка «GPS · Пробег» — пробег каждой машины за любой период по данным трекеров и напоминание о замене масла
+      Штурвал v4.77.0<br>Финансы и Расходы по месяцам: выбор месяца со стрелками ‹ ›, таблица «Помесячно» (клик по месяцу открывает его целиком) и сравнение с прошлым месяцем
   </aside>
 
   <!-- MAIN -->
@@ -1198,9 +1200,11 @@
           <button data-fp="month">Месяц</button>
           <span style="width:1px;height:22px;background:var(--line);margin:0 4px;display:inline-block"></span>
           <span style="font-size:13px;color:var(--muted)">🗓 Месяц:</span>
+          <button id="fin-month-prev" onclick="finMonthShift(-1)" title="Предыдущий месяц" style="padding:5px 10px">‹</button>
           <select id="fin-month" onchange="setFinMonth(this.value)" style="background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:5px 8px;font-size:13px">
             <option value="">— выбрать —</option>
           </select>
+          <button id="fin-month-next" onclick="finMonthShift(1)" title="Следующий месяц" style="padding:5px 10px">›</button>
           <span style="width:1px;height:22px;background:var(--line);margin:0 4px;display:inline-block"></span>
           <span style="font-size:13px;color:var(--muted)">📅 Свой период:</span>
           <input type="date" id="fin-from" onchange="syncFinTo()" style="background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:5px 8px;font-size:13px">
@@ -1221,7 +1225,14 @@
           <div id="fin-exp-cats"><span style="color:var(--muted);font-size:13px">—</span></div>
         </div>
       </div>
-      <div style="font-size:12px;color:var(--muted);margin:22px 0 8px">📅 Сезонность — по месяцам (наберётся со временем, история копится с 18.06.2026)</div>
+      <div class="card" style="margin-top:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+          <h3 style="margin:0">🗓 Помесячно <span style="font-size:12px;color:var(--muted);font-weight:400">— нажми на месяц, чтобы посмотреть его целиком</span></h3>
+          <button class="btn ghost" style="font-size:12px;padding:6px 12px" onclick="setFinPeriod('week')">Сбросить месяц</button>
+        </div>
+        <div id="fin-months" style="max-height:420px;overflow:auto"><span style="color:var(--muted);font-size:13px">—</span></div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin:22px 0 8px">📅 Сезонность — по месяцам</div>
       <div class="grid2" id="fin-charts">
         <div class="card"><h3 style="margin:0 0 10px">📊 Выручка · прибыль · расходы по месяцам</h3><div id="fin-chart-bars"><span style="color:var(--muted);font-size:13px">—</span></div></div>
         <div class="card"><h3 style="margin:0 0 10px">🥧 Доля выручки по месяцам</h3><div id="fin-chart-donut"><span style="color:var(--muted);font-size:13px">—</span></div></div>
@@ -1238,7 +1249,7 @@
       <div class="card" style="margin-top:18px">
         <h3>💡 Что это значит</h3>
         <div class="note"><b>Выручка</b> — сколько продали (из касс 1С). <b>Прибыль с товара</b> — выручка минус закуп проданного. <b>Расходы</b> — то, что ты сам внёс (аренда, зарплаты, прочее). <b>Чистая прибыль = прибыль с товара − расходы</b> — сколько реально осталось.
-        <br><br>📌 Период (День/Неделя/Месяц) переключается кнопками сверху. История продаж копится с 18.06.2026 — за полный месяц цифры наберутся со временем.</div>
+        <br><br>📌 Период переключается сверху: кнопки <b>День / Неделя / Месяц</b> (последние дни), выпадающий список <b>🗓 Месяц</b> и стрелки <b>‹ ›</b> — целый календарный месяц, либо <b>свой период</b> двумя датами. В таблице <b>«Помесячно»</b> можно нажать на любой месяц — все цифры и расходы ниже пересчитаются под него.</div>
       </div>
     </section>
 
@@ -1246,14 +1257,34 @@
     <section id="tab-exp" class="hide">
       <div id="exp-status" class="note" style="margin-bottom:14px">💸 Здесь вносим все расходы магазина: аренда, зарплаты, реклама, доставка и т.д. Всё, что внесёшь, попадёт в «Финансы».</div>
       <div class="toolbar" style="margin-bottom:10px">
-        <div class="period" id="expperiod">
+        <div class="period" id="expperiod" style="flex-wrap:wrap;align-items:center">
           <button data-fp="today">День</button>
           <button class="active" data-fp="week">Неделя</button>
           <button data-fp="month">Месяц</button>
+          <span style="width:1px;height:22px;background:var(--line);margin:0 4px;display:inline-block"></span>
+          <span style="font-size:13px;color:var(--muted)">🗓 Месяц:</span>
+          <button onclick="finMonthShift(-1)" title="Предыдущий месяц" style="padding:5px 10px">‹</button>
+          <select id="exp-month" onchange="setFinMonth(this.value)" style="background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:5px 8px;font-size:13px">
+            <option value="">— выбрать —</option>
+          </select>
+          <button onclick="finMonthShift(1)" title="Следующий месяц" style="padding:5px 10px">›</button>
+          <span style="width:1px;height:22px;background:var(--line);margin:0 4px;display:inline-block"></span>
+          <span style="font-size:13px;color:var(--muted)">📅 Свой период:</span>
+          <input type="date" id="exp-from" onchange="syncFinTo('exp')" style="background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:5px 8px;font-size:13px">
+          <span style="color:var(--muted);font-size:13px">—</span>
+          <input type="date" id="exp-to" style="background:var(--panel);color:var(--text);border:1px solid var(--line,#2a3550);border-radius:8px;padding:5px 8px;font-size:13px">
+          <button data-fp="range" onclick="setFinRange('exp')">Показать</button>
         </div>
         <button class="btn" onclick="openExpense()">💸 Добавить расход</button>
       </div>
       <div class="kpis" id="exp-total"></div>
+      <div class="card" style="margin-top:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+          <h3 style="margin:0">🗓 Расходы по месяцам <span style="font-size:12px;color:var(--muted);font-weight:400">— нажми на месяц, чтобы посмотреть его целиком</span></h3>
+          <button class="btn ghost" style="font-size:12px;padding:6px 12px" onclick="setFinPeriod('week')">Сбросить месяц</button>
+        </div>
+        <div id="exp-months" style="max-height:420px;overflow:auto"><span style="color:var(--muted);font-size:13px">—</span></div>
+      </div>
       <div class="grid2" style="margin-top:16px">
         <div class="card">
           <h3>💸 Список расходов <span id="exp-list-period" style="font-size:12px;color:var(--muted);font-weight:400"></span></h3>
@@ -1266,7 +1297,7 @@
       </div>
       <div class="card" style="margin-top:18px">
         <h3>💡 Как пользоваться</h3>
-        <div class="note">Нажми «<b>Добавить расход</b>», впиши сумму, выбери категорию и дату — и «Сохранить». Период (День/Неделя/Месяц) переключается кнопками сверху. Чтобы удалить запись — крестик справа от неё. Всё внесённое сразу учитывается в «Финансах» и уменьшает чистую прибыль.</div>
+        <div class="note">Нажми «<b>Добавить расход</b>», впиши сумму, выбери категорию и дату — и «Сохранить». Период сверху: кнопки <b>День / Неделя / Месяц</b>, список <b>🗓 Месяц</b> со стрелками <b>‹ ›</b> (целый календарный месяц) или <b>свой период</b> двумя датами; в таблице «<b>Расходы по месяцам</b>» можно нажать на любой месяц. Чтобы удалить запись — крестик справа от неё. Всё внесённое сразу учитывается в «Финансах» и уменьшает чистую прибыль.</div>
       </div>
     </section>
 
@@ -3116,12 +3147,14 @@
   }
   // Список месяцев берём из данных (by_month), а не хардкодом 12 штук:
   // показываем только те, за которые реально есть продажи или расходы.
+  const FIN_MONTH_SELECTS=['fin-month','exp-month'];   // «Финансы» и «Расходы» — один и тот же выбор
   function fillFinMonths(){
-    const sel=document.getElementById('fin-month'); if(!sel||!_expData) return;
+    if(!_expData) return;
     const months=((_expData.by_month)||[]).map(m=>m.month).filter(Boolean).sort().reverse();
-    const cur=sel.value;
-    sel.innerHTML='<option value="">— выбрать —</option>'+months.map(m=>'<option value="'+m+'">'+monthFullLabel(m)+'</option>').join('');
-    if(cur&&months.indexOf(cur)>=0) sel.value=cur;
+    const opts='<option value="">— выбрать —</option>'+months.map(m=>'<option value="'+m+'">'+monthFullLabel(m)+'</option>').join('');
+    FIN_MONTH_SELECTS.forEach(id=>{ const sel=document.getElementById(id); if(!sel) return;
+      const cur=sel.value; sel.innerHTML=opts;
+      sel.value=(finMonth&&months.indexOf(finMonth)>=0)?finMonth:((cur&&months.indexOf(cur)>=0)?cur:''); });
   }
   function setFinMonth(ym){
     if(!ym){ finMonth=null; setFinPeriod('week'); return; }
@@ -3131,17 +3164,75 @@
     finRange={from:ym+'-01', to:ym+'-'+String(last).padStart(2,'0')};
     finPeriod='range';
     document.querySelectorAll('#finperiod button,#expperiod button').forEach(b=>b.classList.remove('active'));
-    renderFinMoney(); renderExpensesList();
+    FIN_MONTH_SELECTS.forEach(id=>{ const s=document.getElementById(id); if(s&&s.value!==ym) s.value=ym; });
+    renderFinMoney(); renderExpensesList(); renderFinMonthTable();
   }
-  function syncFinTo(){ const f=document.getElementById('fin-from'),t=document.getElementById('fin-to'); if(f&&t){ t.min=f.value||''; if(t.value&&f.value&&t.value<f.value) t.value=f.value; } }
-  function _finClearMonth(){ finMonth=null; const s=document.getElementById('fin-month'); if(s) s.value=''; }
-  function setFinPeriod(p){ finRange=null; _finClearMonth(); finPeriod=p; document.querySelectorAll('#finperiod button,#expperiod button').forEach(b=>b.classList.toggle('active',b.dataset.fp===p)); renderFinMoney(); renderExpensesList(); }
-  function setFinRange(){ const f=(document.getElementById('fin-from')||{}).value,t=(document.getElementById('fin-to')||{}).value;
+  // все месяцы, за которые есть данные (по возрастанию)
+  function finMonthsList(){ return (((_expData&&_expData.by_month)||[]).map(m=>m.month).filter(Boolean)).sort(); }
+  function finMonthRow(ym){ return (((_expData&&_expData.by_month)||[]).filter(m=>m.month===ym)[0])||null; }
+  // стрелки ‹ › — шаг на месяц назад/вперёд по списку
+  function finMonthShift(step){
+    const ms=finMonthsList(); if(!ms.length) return;
+    let i = finMonth ? ms.indexOf(finMonth) : ms.length-1;
+    if(i<0) i=ms.length-1; else i+=step;
+    if(i<0) i=0; if(i>ms.length-1) i=ms.length-1;
+    setFinMonth(ms[i]);
+  }
+  // «▲ +12% к июлю» — рост/падение к предыдущему месяцу (для расходов рост = плохо)
+  function _finDelta(cur,prev,prevMonth,goodUp){
+    if(prev==null||!prev) return '';
+    const d=(cur-prev)/Math.abs(prev)*100; if(!isFinite(d)) return '';
+    const up=d>=0, good=(goodUp===false)?!up:up;
+    return '<span style="color:'+(good?'#39d98a':'#ff6b6b')+'">'+(up?'▲ +':'▼ ')+Math.round(d)+'%</span>'
+      +' <span style="color:var(--muted)">· было '+esc(monthLabel(prevMonth))+'</span>';
+  }
+  // Текущий месяц ещё не закончился — сравнивать его с прошлым нечестно, пишем «месяц идёт»
+  function _finMonthNote(m,prev,key,goodUp){
+    if((m.month||'')===salesTodayStr().slice(0,7)) return '<span style="color:var(--muted)">месяц ещё идёт</span>';
+    return prev?_finDelta(m[key],prev[key],prev.month,goodUp):'<span style="color:var(--muted)">—</span>';
+  }
+  // Таблица «Помесячно»: месяц → выручка / прибыль / расходы / чистая, клик = открыть месяц
+  function renderFinMonthTable(){
+    renderExpMonthTable();
+    const el=document.getElementById('fin-months'); if(!el) return;
+    const mm=((_expData&&_expData.by_month)||[]).filter(m=>m.month).slice().sort((a,b)=>a.month<b.month?1:-1);   // новые сверху
+    if(!mm.length){ el.innerHTML='<span style="color:var(--muted);font-size:13px">Пока нет данных по месяцам.</span>'; return; }
+    el.innerHTML='<table><thead><tr><th>Месяц</th><th style="text-align:right">Выручка</th><th class="fin-m-slim" style="text-align:right">Прибыль с товара</th><th class="fin-m-slim" style="text-align:right">Расходы</th><th style="text-align:right">Чистая прибыль</th><th class="fin-m-slim" style="text-align:right">К прошлому месяцу</th></tr></thead><tbody>'
+      +mm.map((m,i)=>{
+        const prev=mm[i+1], act=(finMonth===m.month);
+        const cell=(v,c,cls)=>'<td'+(cls?' class="'+cls+'"':'')+' style="text-align:right;white-space:nowrap'+(c?';color:'+c:'')+'"><span class="money" data-som="'+Math.round(v||0)+'">'+fmt(Math.round(v||0))+'</span></td>';
+        return '<tr onclick="setFinMonth(\''+m.month+'\')" style="cursor:pointer'+(act?';background:rgba(79,140,255,.14)':'')+'">'
+          +'<td style="white-space:nowrap">'+(act?'▶ ':'')+'<b>'+esc(monthFullLabel(m.month))+'</b></td>'
+          +cell(m.sales)+cell(m.profit,'','fin-m-slim')+cell(m.expense,'#ffb84d','fin-m-slim')+cell(m.net,(m.net||0)>=0?'#39d98a':'#ff6b6b')
+          +'<td class="fin-m-slim" style="text-align:right;white-space:nowrap;font-size:12px">'+_finMonthNote(m,prev,'net',true)+'</td></tr>';
+      }).join('')+'</tbody></table>';
+    renderMoney();
+  }
+  // Та же таблица для раздела «Расходы» — БЕЗ выручки и прибыли (раздел можно выдать сотруднику)
+  function renderExpMonthTable(){
+    const el=document.getElementById('exp-months'); if(!el) return;
+    const mm=((_expData&&_expData.by_month)||[]).filter(m=>m.month).slice().sort((a,b)=>a.month<b.month?1:-1);
+    if(!mm.length){ el.innerHTML='<span style="color:var(--muted);font-size:13px">Пока нет данных по месяцам.</span>'; return; }
+    el.innerHTML='<table><thead><tr><th>Месяц</th><th style="text-align:right">Расходы</th><th class="fin-m-slim" style="text-align:right">К прошлому месяцу</th></tr></thead><tbody>'
+      +mm.map((m,i)=>{
+        const prev=mm[i+1], act=(finMonth===m.month);
+        return '<tr onclick="setFinMonth(\''+m.month+'\')" style="cursor:pointer'+(act?';background:rgba(79,140,255,.14)':'')+'">'
+          +'<td style="white-space:nowrap">'+(act?'▶ ':'')+'<b>'+esc(monthFullLabel(m.month))+'</b></td>'
+          +'<td style="text-align:right;white-space:nowrap;color:#ffb84d"><span class="money" data-som="'+Math.round(m.expense||0)+'">'+fmt(Math.round(m.expense||0))+'</span></td>'
+          +'<td class="fin-m-slim" style="text-align:right;white-space:nowrap;font-size:12px">'+_finMonthNote(m,prev,'expense',false)+'</td></tr>';
+      }).join('')+'</tbody></table>';
+    renderMoney();
+  }
+  function syncFinTo(pre){ pre=pre||'fin'; const f=document.getElementById(pre+'-from'),t=document.getElementById(pre+'-to'); if(f&&t){ t.min=f.value||''; if(t.value&&f.value&&t.value<f.value) t.value=f.value; } }
+  function _finClearMonth(){ finMonth=null; FIN_MONTH_SELECTS.forEach(id=>{ const s=document.getElementById(id); if(s) s.value=''; }); }
+  function setFinPeriod(p){ finRange=null; _finClearMonth(); finPeriod=p; document.querySelectorAll('#finperiod button,#expperiod button').forEach(b=>b.classList.toggle('active',b.dataset.fp===p)); renderFinMoney(); renderExpensesList(); renderFinMonthTable(); }
+  function setFinRange(pre){ pre=pre||'fin';   // «свой период» есть и в «Финансах», и в «Расходах»
+    const f=(document.getElementById(pre+'-from')||{}).value,t=(document.getElementById(pre+'-to')||{}).value;
     if(!f||!t){ alert('Выбери обе даты периода — «с» и «по».'); return; }
     _finClearMonth();
     finRange={from:(f<=t?f:t),to:(f<=t?t:f)}; finPeriod='range';
     document.querySelectorAll('#finperiod button,#expperiod button').forEach(b=>b.classList.toggle('active',b.dataset.fp==='range'));
-    renderFinMoney(); renderExpensesList(); }
+    renderFinMoney(); renderExpensesList(); renderFinMonthTable(); }
   // диапазон дат для текущего выбора (для фильтра списка и сумм)
   function _finInP(dt){
     if(finRange) return dt>=finRange.from && dt<=finRange.to;
@@ -3160,9 +3251,18 @@
       const sales=sd.reduce((s,x)=>s+(+x.sales||0),0), profit=sd.reduce((s,x)=>s+(+x.profit||0),0);
       p={sales:sales, profit:profit, expense:exp, net:Math.round(profit-exp)};
     }
-    const km=(l,s,c)=>'<div class="card kpi"><div class="label">'+l+'</div><div class="value"'+(c?' style="color:'+c+'"':'')+'><span class="money" data-som="'+(s||0)+'">'+fmt(s||0)+'</span></div></div>';
-    box.innerHTML=km('Выручка '+finLabel(),p.sales)+km('Прибыль с товара',p.profit)+
-      km('Расходы',p.expense,'#ffb84d')+km('Чистая прибыль',p.net,((p.net||0)>=0?'#39d98a':'#ff6b6b'));
+    let dl={sales:'',profit:'',expense:'',net:''};
+    if(finMonth){   // выбран целый месяц — берём готовый месячный итог и сравниваем с предыдущим месяцем
+      const cur=finMonthRow(finMonth);
+      if(cur) p={sales:cur.sales, profit:cur.profit, expense:cur.expense, net:cur.net};
+      const ms=finMonthsList(), i=ms.indexOf(finMonth), pm=(i>0?finMonthRow(ms[i-1]):null);
+      if(finMonth===salesTodayStr().slice(0,7)) dl.sales='<span style="color:var(--muted)">месяц ещё идёт — сравнение с прошлым будет в конце</span>';
+      else if(cur&&pm) dl={sales:_finDelta(cur.sales,pm.sales,pm.month,true), profit:_finDelta(cur.profit,pm.profit,pm.month,true),
+                      expense:_finDelta(cur.expense,pm.expense,pm.month,false), net:_finDelta(cur.net,pm.net,pm.month,true)};
+    }
+    const km=(l,s,c,sub)=>'<div class="card kpi"><div class="label">'+l+'</div><div class="value"'+(c?' style="color:'+c+'"':'')+'><span class="money" data-som="'+(s||0)+'">'+fmt(s||0)+'</span></div>'+(sub?'<div style="font-size:12px;margin-top:4px">'+sub+'</div>':'')+'</div>';
+    box.innerHTML=km('Выручка '+finLabel(),p.sales,'',dl.sales)+km('Прибыль с товара',p.profit,'',dl.profit)+
+      km('Расходы',p.expense,'#ffb84d',dl.expense)+km('Чистая прибыль',p.net,((p.net||0)>=0?'#39d98a':'#ff6b6b'),dl.net);
     renderMoney();
     const ep=document.getElementById('fin-exp-period'); if(ep) ep.textContent='— '+finLabel();
   }
@@ -3184,14 +3284,14 @@
     // итог для отдельной вкладки «Расходы» (без выручки/прибыли — можно дать сотруднику)
     const et=document.getElementById('exp-total');
     if(et){ // пресеты берут итог из серверного periods (по ВСЕМ строкам); свой период — из отфильтрованного списка
-      const sp=(_expData.periods||{})[finPeriod]||{};
-      const total=(!finRange && sp.expense!=null)?sp.expense:list.reduce((s,x)=>s+(+x.amount||0),0);
+      const sp=(_expData.periods||{})[finPeriod]||{}, mrow=finMonth?finMonthRow(finMonth):null;
+      const total=mrow?mrow.expense:((!finRange && sp.expense!=null)?sp.expense:list.reduce((s,x)=>s+(+x.amount||0),0));
       et.innerHTML='<div class="card kpi"><div class="label">Расходы '+finLabel()+'</div><div class="value" style="color:#ffb84d"><span class="money" data-som="'+total+'">'+fmt(total)+'</span></div></div>'
         +'<div class="card kpi"><div class="label">Записей</div><div class="value">'+list.length+'</div></div>'; }
     renderMoney();
   }
   async function loadExpenses(){
-    try{ const r=await apiFetch('/api/expenses',{},ONEC_BASE); _expData=await r.json(); fillFinMonths(); renderFinMoney(); renderExpensesList(); renderFinCharts(); }catch(e){}
+    try{ const r=await apiFetch('/api/expenses',{},ONEC_BASE); _expData=await r.json(); fillFinMonths(); renderFinMoney(); renderExpensesList(); renderFinCharts(); renderFinMonthTable(); }catch(e){}
   }
   // Диаграммы по месяцам (сезонность): столбики выручка/прибыль/расходы + доля выручки
   function renderFinCharts(){
@@ -3214,7 +3314,7 @@
     if(window._invData&&!window._invData.error) drawFinance(window._invData);
     else loadInventory();
     loadExpenses();
-    const st=document.getElementById('fin-status'); if(st){ st.style.borderStyle='solid'; st.style.borderColor='#39d98a'; st.innerHTML='🟢 <b>Финансы</b> · продажи из '+(isBizmart()?'1С':'Wildberries')+' минус твои расходы. Период — кнопками сверху.'; }
+    const st=document.getElementById('fin-status'); if(st){ st.style.borderStyle='solid'; st.style.borderColor='#39d98a'; st.innerHTML='🟢 <b>Финансы</b> · продажи из '+(isBizmart()?'1С':'Wildberries')+' минус твои расходы. Период — кнопками сверху, целый месяц — списком 🗓 <b>Месяц</b> или стрелками ‹ ›.'; }
     const stockCap=document.getElementById('fin-stock-cap');
     if(stockCap) stockCap.textContent=isBizmart()?'📦 Склад сейчас (из 1С) — сколько денег «лежит» в товаре':'📦 Склад сейчас (Wildberries) — сколько денег «лежит» в товаре';
     const wbCard=document.getElementById('fin-wb-card');
