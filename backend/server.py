@@ -2256,7 +2256,7 @@ def ig_send_media(recipient_id, media_url, mtype="image", from_account_id=None):
 # исходящие медиа держим в памяти под случайным токеном — Meta скачивает их по публичной ссылке,
 # и фронт проигрывает отправленное голосовое из этого же хранилища.
 _ig_outmedia = {}   # token -> (bytes, mime, ts)
-_IG_OUTMEDIA_MAX_BYTES = 40 * 1024 * 1024   # потолок кэша исходящих медиа
+_IG_OUTMEDIA_MAX_BYTES = 12 * 1024 * 1024   # потолок кэша исходящих медиа (файлы живут максимум час)
 def _ig_outmedia_put(data, mime):
     tok = hashlib.sha256(os.urandom(24)).hexdigest()[:32]
     now = time.time()
@@ -3090,7 +3090,7 @@ def _ffmpeg_exe():
     return _FFMPEG_EXE
 
 _audio_mp3_cache = {}   # media_id -> mp3 bytes (чтобы не перекодировать при каждом проигрывании)
-_AUDIO_CACHE_MAX_BYTES = 24 * 1024 * 1024   # потолок кэша перекодированных голосовых
+_AUDIO_CACHE_MAX_BYTES = 8 * 1024 * 1024    # потолок кэша перекодированных голосовых
 def wa_audio_to_mp3(data, media_id=None):
     """Перекодировать аудио (ogg/opus, webm, amr…) в MP3 для Safari/всех браузеров.
     Возвращает (mp3_bytes, 'audio/mpeg') либо (data, None) если перекодировать не удалось."""
@@ -3101,9 +3101,12 @@ def wa_audio_to_mp3(data, media_id=None):
         return data, None
     try:
         import subprocess
+        # 48 кбит/с моно: это голосовое сообщение, а не музыка — речь звучит так же
+        # разборчиво (исходный opus и вовсе ~20 кбит/с), а файл вдвое легче и в памяти,
+        # и при загрузке у клиента.
         p = subprocess.run([exe, "-hide_banner", "-loglevel", "error",
-                            "-i", "pipe:0", "-vn", "-c:a", "libmp3lame", "-b:a", "96k",
-                            "-f", "mp3", "pipe:1"],
+                            "-i", "pipe:0", "-vn", "-c:a", "libmp3lame", "-b:a", "48k",
+                            "-ac", "1", "-ar", "24000", "-f", "mp3", "pipe:1"],
                            input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
         out = p.stdout
         if p.returncode == 0 and out and len(out) > 200:
@@ -9061,6 +9064,18 @@ class Handler(BaseHTTPRequestHandler):
             _u = self._user()
             if not (_u and "all" in _u.get("sections", [])):
                 return self._send(403, {"error": "Только владелец"})
+            if "clear=1" in self.path:
+                # Сброс кэшей без перезапуска: фото/голосовые перекачаются и
+                # перекодируются при следующем открытии переписки, отчёты — из Supabase.
+                _freed = (sum(_blob_len(v) for v in _ig_outmedia.values())
+                          + sum(_blob_len(v) for v in _audio_mp3_cache.values()))
+                _ig_outmedia.clear(); _audio_mp3_cache.clear()
+                for _st in list(_assort_cache.values()) + list(_assort_range_cache.values()):
+                    if not _st.get("refreshing"):
+                        _freed += _blob_len(_st.get("data")); _st["data"] = None
+                _mem_release()
+                return self._send(200, {"cleared_mb": round(_freed / 1048576.0, 1),
+                                        "rss_mb": _mem_rss_mb()})
             def _sz(c):
                 try:
                     return round(sum(_blob_len(v) for v in c.values()) / 1048576.0, 1)
