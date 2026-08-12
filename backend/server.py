@@ -336,6 +336,84 @@ def _allowed(user, path):
     sec = _section_for(path)
     return (sec is None) or _can(user, sec)
 
+# ====== ЭКОНОМИЯ ПАМЯТИ ======
+# Render Starter даёт 512 МБ. Тяжёлое в процессе — снимки отчётов (тысячи товаров)
+# и кэши медиа (байты фото/голосовых). Ниже — общие инструменты, чтобы держать их
+# в узде: снимки лежат сжатыми, медиа вытесняются по объёму, а не по числу записей.
+
+def _zput(obj):
+    """Упаковать снимок для хранения в памяти: JSON + gzip. Python-объекты с тысячами
+    строк занимают в разы больше своего же JSON, а текст жмётся ещё в несколько раз."""
+    if obj is None:
+        return None
+    try:
+        return gzip.compress(json.dumps(obj, ensure_ascii=False).encode("utf-8"), 1)
+    except Exception:
+        return obj      # не смогли упаковать — храним как есть, лишь бы не потерять данные
+
+def _zget(blob):
+    """Достать снимок обратно. Принимает и сжатые байты, и обычный объект."""
+    if blob is None or not isinstance(blob, (bytes, bytearray)):
+        return blob
+    try:
+        return json.loads(gzip.decompress(blob).decode("utf-8"))
+    except Exception:
+        return None
+
+def _blob_len(v):
+    """Размер значения кэша в байтах (для вытеснения по объёму)."""
+    try:
+        if isinstance(v, (bytes, bytearray)):
+            return len(v)
+        if isinstance(v, tuple):
+            return sum(len(x) for x in v if isinstance(x, (bytes, bytearray)))
+    except Exception:
+        pass
+    return 0
+
+def _cap_bytes(cache, max_bytes, ts_of=None, keep_newer=0.0):
+    """Вытесняет самые старые записи, пока суммарный объём кэша выше лимита.
+    ts_of — как достать возраст записи; keep_newer — не трогать записи свежее N секунд."""
+    try:
+        total = sum(_blob_len(v) for v in cache.values())
+        if total <= max_bytes:
+            return
+        now = time.time()
+        items = list(cache.items())
+        if ts_of:
+            items.sort(key=lambda kv: ts_of(kv[1]))
+        for k, v in items:
+            if total <= max_bytes:
+                break
+            if ts_of and keep_newer and (now - ts_of(v)) < keep_newer:
+                continue      # свежее не трогаем: его ещё не успели скачать
+            total -= _blob_len(v)
+            cache.pop(k, None)
+    except Exception:
+        pass
+
+def _mem_release():
+    """Вернуть освобождённую память операционной системе. Без этого Python держит
+    арены у себя, и Render продолжает видеть высокий расход после тяжёлой операции."""
+    try:
+        import gc
+        gc.collect()
+    except Exception:
+        pass
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)   # только Linux (Render); на Mac молча пропустим
+    except Exception:
+        pass
+
+def _mem_rss_mb():
+    """Сколько памяти занимает процесс сейчас, МБ (для диагностики)."""
+    try:
+        with open("/proc/self/statm") as f:
+            return round(int(f.read().split()[1]) * (os.sysconf("SC_PAGE_SIZE") / 1048576.0), 1)
+    except Exception:
+        return 0.0
+
 # --- простой кэш на 60 секунд, чтобы не дёргать amoCRM лишний раз ---
 _cache = {}
 def cached(key, ttl, producer):
@@ -2178,6 +2256,7 @@ def ig_send_media(recipient_id, media_url, mtype="image", from_account_id=None):
 # исходящие медиа держим в памяти под случайным токеном — Meta скачивает их по публичной ссылке,
 # и фронт проигрывает отправленное голосовое из этого же хранилища.
 _ig_outmedia = {}   # token -> (bytes, mime, ts)
+_IG_OUTMEDIA_MAX_BYTES = 40 * 1024 * 1024   # потолок кэша исходящих медиа
 def _ig_outmedia_put(data, mime):
     tok = hashlib.sha256(os.urandom(24)).hexdigest()[:32]
     now = time.time()
@@ -2185,13 +2264,10 @@ def _ig_outmedia_put(data, mime):
     # 1) убираем протухшие (старше 1 часа) — Meta и фронт их давно скачали
     for k in [k for k, v in list(_ig_outmedia.items()) if now - v[2] > 3600]:
         _ig_outmedia.pop(k, None)
-    # 2) если всё ещё много — вытесняем самые старые, но НЕ трогаем свежие (<2 мин),
-    #    чтобы Meta гарантированно успела скачать только что отправленный файл
-    if len(_ig_outmedia) > 200:
-        old = sorted([k for k, v in _ig_outmedia.items() if now - v[2] > 120],
-                     key=lambda k: _ig_outmedia[k][2])
-        for k in old[:max(0, len(_ig_outmedia) - 140)]:
-            _ig_outmedia.pop(k, None)
+    # 2) держим лимит по ОБЪЁМУ, а не по числу файлов: 200 записей могли весить
+    #    сотни мегабайт (видео до 25 МБ каждое) и съедали всю память Render.
+    #    Свежие (<2 мин) не трогаем — Meta должна успеть их скачать.
+    _cap_bytes(_ig_outmedia, _IG_OUTMEDIA_MAX_BYTES, ts_of=lambda v: v[2], keep_newer=120)
     return tok
 
 def ig_reply_media(account_id, customer_id, media_url, mtype, mime="", by="human"):
@@ -3014,6 +3090,7 @@ def _ffmpeg_exe():
     return _FFMPEG_EXE
 
 _audio_mp3_cache = {}   # media_id -> mp3 bytes (чтобы не перекодировать при каждом проигрывании)
+_AUDIO_CACHE_MAX_BYTES = 24 * 1024 * 1024   # потолок кэша перекодированных голосовых
 def wa_audio_to_mp3(data, media_id=None):
     """Перекодировать аудио (ogg/opus, webm, amr…) в MP3 для Safari/всех браузеров.
     Возвращает (mp3_bytes, 'audio/mpeg') либо (data, None) если перекодировать не удалось."""
@@ -3032,8 +3109,9 @@ def wa_audio_to_mp3(data, media_id=None):
         if p.returncode == 0 and out and len(out) > 200:
             if media_id and len(out) < 5_000_000:
                 _audio_mp3_cache[media_id] = out
-                if len(_audio_mp3_cache) > 200:
-                    _audio_mp3_cache.pop(next(iter(_audio_mp3_cache)), None)
+                # лимит по объёму, а не по числу: 200 голосовых по 5 МБ = гигабайт.
+                # Вытесненное просто перекодируется заново при следующем прослушивании.
+                _cap_bytes(_audio_mp3_cache, _AUDIO_CACHE_MAX_BYTES)
             return out, "audio/mpeg"
     except Exception as e:
         try: print("ffmpeg transcode failed:", e)
@@ -5252,11 +5330,22 @@ ASSORT_TOPN = 10
 ASSORT_PERIODS = (1, 7, 30, 90, 365)
 # Снимок держим ОТДЕЛЬНО по каждому периоду (у каждого свой кэш и троттлинг).
 _assort_cache = {}   # days -> {"data":..., "t":..., "next":..., "refreshing":False}
+_ASSORT_KEEP = 3        # сколько периодов держим в памяти (остальные перечитываются из базы)
 def _assort_state(days):
     st = _assort_cache.get(days)
     if st is None:
-        st = {"data": None, "t": 0.0, "next": 0.0, "refreshing": False}
+        st = {"data": None, "t": 0.0, "next": 0.0, "refreshing": False, "used": time.time()}
         _assort_cache[days] = st
+        # не копим снимки всех периодов сразу: у давно не открывавшихся выбрасываем данные
+        # (сам снимок остаётся в Supabase — при следующем открытии подтянется мгновенно).
+        try:
+            spare = [(v.get("used", 0), k) for k, v in _assort_cache.items()
+                     if k != days and v.get("data") is not None and not v.get("refreshing")]
+            spare.sort()
+            for _u, k in spare[:max(0, len(spare) - (_ASSORT_KEEP - 1))]:
+                _assort_cache[k]["data"] = None
+        except Exception:
+            pass
     return st
 def _assort_kvkey(days):
     # 30 дней — исторический ключ (совместимость с уже сохранённым снимком и ABC/Ассортиментом).
@@ -5601,14 +5690,16 @@ def _assort_refresh(days=ASSORT_DAYS, force=False):
     st["refreshing"] = True
     try:
         r = build_assortment(days)
-        st["data"] = r
+        st["data"] = _zput(r)          # в памяти держим сжатым — снимок весит в разы меньше
         st["t"] = time.time()
         st["next"] = time.time() + ASSORT_TTL
         kv_save(_assort_kvkey(days), r)
+        del r
     except Exception:
         st["next"] = time.time() + 1800
     finally:
         st["refreshing"] = False
+        _mem_release()                 # расчёт съедает много временных объектов — отдаём память ОС
 
 def get_assortment(days=ASSORT_DAYS):
     """Мгновенно отдаёт снимок анализа/отчёта за период `days` из памяти/базы. Если
@@ -5621,11 +5712,12 @@ def get_assortment(days=ASSORT_DAYS):
     if days not in ASSORT_PERIODS:
         days = ASSORT_DAYS
     st = _assort_state(days)
-    d = st["data"]
+    st["used"] = time.time()
+    d = _zget(st["data"])
     if d is None:
         d = kv_load(_assort_kvkey(days))
         if d:
-            st["data"] = d
+            st["data"] = _zput(d)
             st["t"] = d.get("generated_ts", 0)
             # снимок из базы — фоновый рефреш сам решит по next (сейчас 0 → обновит)
     if d is None:
@@ -5680,15 +5772,17 @@ def get_assortment_range(date_from, date_to):
         st["refreshing"] = True
         def _job():
             try:
-                st["data"] = build_assortment(date_from=df, date_to=dt)
+                st["data"] = _zput(build_assortment(date_from=df, date_to=dt))
                 st["t"] = time.time()
             except Exception:
                 pass
             finally:
                 st["refreshing"] = False
+                _mem_release()
         threading.Thread(target=_job, daemon=True).start()
-    if st["data"] is not None:
-        out = dict(st["data"])
+    _cur = _zget(st["data"])
+    if _cur is not None:
+        out = dict(_cur)
         if not fresh:
             out["stale"] = True   # показываем прошлый расчёт, новый считается фоном
         return out
@@ -8962,6 +9056,27 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, wb_finance_overview(_co, max(1, min(days, WB_FIN_DAYS))))
             except Exception as e:
                 return self._send(200, {"error": str(e)})
+        if self.path.startswith("/api/_mem"):
+            # Диагностика расхода памяти: сколько занимает процесс и что держат кэши.
+            _u = self._user()
+            if not (_u and "all" in _u.get("sections", [])):
+                return self._send(403, {"error": "Только владелец"})
+            def _sz(c):
+                try:
+                    return round(sum(_blob_len(v) for v in c.values()) / 1048576.0, 1)
+                except Exception:
+                    return 0.0
+            _snap = 0
+            for _st in list(_assort_cache.values()) + list(_assort_range_cache.values()):
+                _snap += _blob_len(_st.get("data"))
+            return self._send(200, {
+                "rss_mb": _mem_rss_mb(),
+                "ig_outmedia_mb": _sz(_ig_outmedia), "ig_outmedia_n": len(_ig_outmedia),
+                "audio_mp3_mb": _sz(_audio_mp3_cache), "audio_mp3_n": len(_audio_mp3_cache),
+                "assort_snapshots_mb": round(_snap / 1048576.0, 1),
+                "assort_periods": len(_assort_cache), "assort_ranges": len(_assort_range_cache),
+                "wb_companies": len(WB_CACHE), "rent_docs": len(_RENT_DOC_CACHE),
+            })
         if self.path.startswith("/api/ads/"):
             from urllib.parse import urlparse, parse_qs
             _qp = parse_qs(urlparse(self.path).query)
