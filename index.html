@@ -750,6 +750,11 @@
         <div class="card kpi"><div class="label">Прибыль сегодня</div><div class="value">—</div></div>
         <div class="card kpi"><div class="label">Средний чек</div><div class="value">—</div></div>
       </div>
+      <div class="card" id="dash-dept-check" style="margin-bottom:18px;display:none">
+        <h3 style="margin:0 0 4px">🧾 Средний чек по отделам</h3>
+        <div class="note" id="dash-dept-cap" style="margin:0 0 10px">—</div>
+        <div id="dash-dept-rows"></div>
+      </div>
 
       <div class="grid2">
         <div class="card">
@@ -1999,6 +2004,7 @@
       // дашборд Магазина: продажи за выбранный период (кнопка сбрасывает произвольный диапазон)
       if(typeof dashClearRange==='function'){ _dashRange=null; const c=document.getElementById('dash-range-clear'); if(c)c.style.display='none'; }
       if(typeof dashSalesRender==='function') dashSalesRender();
+      if(typeof loadDashDeptCheck==='function') loadDashDeptCheck();
     });
   });
   function renderNotifs(){
@@ -4176,23 +4182,59 @@
     if(cap) cap.innerHTML=_dashRange?('🛒 Продажи '+esc(_dashRange.from)+' … '+esc(_dashRange.to)+' — из '+_dsrc)
                                     :('🛒 Продажи '+lbl+' — из <b>'+_dsrc+(isBizmart()?'</b> (касса)':'</b>'));
   }
+  // Средний чек по отделам — под карточками KPI. Данные из того же отчёта
+  // ассортимента (он и так обходит все чеки), поэтому лишней нагрузки нет.
+  let _deptBusy=false;
+  async function loadDashDeptCheck(){
+    const box=document.getElementById('dash-dept-check'); if(!box||!ONEC_BASE||!isBizmart()) return;
+    if(_deptBusy) return; _deptBusy=true;
+    const rows=document.getElementById('dash-dept-rows'), cap=document.getElementById('dash-dept-cap');
+    const q=_dashRange?('from='+_dashRange.from+'&to='+_dashRange.to)
+                      :('days='+({today:1,week:7,month:30}[PERIOD]||7));
+    try{
+      let d=null;
+      for(let i=0;i<12;i++){                       // отчёт считается фоном — ждём готовности
+        const r=await apiFetch('/api/assortment?'+q,{},ONEC_BASE); d=await r.json();
+        if(!d||!d.computing) break;
+        if(i===0&&rows) rows.innerHTML='<span style="color:var(--muted);font-size:13px">Считаю по чекам…</span>';
+        box.style.display='';
+        await new Promise(s=>setTimeout(s,5000));
+      }
+      const list=((d&&d.by_dept)||[]).filter(x=>x.receipts>0&&x.revenue>0);
+      if(!list.length){ box.style.display='none'; return; }
+      box.style.display='';
+      if(cap) cap.textContent='Период '+((d.from||'')+' … '+(d.to||''))+' · '+(d.period_days||0)+' дн. '
+        +'Чек попадает в отдел, если в нём есть товар этого отдела.';
+      const mx=Math.max.apply(null,list.map(x=>x.avg_check).concat([1]));
+      rows.innerHTML='<table><tbody>'+list.map(x=>
+        '<tr><td style="padding:6px 8px 6px 0">'+esc(x.name)+'</td>'
+        +'<td style="width:42%;padding:6px 8px"><div class="progress"><div style="width:'+Math.round(x.avg_check/mx*100)+'%"></div></div></td>'
+        +'<td style="text-align:right;white-space:nowrap;padding:6px 0 6px 8px"><b><span class="money" data-som="'+x.avg_check+'">'+fmt(x.avg_check)+'</span></b></td>'
+        +'<td style="text-align:right;white-space:nowrap;color:var(--muted);font-size:12px;padding:6px 0 6px 12px">'
+        +(x.checks_per_day||0)+' чек/день · <span class="money" data-som="'+x.per_day+'">'+fmt(x.per_day)+'</span>/день</td></tr>'
+      ).join('')+'</tbody></table>';
+      renderMoney();
+    }catch(e){ box.style.display='none'; }
+    finally{ _deptBusy=false; }
+  }
   function dashSetRange(){
     const f=(document.getElementById('dash-from')||{}).value, t=(document.getElementById('dash-to')||{}).value;
     if(!f||!t){ alert('Выбери обе даты периода.'); return; }
     _dashRange={from:f<=t?f:t, to:f<=t?t:f};
     const c=document.getElementById('dash-range-clear'); if(c) c.style.display='';
-    dashSalesRender();
+    dashSalesRender(); loadDashDeptCheck();
   }
   function dashClearRange(){
     _dashRange=null;
     ['dash-from','dash-to'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
     const c=document.getElementById('dash-range-clear'); if(c) c.style.display='none';
-    dashSalesRender();
+    dashSalesRender(); loadDashDeptCheck();
   }
   // дашборд: блок «Продажи сегодня» (1С) + карточка «Продажи по дням» (живые данные)
   async function loadDashSales(){
     if(!ONEC_BASE) return;
     loadSalesHistory();
+    loadDashDeptCheck();          // средний чек по отделам (свой запрос, не блокирует KPI)
     try{
       const r=await apiFetch('/api/sales',{},ONEC_BASE); const d=await r.json();
       if(d&&!d.error){

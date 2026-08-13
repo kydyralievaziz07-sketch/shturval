@@ -5488,6 +5488,10 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_t
                 yield _pair
             _recs = None   # освобождаем порцию перед следующей
     susp = []   # контроль потерь: подозрительные позиции (0 сом / 1 сом / скидка ≥80%)
+    # Средний чек по отделам. Чек часто содержит товары нескольких отделов, поэтому
+    # считаем «выручка отдела ÷ число чеков, В КОТОРЫХ отдел встретился» — сумма чеков
+    # по отделам поэтому больше общего числа чеков, это нормально.
+    dept_rev = {}; dept_chk = {}; dept_qty = {}
     for dd, recs in _iter_days():
         if recs is None:
             days_fail += 1
@@ -5504,6 +5508,7 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_t
             sign = -1 if (x.get("operationType") == "Возврат" or rtot < 0) else 1
             pfac = factor if (factor and abs(factor - 1) > 0.001) else sign
             seller = (x.get("seller") or "—")
+            _depts_here = set()
             for it in items:
                 nm = (it.get("name") or "").strip()
                 if not nm:
@@ -5512,6 +5517,16 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_t
                 a["qty"] += sign * _num(it.get("qty"))
                 a["rev"] += _num(it.get("saleAmount")) * factor
                 a["profit"] += _num(it.get("profit")) * pfac
+                _cid = name2cat.get(nm, "")
+                _d = (top(_cid) if _cid else None) or "— без отдела —"
+                dept_rev[_d] = dept_rev.get(_d, 0.0) + _num(it.get("saleAmount")) * factor
+                dept_qty[_d] = dept_qty.get(_d, 0.0) + sign * _num(it.get("qty"))
+                _depts_here.add(_d)
+            # чеки считаем только по продажам: возврат не «покупка», он лишь
+            # уменьшает выручку (так же считает и KPI дашборда — net ÷ sales_count)
+            if sign > 0:
+                for _d in _depts_here:
+                    dept_chk[_d] = dept_chk.get(_d, 0) + 1
                 # контроль потерь — только продажи (возвраты не считаем)
                 if sign > 0:
                     q = _num(it.get("qty")) or 1
@@ -5663,6 +5678,14 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_t
         "by_date":  sorted(({"date": k, **v}  for k, v in au_date.items()),  key=lambda x: x["date"]),
         "rows": au_rows[:AU_CAP], "rows_total": len(au_rows), "rows_capped": len(au_rows) > AU_CAP,
     }
+    by_dept = sorted(
+        ({"name": d, "revenue": round(r), "receipts": dept_chk.get(d, 0),
+          "qty": int(round(dept_qty.get(d, 0))),
+          "avg_check": round(r / dept_chk[d]) if dept_chk.get(d) else 0,
+          "per_day": round(r / ndays) if ndays else 0,
+          "checks_per_day": round(dept_chk.get(d, 0) / ndays, 1) if ndays else 0}
+         for d, r in dept_rev.items()),
+        key=lambda x: -x["revenue"])
     res = {
         "period_days": ndays, "top_n": top_n,
         "from": res_from, "to": res_to,
@@ -5673,6 +5696,7 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_t
         "all_products": all_products,
         "floors": floors,
         "tree": tree,
+        "by_dept": by_dept,
         "audit": audit,
         "generated_ts": int(time.time()),
         "updated": time.strftime("%d.%m.%Y %H:%M"),
