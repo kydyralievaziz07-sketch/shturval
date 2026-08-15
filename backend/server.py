@@ -704,15 +704,54 @@ def rent_build(period=None, company=None):
             lo, hi = rng
             return bool((not lo or dt >= lo) and (not hi or dt <= hi))
         return ("%04d-%02d" % (dt.year, dt.month)) == sel
-    frent = [r for r in rentals if inper(r.get("start"))]
+    # ── аренда разносится по дням, а не целиком в месяц старта ──────────────
+    # Аренда 29.07–03.08 отработана и в июле, и в августе. Считаем сутки по дню
+    # их начала: сутки № i начинаются в день start+i. Сколько таких суток попало
+    # в период — такая доля денег и засчитывается этому периоду.
+    def _per_bounds():
+        if rng:
+            return rng
+        if sel and len(sel) >= 7:
+            import calendar
+            y, mo = int(sel[:4]), int(sel[5:7])
+            return (datetime.date(y, mo, 1), datetime.date(y, mo, calendar.monthrange(y, mo)[1]))
+        return (None, None)
+    _plo, _phi = _per_bounds()
+
+    def _rshare(r):
+        """(доля аренды в периоде 0..1, суток внутри периода)"""
+        if not sel:
+            return 1.0, int(r.get("_days") or 0)
+        sd = _rdate(r.get("start"))
+        if not sd:
+            return 0.0, 0
+        total = int(r.get("_days") or 0)
+        if total <= 0:                       # аренда без длительности — по дате старта
+            return (1.0, 0) if inper(r.get("start")) else (0.0, 0)
+        inside = 0
+        for i in range(total):
+            day = sd + datetime.timedelta(days=i)
+            if (not _plo or day >= _plo) and (not _phi or day <= _phi):
+                inside += 1
+        return (inside / total if inside else 0.0), inside
+
+    frent = []
+    for r in rentals:
+        k, dn = _rshare(r)
+        if k <= 0:
+            continue
+        x = dict(r)
+        x["_k"] = k
+        x["_days_in"] = dn or int(r.get("_days") or 0)
+        frent.append(x)
     fexp = [e for e in exps if inper(e.get("date"))]
     fhanded = [h for h in handed if inper(h.get("date"))]
     fsalary = [s for s in salary if inper(s.get("date"))]
     funder = [u for u in under if inper(u.get("date"))]
-    # суммы за выбранный период
-    revenue = sum(r["_got"] for r in frent)
-    accrued = sum(r["_sum"] for r in frent)
-    debts = sum(r["_debt"] for r in frent)
+    # суммы за выбранный период (доля аренды, отработанная внутри него)
+    revenue = sum(r["_got"] * r["_k"] for r in frent)
+    accrued = sum(r["_sum"] * r["_k"] for r in frent)
+    debts = sum(r["_debt"] * r["_k"] for r in frent)
     exp_sum = sum(_rnum(e.get("sum")) for e in fexp)
     handed_sum = sum(_rnum(h.get("sum")) for h in fhanded)
     salary_sum = sum(_rnum(s.get("sum")) for s in fsalary)
@@ -720,7 +759,7 @@ def rent_build(period=None, company=None):
     profit = revenue - exp_sum
     balance = profit - handed_sum - salary_sum - under_sum
     cnt = len(frent)
-    dl = [r["_days"] for r in frent if r["_days"] > 0]
+    dl = [r["_days_in"] for r in frent if r["_days_in"] > 0]
     avg_days = round(sum(dl) / len(dl), 1) if dl else 0
     scnt = lambda w: sum(1 for c in cars if w in (c.get("status_live") or c.get("status") or "").lower())
     active = sum(1 for r in frent if "заверш" not in (r.get("status") or "").lower() and (r.get("status") or ""))
@@ -741,9 +780,9 @@ def rent_build(period=None, company=None):
             continue
         md = (c.get("model") or "").strip()
         cr = [r for r in frent if (r.get("model") or "").strip() == md]
-        crev = sum(r["_got"] for r in cr)
-        cdebt = sum(r["_debt"] for r in cr)
-        cdays = sum(r["_days"] for r in cr if r["_days"] > 0)
+        crev = sum(r["_got"] * r["_k"] for r in cr)
+        cdebt = sum(r["_debt"] * r["_k"] for r in cr)
+        cdays = sum(r["_days_in"] for r in cr if r["_days_in"] > 0)
         cexp = exp_by_model.get(md, 0)
         cprof = crev - cexp
         ccost = _rnum(c.get("cost"))
@@ -766,8 +805,11 @@ def rent_build(period=None, company=None):
         abc.append({"model": c["model"], "revenue": c["revenue"], "share": str(round(share)) + "%",
                     "cum": str(round(cum)) + "%", "cls": cls})
     # выручка по дням недели (по дате старта аренды, за период)
+    # берём только аренды, стартовавшие внутри периода — иначе заехавшая из прошлого
+    # месяца попала бы в статистику чужого дня
+    fstart = [r for r in frent if inper(r.get("start"))]
     wd = [{"d": RENT_WEEKDAYS_RU[i], "revenue": 0, "count": 0} for i in range(7)]
-    for r in frent:
+    for r in fstart:
         sd = _rdate(r.get("start"))
         if sd:
             wd[sd.weekday()]["revenue"] += r["_got"]
@@ -778,7 +820,7 @@ def rent_build(period=None, company=None):
     best_wd = max(wd, key=lambda x: x["revenue"])["d"] if wd_max else "—"
     # выручка по дням (для диаграммы по дням месяца), по дате старта
     dd_map = {}
-    for r in frent:
+    for r in fstart:
         sd = _rdate(r.get("start"))
         if sd:
             kk = "%04d-%02d-%02d" % (sd.year, sd.month, sd.day)
