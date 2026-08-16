@@ -674,7 +674,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.81.0<br>Instagram: сторож токенов — продлевает их заранее и сообщает в Telegram, если Meta аннулировала доступ
+      Штурвал v4.82.0<br>Чек-лист кнопок: оживлены «+ аванс»/«+ премия», убрано двойное «сом сом» в зарплате, вкладки больше не падают из-за числа в текстовом поле
       <br><br><span onclick="hardReload()" style="cursor:pointer;color:#4f8cff;text-decoration:underline">🔄 Обновить приложение</span>
       <span style="color:var(--muted)"> — если новое не появилось</span>
   </aside>
@@ -2447,7 +2447,9 @@
   // число без валюты (валюту дописывает MUNIT() рядом) — для кабинета проката, где суммы уже в $
   function nfmt(n){ return (Number(n)||0).toLocaleString('ru-RU'); }
   function hfmt(n){ return fmt(n); }
-  function esc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+  // String(): если в поле придёт число (Sheets/Supabase иногда отдают числом), .replace на нём
+  // падал и ронял ВСЮ вкладку целиком. Пустые значения ведут себя как раньше — ''.
+  function esc(s){return (s?String(s):'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
   // превращаем ссылки в кликабельные (например, когда клиент пришёл с рекламы/сторис)
   function linkify(s){
     return esc(s).replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener" style="color:#bcd2ff;text-decoration:underline;word-break:break-all">$1</a>');
@@ -6438,14 +6440,14 @@
     const subline='Пропусков: <b style="color:var(--text)">'+(v.absent_days||0)+'</b> из '+(v.weekend_days||4)+' выходных'+
       ((v.deduct_days>0)?(' · <b style="color:var(--red)">вычтено '+v.deduct_days+' дн</b>'):' · зарплата полная')+
       ((v.present_days>0)?(' · пришёл '+v.present_days+' дн'):'')+
-      ((v.partial_days>0)?(' · ещё '+v.hours_month+' ч частично (по '+fmt(v.hourly_rate||0)+' '+MUNIT()+'/ч)'):'');
+      ((v.partial_days>0)?(' · ещё '+v.hours_month+' ч частично (по '+fmt(v.hourly_rate||0)+'/ч)'):'');   // fmt() уже с валютой
     box.innerHTML='<div class="card" style="margin-top:16px"><h3>💼 Зарплата за '+mName+'</h3>'+
       '<div style="font-size:12px;color:var(--muted);margin-bottom:12px">'+subline+'</div>'+
       payBar('💰 Зарплата (накоплено)',v.accrued,v.salary_month,'#39d98a')+
-      (v.commission>0?('<div style="display:flex;justify-content:space-between;font-size:14px;margin:4px 0"><span>🚗 Комиссия с аренд ('+(v.commission_pct||10)+'%)</span><b style="color:#39d98a"><span class="money" data-som="'+v.commission+'">'+fmt(v.commission)+'</span> '+MUNIT()+'</b></div>'):'')+
+      (v.commission>0?('<div style="display:flex;justify-content:space-between;font-size:14px;margin:4px 0"><span>🚗 Комиссия с аренд ('+(v.commission_pct||10)+'%)</span><b style="color:#39d98a"><span class="money" data-som="'+v.commission+'">'+fmt(v.commission)+'</span></b></div>'):'')+
       payBar('🎁 Премия',v.bonus,v.bonus_month,'#a78bfa')+
       payBar('💸 Аванс (взято)',v.advance,v.salary_month,'#ffb84d')+
-      '<div style="border-top:1px solid var(--line);margin-top:6px;padding-top:12px;display:flex;justify-content:space-between;font-size:15px"><span>К выплате сейчас:</span><b><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span> '+MUNIT()+'</b></div>'+
+      '<div style="border-top:1px solid var(--line);margin-top:6px;padding-top:12px;display:flex;justify-content:space-between;font-size:15px"><span>К выплате сейчас:</span><b><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span></b></div>'+
       '<div style="font-size:11px;color:var(--muted);margin-top:8px">Зарплата = полный оклад. Первые '+(v.weekend_days||4)+' пропуска в месяц — бесплатные выходные; дальше за каждый пропуск вычитается ставка за день. Неотмеченные дни оплачиваются. Часы вписывает HR, если пришёл не весь день.</div></div>';
     renderMoney();
   }
@@ -6806,8 +6808,8 @@
         '<td><span class="money" data-som="'+v.advance+'">'+fmt(v.advance)+'</span></td>'+
         '<td><b><span class="money" data-som="'+v.to_receive+'">'+fmt(v.to_receive)+'</span></b></td>'+
         '<td style="white-space:nowrap">'+btn+
-          ' <button class="btn ghost" style="padding:4px 8px;font-size:12px" onclick="hrAmount(\''+lg+'\',\'advance\')">+ аванс</button>'+
-          ' <button class="btn ghost" style="padding:4px 8px;font-size:12px" onclick="hrAmount(\''+lg+'\',\'bonus\')">+ премия</button>'+
+          ' <button class="btn ghost" style="padding:4px 8px;font-size:12px" onclick="openHra(\''+lg+'\',\'advance\')">+ аванс</button>'+
+          ' <button class="btn ghost" style="padding:4px 8px;font-size:12px" onclick="openHra(\''+lg+'\',\'bonus\')">+ премия</button>'+
         '</td></tr>';
     }).join('');
     b.innerHTML='<div class="kpis" style="grid-template-columns:repeat(3,1fr)">'+
@@ -6852,14 +6854,16 @@
   }
   // --- окно «Аванс / Премия» (с редактированием: показывает текущее, можно исправить) ---
   let hraLogin=null, hraKind='advance', hraCur=0;
+  // сотрудник берётся из «Кадров» (HR_LIST), а если окно открыли из «Персонала» — из STAFF_PAY
+  function hrEntry(login){ const i=hrFind(login); if(i>=0) return HR_LIST[i]; return (typeof STAFF_PAY!=='undefined'&&STAFF_PAY[login])||null; }
   function openHra(login,kind){
-    const v=HR_LIST[hrFind(login)]; if(!v) return;
+    const v=hrEntry(login); if(!v) return;
     hraLogin=login; hraKind=kind;
     const cur=kind==='advance'?(v.advance||0):(v.bonus||0);
     hraCur=cur||0;
     const word=kind==='advance'?'аванс':'премия';
     document.getElementById('hra-title').textContent=(kind==='advance'?'💸 Аванс':'🎁 Премия')+' — '+v.name;
-    document.getElementById('hra-sub').textContent='Текущий '+word+': '+hfmt(hraCur)+' '+MUNIT()+'. Впиши, сколько ДОБАВИТЬ.';
+    document.getElementById('hra-sub').textContent='Текущий '+word+': '+hfmt(hraCur)+'. Впиши, сколько ДОБАВИТЬ.';
     document.getElementById('hra-label').textContent='Добавить, '+MUNIT();
     const inp=document.getElementById('hra-input'); inp.value='';            // пусто — вписываем только прибавку
     document.getElementById('hra-preview').textContent='';
@@ -6870,7 +6874,7 @@
     const add=parseFloat((document.getElementById('hra-input').value||'').replace(/\s/g,'').replace(',','.'));
     const p=document.getElementById('hra-preview');
     if(isNaN(add)){ p.textContent=''; return; }
-    p.innerHTML='Станет: <b style="color:var(--text)">'+hfmt(hraCur)+' + '+hfmt(add)+' = '+hfmt(hraCur+add)+'</b> '+MUNIT();
+    p.innerHTML='Станет: <b style="color:var(--text)">'+hfmt(hraCur)+' + '+hfmt(add)+' = '+hfmt(hraCur+add)+'</b>';
   }
   function closeHra(){ document.getElementById('hrambg').classList.remove('open'); hraLogin=null; }
   async function hraSave(mode){
@@ -6882,7 +6886,7 @@
     const action=(mode==='set')
       ? (hraKind==='advance'?'set_advance':'set_bonus')
       : (hraKind==='advance'?'advance':'bonus');
-    const i=hrFind(hraLogin), v=i>=0?HR_LIST[i]:null, login=hraLogin;
+    const i=hrFind(hraLogin), v=hrEntry(hraLogin), login=hraLogin;
     // оптимистично: сразу обновляем экран и закрываем окно, запись идёт в фоне
     if(v){
       const isAdv=hraKind==='advance', field=isAdv?'advance':'bonus', old=+v[field]||0;
@@ -6893,7 +6897,11 @@
     closeHra();
     const d=await hrPost({action:action,login:login,amount:amt});
     if(!d){ alert('Не сохранилось — обновлю данные.'); return loadHR(); }
-    if(d.view && i>=0){ HR_LIST[i]=d.view; renderHR(); }   // точные цифры с сервера
+    if(d.view){                                            // точные цифры с сервера
+      if(i>=0) HR_LIST[i]=d.view;
+      if(typeof STAFF_PAY!=='undefined'&&STAFF_PAY[login]) STAFF_PAY[login]=d.view;
+      renderHR();
+    }
   }
   // --- окно «Календарь явки» (отдельное, по центру; клик по дню — пришёл/не пришёл/снять) ---
   let hrCalLogin=null;
@@ -7602,7 +7610,7 @@
       '<div style="font-size:12px;color:var(--muted);margin-bottom:12px">'+(ed?'Задай план на день и впиши факт — покажу % выполнения.':'Планы отделов (редактируют владелец и HR).')+' Факт пока вводится вручную; позже подтянем из 1С автоматически.</div>'+
       rows+'</div>';
   }
-  function jsn(s){ return (s||'').replace(/'/g,''); }
+  function jsn(s){ return (s?String(s):'').replace(/'/g,''); }
   const DEPT_ORDER=['Администраторы','Детский','1 этаж','Касса','Склад','Мужской','Женский','Онлайн','Маркетплейс','Обувь','Мобилограф'];
   // ===== управление командой: добавить / изменить / убрать сотрудника =====
   function canManageTeam(){ return isCabinetOwner() || (USER.sections||[]).indexOf('hr')>=0; }
@@ -8633,7 +8641,7 @@
     var perLabel=(rentS().period)||'ИТОГО';
     var topTotal='<div class="card" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;border-color:#e0871e">'+
       '<div><div style="font-size:13px;color:var(--muted)">🧾 Всего расходов за период: <b style="color:var(--text)">'+esc(perLabel)+'</b></div>'+
-      '<div style="font-size:28px;font-weight:700;margin-top:2px;color:#e0871e">'+fmt(tot)+' <span style="font-size:15px;color:var(--muted)">'+MUNIT()+'</span></div></div>'+
+      '<div style="font-size:28px;font-weight:700;margin-top:2px;color:#e0871e">'+fmt(tot)+'</div></div>'+
       '<div style="text-align:right;font-size:13px;color:var(--muted)">записей: <b style="color:var(--text)">'+list.length+'</b></div></div>';
     b.innerHTML=topTotal+rAddBtn('expense','Расход')+rentExportBtn('expRentExp()')+'<div class="note" style="margin-bottom:12px">🧾 Расходы — показано '+list.length+' из '+all.length+' (по выбранному периоду; новые сверху). Суммы в '+MUNIT()+'.</div>'+_rentPerSel(rentS())+search+
       rtable(['Дата','Машина','Категория','Описание','Сумма',''], rows, foot)+byMonth;
