@@ -2929,6 +2929,100 @@ def _biz_post_scheduler():
             print("[biz_post] Планировщик: ошибка:", e)
         time.sleep(600)   # каждые 10 минут
 
+# ===== Сторож токенов Instagram =====
+# Токены Instagram Login живут 60 дней. Продлеваем заранее и следим, не аннулировала ли
+# их Meta (code 190) — так слёт виден в тот же день, а не когда упадёт публикация.
+IG_TOKEN_REFRESH_DAYS = 45      # раньше 60-дневного срока
+IG_TOKEN_CHECK_HOURS = 6        # как часто обходим аккаунты
+_ig_dead_notified = {}          # ig_id -> когда предупреждали (чтобы не спамить в Telegram)
+
+def _ig_now_iso():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+def _ig_token_age_days(updated_at):
+    """Сколько дней прошло с последнего обновления токена. Не разобрали дату — считаем, что пора."""
+    if not updated_at:
+        return 999
+    try:
+        s = str(updated_at)[:19].replace("T", " ")
+        t = time.mktime(time.strptime(s, "%Y-%m-%d %H:%M:%S"))
+        return max(0, (time.time() - (t - time.timezone)) / 86400.0)
+    except Exception:
+        return 999
+
+def ig_token_refresh(token):
+    """Продлить долгоживущий токен Instagram Login ещё на 60 дней."""
+    url = IG_GRAPH.replace("/v21.0", "") + "/refresh_access_token?grant_type=ig_refresh_token&access_token=" + _q(token)
+    req = urllib.request.Request(url, headers={"User-Agent": "Shturval/1.0"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        d = json.loads(r.read().decode() or "{}")
+    return d.get("access_token", "")
+
+def ig_tokens_health(refresh=True):
+    """Проверить все токены в ig_accounts. Живые и достаточно старые — продлить.
+    Возвращает список: {username, ig_id, alive, refreshed, error}."""
+    rows = _supa("GET", "ig_accounts", "?select=id,ig_id,username,token,updated_at") or []
+    out = []
+    for a in rows:
+        item = {"username": a.get("username", ""), "ig_id": a.get("ig_id", ""),
+                "alive": False, "refreshed": False, "error": ""}
+        token = a.get("token") or ""
+        try:
+            url = IG_GRAPH + "/me?fields=user_id,username&access_token=" + _q(token)
+            urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "Shturval/1.0"}),
+                                   timeout=20).read()
+            item["alive"] = True
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode()[:200]
+            except Exception:
+                pass
+            item["error"] = body or ("HTTP %s" % e.code)
+        except Exception as e:
+            item["error"] = str(e)[:200]
+        if item["alive"] and refresh and _ig_token_age_days(a.get("updated_at")) >= IG_TOKEN_REFRESH_DAYS:
+            try:
+                new_tok = ig_token_refresh(token)
+                if new_tok:
+                    _supa("PATCH", "ig_accounts", "?id=eq.%s" % a.get("id"),
+                          {"token": new_tok, "updated_at": _ig_now_iso()})
+                    item["refreshed"] = True
+                    print("[ig_tokens] Токен @%s продлён на 60 дней" % item["username"])
+            except Exception as e:
+                item["error"] = "продление: %s" % str(e)[:200]
+        out.append(item)
+    return out
+
+def _ig_tokens_watchdog():
+    """Фоновый поток: раз в IG_TOKEN_CHECK_HOURS проверяет токены, продлевает и
+    сообщает в Telegram о слетевших (не чаще раза в сутки на аккаунт)."""
+    while True:
+        try:
+            if supa_on():
+                res = ig_tokens_health()
+                dead = [r for r in res if not r["alive"]]
+                chat = CFG.get("TG_REPORT_GROUP", "")
+                if dead and chat and CFG.get("TG_BOT_TOKEN"):
+                    now = time.time()
+                    fresh = [r for r in dead if now - _ig_dead_notified.get(r["ig_id"], 0) > 86400]
+                    if fresh:
+                        text = ("⚠️ Instagram: слетел токен — %s\n\n"
+                                "Переподключить: войти в аккаунт в браузере и открыть\n"
+                                "https://shturval-backend.onrender.com/api/bizmart/ig-connect"
+                                % ", ".join("@%s" % r["username"] for r in fresh))
+                        try:
+                            tg_send(chat, text)
+                            for r in fresh:
+                                _ig_dead_notified[r["ig_id"]] = now
+                        except Exception as e:
+                            print("[ig_tokens] Не смог предупредить в Telegram:", e)
+                if dead:
+                    print("[ig_tokens] Мёртвые токены:", ", ".join(r["username"] for r in dead))
+        except Exception as e:
+            print("[ig_tokens] Сторож: ошибка:", e)
+        time.sleep(IG_TOKEN_CHECK_HOURS * 3600)
+
 def _igbot_scheduler():
     """Фоновый поток: авто-обучение по расписанию (learn_every_days), запасной ответ
     бота в WhatsApp (через час без ответа человека) и подстраховка каталога в БД."""
@@ -9380,6 +9474,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"queue": rows or []})
             except Exception as e:
                 return self._send(500, {"error": str(e)})
+        if self.path.startswith("/api/bizmart/ig-health"):
+            # Живая проверка всех токенов Instagram. ?refresh=0 — только проверить, не продлевать.
+            if not supa_on():
+                return self._send(503, {"error": "Supabase не настроен"})
+            try:
+                from urllib.parse import urlparse as _up2, parse_qs as _pq2
+                qs = _pq2(_up2(self.path).query)
+                do_refresh = (qs.get("refresh") or ["1"])[0] != "0"
+                res = ig_tokens_health(refresh=do_refresh)
+                return self._send(200, {"accounts": res,
+                                        "alive": sum(1 for r in res if r["alive"]),
+                                        "dead": [r["username"] for r in res if not r["alive"]],
+                                        "checked_at": _ig_now_iso()})
+            except Exception as e:
+                return self._send(500, {"error": str(e)})
         if self.path.startswith("/api/bizmart/ig-connect"):
             APP_ID = "3097486700451674"
             REDIRECT = "https://shturval-backend.onrender.com/api/bizmart/ig-callback"
@@ -9479,4 +9588,9 @@ if __name__ == "__main__":
     if CFG.get("IG_TOKEN_BIZMART_KG") and supa_on():
         threading.Thread(target=_biz_post_scheduler, daemon=True).start()
         print("  Bizmart автопостинг: активен ✅")
+    # Сторож токенов Instagram — продлевает заранее и сообщает о слетевших
+    if supa_on():
+        threading.Thread(target=_ig_tokens_watchdog, daemon=True).start()
+        print("  Сторож токенов Instagram: активен ✅ (проверка раз в %s ч, продление за %s дн.)"
+              % (IG_TOKEN_CHECK_HOURS, 60 - IG_TOKEN_REFRESH_DAYS))
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
