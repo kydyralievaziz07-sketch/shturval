@@ -455,9 +455,34 @@ def _wb_caches():
     return (WB_CACHE, WB_SALES_CACHE, WB_ORDERS_CACHE, WB_FIN_CACHE, WB_ADS_CACHE)
 
 
+def _deep_size(obj, _seen=None, _depth=0):
+    """Примерный вес структуры в байтах. _blob_len считает только двоичные
+    данные, а кэши WB держат словари со списками строк — их он видит нулём."""
+    import sys
+    if _depth > 6:
+        return 0
+    if _seen is None:
+        _seen = set()
+    oid = id(obj)
+    if oid in _seen:
+        return 0
+    _seen.add(oid)
+    try:
+        size = sys.getsizeof(obj)
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                size += _deep_size(k, _seen, _depth + 1) + _deep_size(v, _seen, _depth + 1)
+        elif isinstance(obj, (list, tuple, set)):
+            for v in obj:
+                size += _deep_size(v, _seen, _depth + 1)
+        return size
+    except Exception:
+        return 0
+
+
 def _wb_cache_bytes():
     try:
-        return sum(_blob_len(v) for c in _wb_caches() for v in c.values())
+        return sum(_deep_size(c) for c in _wb_caches())
     except Exception:
         return 0
 
