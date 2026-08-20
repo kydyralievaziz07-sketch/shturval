@@ -143,6 +143,9 @@ services:
         sync: false
       - key: USERS_JSON
         sync: false
+      # приостановка доступа за неоплату (пусто = кабинет работает как обычно)
+      - key: PAY_LOCK
+        sync: false
 
   # --- Valbreeze (маркетплейс Wildberries, аккаунт Joru) — отдельный дашборд ---
   - type: web

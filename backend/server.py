@@ -50,6 +50,9 @@ def load_secret():
     cfg["OWNER_LOGIN"] = env("OWNER_LOGIN")
     # доп. пользователи с ролями (JSON-список): [{"login":"...","pw":"...","name":"...","sections":["chats"]}]
     cfg["USERS_JSON"] = env("USERS_JSON")
+    # Приостановка доступа за неоплату (по компании/деплою). Пусто — работает как обычно;
+    # "1"/"on" — стандартный текст; любой другой текст — показываем его.
+    cfg["PAY_LOCK"] = env("PAY_LOCK")
     # ИИ-помощник магазина (Anthropic Claude)
     cfg["ANTHROPIC_API_KEY"] = env("ANTHROPIC_API_KEY")
     cfg["ANTHROPIC_MODEL"] = env("ANTHROPIC_MODEL") or "claude-haiku-4-5-20251001"
@@ -135,6 +138,45 @@ COMPANY_ID = (os.environ.get("COMPANY_ID", "").strip() or "bizmart")   # ком�
 _NICHE_RAW = os.environ.get("NICHE_COMPANIES", "").strip()
 NICHE_COMPANIES = [c.strip() for c in _NICHE_RAW.split(",") if c.strip()] if _NICHE_RAW else [COMPANY_ID]
 NICHE_TEMPLATE = os.environ.get("NICHE_TEMPLATE", "").strip()   # какой index_<...>.html отдавать всем компаниям ниши
+
+# --- приостановка за неоплату -------------------------------------------------
+# Включается переменной окружения PAY_LOCK у КОНКРЕТНОГО деплоя (компании). Пока включена:
+# главная отдаёт только уведомление об оплате, любой /api/* отвечает 402. Снять = убрать
+# переменную и передеплоить (RESTORE/деплой), данные при этом не трогаются.
+_PAY_LOCK_RAW = (CFG.get("PAY_LOCK", "") or "").strip()
+PAY_LOCK = bool(_PAY_LOCK_RAW)
+PAY_LOCK_MSG = ("Платёж не обработан. Чтобы продолжить, пожалуйста, произведите оплату."
+                if _PAY_LOCK_RAW.lower() in ("1", "on", "true", "yes") else _PAY_LOCK_RAW)
+
+def _paylock_page():
+    """Страница-заглушка вместо кабинета: только уведомление, ничего кликабельного."""
+    # первое предложение — крупным заголовком, остальное — пояснением под ним
+    _head, _sub = PAY_LOCK_MSG, "Доступ к кабинету временно приостановлен."
+    if ". " in PAY_LOCK_MSG:
+        _head, _sub = PAY_LOCK_MSG.split(". ", 1)
+        _head += "."
+    return ("""<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Доступ приостановлен</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+       background:#0e1621;color:#e8eef6;font:400 16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;padding:24px}
+  .card{max-width:520px;width:100%;background:#16212e;border:1px solid #24313f;border-radius:18px;
+        padding:40px 34px;text-align:center;box-shadow:0 18px 50px rgba(0,0,0,.35)}
+  .ico{width:72px;height:72px;margin:0 auto 22px;border-radius:50%;background:#2a1d1d;border:1px solid #4a2a2a;
+       display:flex;align-items:center;justify-content:center;font-size:34px}
+  h1{margin:0 0 14px;font-size:23px;font-weight:600;letter-spacing:-.2px}
+  p{margin:0 0 10px;color:#9fb0c3;font-size:16px}
+  .note{margin-top:24px;padding-top:18px;border-top:1px solid #24313f;color:#6f8296;font-size:13.5px}
+</style></head><body>
+<div class="card">
+  <div class="ico">🔒</div>
+  <h1>__HEAD__</h1>
+  <p>__SUB__</p>
+  <div class="note">После поступления оплаты доступ восстановим — все данные сохранены.</div>
+</div></body></html>"""
+            .replace("__HEAD__", _head).replace("__SUB__", _sub)).encode("utf-8")
 
 # Компания ТЕКУЩЕГО запроса (не всего процесса!) — важно внутри ниши, где один процесс
 # обслуживает несколько компаний одновременно, каждая в своём потоке (ThreadingHTTPServer).
@@ -405,6 +447,32 @@ def _mem_release():
         ctypes.CDLL("libc.so.6").malloc_trim(0)   # только Linux (Render); на Mac молча пропустим
     except Exception:
         pass
+
+def _wb_caches():
+    """Кэши Wildberries одним списком: их объём не измерялся и не сбрасывался,
+    хотя они держат сырые строки продаж/заказов по каждой компании. Именно
+    этот необлагаемый рост доводил процесс до предела памяти Render."""
+    return (WB_CACHE, WB_SALES_CACHE, WB_ORDERS_CACHE, WB_FIN_CACHE, WB_ADS_CACHE)
+
+
+def _wb_cache_bytes():
+    try:
+        return sum(_blob_len(v) for c in _wb_caches() for v in c.values())
+    except Exception:
+        return 0
+
+
+def _wb_cache_clear():
+    """Сбросить кэши WB. Данные не теряются: подтянутся из Wildberries заново."""
+    freed = _wb_cache_bytes()
+    for c in _wb_caches():
+        try:
+            c.clear()
+        except Exception:
+            pass
+    _mem_release()
+    return freed
+
 
 def _mem_rss_mb():
     """Сколько памяти занимает процесс сейчас, МБ (для диагностики)."""
@@ -4630,6 +4698,29 @@ def wb_fin_fees_sums(company):
 # --- Wildberries: реклама (продвижение внутри поиска WB — read-only обзор) ---
 WB_HOSTS["advert"] = "https://advert-api.wildberries.ru"
 WB_ADS_CACHE = {}
+
+# --- Сторож памяти -----------------------------------------------------------
+# Render убивает процесс на 512 МБ (oomKilled), и в этот момент все компании
+# теряют доступ, а входящие вебхуки отбрасываются. Кэши WB — самая объёмная и
+# при этом полностью восстановимая часть, поэтому сбрасываем их заранее.
+MEM_SOFT_LIMIT_MB = int(CFG.get("MEM_SOFT_LIMIT_MB") or 400)
+
+
+def _mem_watchdog():
+    while True:
+        time.sleep(120)
+        try:
+            rss = _mem_rss_mb()
+            if rss and rss >= MEM_SOFT_LIMIT_MB:
+                freed = _wb_cache_clear()
+                print("[mem] %s МБ >= порога %s — сброшены кэши WB (%.1f МБ), стало %s МБ" % (
+                    rss, MEM_SOFT_LIMIT_MB, freed / 1048576.0, _mem_rss_mb()), flush=True)
+        except Exception as e:
+            print("[mem] сторож:", e, flush=True)
+
+
+threading.Thread(target=_mem_watchdog, daemon=True).start()
+
 WB_ADS_TTL = 900
 _WB_AD_STATUS = {-1: "удаляется", 4: "готова к запуску", 7: "завершена",
                   8: "отклонена", 9: "активна", 11: "приостановлена"}
@@ -7681,6 +7772,9 @@ class Handler(BaseHTTPRequestHandler):
         return self._user() is not None
 
     def do_POST(self):
+        # Приостановка за неоплату — записи тоже закрыты (см. PAY_LOCK).
+        if PAY_LOCK and self.path.startswith("/api/"):
+            return self._send(402, {"error": PAY_LOCK_MSG, "paylock": PAY_LOCK_MSG})
         # Bizmart: добавить пост в очередь
         if self.path.startswith("/api/bizmart/queue"):
             user = self._user()
@@ -8884,6 +8978,21 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, {"error": "не найдено"})
 
     def do_GET(self):
+        # Приостановка за неоплату: кабинет не отдаём, только уведомление (см. PAY_LOCK).
+        if PAY_LOCK and (self.path == "/" or self.path.startswith("/index.html")):
+            data = _paylock_page()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            try:
+                self.wfile.write(data)
+            except Exception:
+                pass
+            return
+        if PAY_LOCK and self.path.startswith("/api/"):
+            return self._send(402, {"error": PAY_LOCK_MSG, "paylock": PAY_LOCK_MSG})
         # Свой фронтенд для деплоев без отдельного статического хостинга (не-Бизмарт компании).
         if self.path == "/" or self.path.startswith("/index.html"):
             data = _index_html()
@@ -9230,6 +9339,7 @@ class Handler(BaseHTTPRequestHandler):
                 _freed = (sum(_blob_len(v) for v in _ig_outmedia.values())
                           + sum(_blob_len(v) for v in _audio_mp3_cache.values()))
                 _ig_outmedia.clear(); _audio_mp3_cache.clear()
+                _freed += _wb_cache_clear()
                 for _st in list(_assort_cache.values()) + list(_assort_range_cache.values()):
                     if not _st.get("refreshing"):
                         _freed += _blob_len(_st.get("data")); _st["data"] = None
@@ -9250,7 +9360,8 @@ class Handler(BaseHTTPRequestHandler):
                 "audio_mp3_mb": _sz(_audio_mp3_cache), "audio_mp3_n": len(_audio_mp3_cache),
                 "assort_snapshots_mb": round(_snap / 1048576.0, 1),
                 "assort_periods": len(_assort_cache), "assort_ranges": len(_assort_range_cache),
-                "wb_companies": len(WB_CACHE), "rent_docs": len(_RENT_DOC_CACHE),
+                "wb_companies": len(WB_CACHE), "wb_cache_mb": round(_wb_cache_bytes() / 1048576.0, 1),
+                "rent_docs": len(_RENT_DOC_CACHE),
             })
         if self.path.startswith("/api/ads/"):
             from urllib.parse import urlparse, parse_qs
