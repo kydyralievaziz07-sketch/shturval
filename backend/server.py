@@ -344,7 +344,6 @@ SECTION_OF = [
     ("/api/tg/broadcast", "chats"), ("/api/tg/clients", "clients"),
     ("/api/assistant", "ai"),
     ("/api/ads", "ads"),
-    ("/api/wbads", "wbads"),
     ("/api/wborders", "sales"),
     ("/api/wbfinance", "fin"),
     # Guzi Gold — самостоятельный склад ювелирки (без 1С/WB), см. gg_* ниже
@@ -448,12 +447,6 @@ def _mem_release():
     except Exception:
         pass
 
-def _wb_caches():
-    """Кэши Wildberries одним списком: их объём не измерялся и не сбрасывался,
-    хотя они держат сырые строки продаж/заказов по каждой компании. Именно
-    этот необлагаемый рост доводил процесс до предела памяти Render."""
-    return (WB_CACHE, WB_SALES_CACHE, WB_ORDERS_CACHE, WB_FIN_CACHE, WB_ADS_CACHE)
-
 
 def _deep_size(obj, _seen=None, _depth=0):
     """Примерный вес структуры в байтах. _blob_len считает только двоичные
@@ -478,25 +471,6 @@ def _deep_size(obj, _seen=None, _depth=0):
         return size
     except Exception:
         return 0
-
-
-def _wb_cache_bytes():
-    try:
-        return sum(_deep_size(c) for c in _wb_caches())
-    except Exception:
-        return 0
-
-
-def _wb_cache_clear():
-    """Сбросить кэши WB. Данные не теряются: подтянутся из Wildberries заново."""
-    freed = _wb_cache_bytes()
-    for c in _wb_caches():
-        try:
-            c.clear()
-        except Exception:
-            pass
-    _mem_release()
-    return freed
 
 
 def _mem_rss_mb():
@@ -4154,660 +4128,6 @@ def _wa_fallback_sweep():
     except Exception:
         pass
 
-# --- Wildberries: товары/цены для компаний-НЕ-Бизмарт (мульти-тенант, своя ветка) ---
-# Полностью отдельно от 1С: ключ доступа свой на компанию (WB_TOKEN_<COMPANY_ID заглавными>,
-# env Render), свой кэш (WB_CACHE, по company), свои функции. Данные Бизмарта эта ветка
-# не читает и не может прочитать — токена Бизмарта тут просто нет.
-WB_HOSTS = {
-    "content": "https://content-api.wildberries.ru",
-    "prices": "https://discounts-prices-api.wildberries.ru",
-    "stats": "https://statistics-api.wildberries.ru",
-    "analytics": "https://seller-analytics-api.wildberries.ru",
-}
-WB_CACHE = {}          # company -> {"t": unix, "goods": [...], "cats": {...}}
-WB_TTL = 300
-
-# Кэш выше живёт только в памяти процесса — каждый рестарт/деплой Render его теряет,
-# а WB Statistics API жёстко лимитирует частоту (быстро отвечает 429 после рестарта,
-# пока лимит не остынет). Поэтому дублируем в Supabase (kv_cache, сжато) — при холодном
-# старте отдаём последний известный снимок МГНОВЕННО, не дожидаясь живого WB.
-def _wb_backup_save(key, payload):
-    if not supa_on():
-        return
-    try:
-        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        packed = base64.b64encode(gzip.compress(raw, 6)).decode("ascii")
-        kv_save(key, {"z": packed, "t": int(time.time())})
-    except Exception:
-        pass
-
-def _wb_backup_load(key):
-    try:
-        v = kv_load(key)
-        if not v or not v.get("z"):
-            return None
-        raw = gzip.decompress(base64.b64decode(v["z"]))
-        return json.loads(raw.decode("utf-8"))
-    except Exception:
-        return None
-
-# Когда WB лимитирует (429), нужно помнить «до какого времени ждать» ПЕРЕЖИВАЯ рестарт —
-# иначе каждый деплой сбрасывает память и снова бьёт по ещё не остывшему лимиту, продлевая
-# его самому себе. Это отдельный, лёгкий (не сжатый) снимок — просто одно число.
-def _wb_next_try_save(key, next_try):
-    kv_save(key, {"next_try": next_try})
-
-def _wb_next_try_load(key):
-    v = kv_load(key)
-    return (v or {}).get("next_try", 0)
-
-def wb_token(company):
-    """Ключ WB читаем напрямую из окружения (WB_TOKEN_<COMPANY заглавными>), а не через
-    CFG — CFG собирает только заранее перечисленный список ключей (load_secret), и держать
-    там отдельную запись под КАЖДУЮ будущую WB-компанию не нужно."""
-    name = "WB_TOKEN_%s" % (company or "").upper()
-    return os.environ.get(name, CFG.get(name, "")).strip()
-
-def wb_connected(company):
-    return bool(wb_token(company))
-
-class WBRateLimited(Exception):
-    """WB отдала 429 — несём дальше, через сколько секунд можно снова пробовать
-    (X-Ratelimit-Reset), чтобы не тратить редкую попытку впустую."""
-    def __init__(self, retry_after):
-        self.retry_after = retry_after
-        super().__init__("Wildberries временно ограничила частоту запросов")
-
-def wb_request(company, host, path, method="GET", body=None):
-    token = wb_token(company)
-    if not token:
-        raise RuntimeError("Wildberries API не подключён для компании «%s» — нет ключа." % company)
-    url = WB_HOSTS[host] + path
-    data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
-    req = urllib.request.Request(url, data=data, method=method, headers={
-        "Authorization": token, "Content-Type": "application/json",
-        "User-Agent": "Shturval/1.0",
-    })
-    try:
-        with urllib.request.urlopen(req, timeout=90) as r:   # отчёт остатков — тяжёлый (тысячи строк)
-            return json.loads(r.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        if e.code == 429:
-            try:
-                retry_after = int(e.headers.get("X-Ratelimit-Reset") or e.headers.get("Retry-After") or 300)
-            except (TypeError, ValueError):
-                retry_after = 300
-            raise WBRateLimited(retry_after)
-        raise
-
-def _wb_fetch_raw(company):
-    """Тянет полный каталог карточек WB (постранично) + актуальные цены + реальные остатки
-    по складам (Statistics API, /api/v1/supplier/stocks — суммируем по nmID, склады не
-    показываем отдельно, это не нужно для сводки «Товары»)."""
-    goods = []
-    cats = {}
-    cursor = {"limit": 100}
-    for _ in range(50):    # защита от бесконечной пагинации
-        data = wb_request(company, "content", "/content/v2/get/cards/list?locale=ru", method="POST",
-                           body={"settings": {"cursor": cursor,
-                                               "filter": {"withPhoto": -1, "allowedCategoriesOnly": False},
-                                               "sort": {"ascending": False}}})
-        cards = data.get("cards") or []
-        for c in cards:
-            sid = c.get("subjectID")
-            sname = c.get("subjectName") or "Без категории"
-            if sid is not None:
-                cats[sid] = sname
-            goods.append({
-                "TITLE": c.get("title") or c.get("vendorCode") or "",
-                "CATEGORY_ID": sid,
-                "QUANTITY": 0,
-                "PRICE": 0.0,
-                "PRICES": [],
-                "_nm": c.get("nmID"),
-            })
-        cur = data.get("cursor") or {}
-        total = cur.get("total", 0)
-        if not cards or total < cursor.get("limit", 100):
-            break
-        cursor = {"limit": 100, "updatedAt": cur.get("updatedAt"), "nmID": cur.get("nmID")}
-    if goods:
-        try:
-            pdata = wb_request(company, "prices", "/api/v2/list/goods/filter?limit=1000&offset=0")
-            pmap = {}
-            for g in (pdata.get("data") or {}).get("listGoods", []) or []:
-                sizes = g.get("sizes") or []
-                # цена продажи — с учётом скидки (то, что реально платит покупатель)
-                price = sizes[0].get("discountedPrice") if sizes else g.get("discountedPrice")
-                pmap[g.get("nmID")] = _num(price)
-            _rate = rub_to_kgs()   # WB отдаёт цены в рублях — интерфейс Штурвала везде в сомах
-            for g in goods:
-                g["PRICE"] = round(pmap.get(g.get("_nm"), 0.0) * _rate, 2)
-        except Exception:
-            pass       # без цен каталог всё равно полезен (названия/категории/остатки)
-        try:
-            # Актуальный метод остатков (старый /api/v1/supplier/stocks отключён самой WB).
-            # Отдельный хост (seller-analytics-api) — свой лимит запросов, не мешает продажам/заказам.
-            sdata = wb_request(company, "analytics", "/api/analytics/v1/stocks-report/wb-warehouses",
-                                method="POST", body={})
-            qmap = {}
-            for s in (sdata.get("data") or {}).get("items", []) or []:
-                qmap[s.get("nmId")] = qmap.get(s.get("nmId"), 0) + _num(s.get("quantity"))
-            for g in goods:
-                g["QUANTITY"] = qmap.get(g.get("_nm"), 0)
-        except Exception:
-            pass       # без остатков каталог всё равно полезен (названия/категории/цены)
-    return goods, cats
-
-def _wb_refresh(company):
-    cur0 = WB_CACHE.get(company) or {}
-    if time.time() < cur0.get("next_try", 0):
-        return    # WB сама сказала, когда можно повторить — раньше не долбим
-    try:
-        goods, cats = _wb_fetch_raw(company)
-        WB_CACHE[company] = {"t": time.time(), "goods": goods, "cats": cats}
-        _wb_backup_save("wb_goods_" + company, {"goods": goods, "cats": cats})
-    except WBRateLimited as e:
-        cur = WB_CACHE.get(company) or {"goods": [], "cats": {}}
-        cur["t"] = time.time(); cur["error"] = str(e)
-        cur["next_try"] = time.time() + e.retry_after + 5
-        WB_CACHE[company] = cur
-        _wb_next_try_save("wb_goods_wait_" + company, cur["next_try"])
-    except Exception as e:
-        cur = WB_CACHE.get(company) or {"goods": [], "cats": {}}
-        cur["t"] = time.time()
-        cur["error"] = str(e)
-        WB_CACHE[company] = cur
-
-def _wb_ensure(company):
-    cur = WB_CACHE.get(company)
-    if cur is None:
-        b = _wb_backup_load("wb_goods_" + company)   # холодный старт — сразу отдаём снимок из базы
-        wait_until = _wb_next_try_load("wb_goods_wait_" + company)
-        base = {"t": 0.0, "goods": (b or {}).get("goods") or [], "cats": (b or {}).get("cats") or {},
-                "from_backup": bool(b)}
-        if wait_until and time.time() < wait_until:
-            # ещё не остыл лимит (переживает рестарт!) — не бьём по WB, просто отдаём снимок
-            base["next_try"] = wait_until
-            base["error"] = "Wildberries временно ограничила частоту запросов"
-            WB_CACHE[company] = base
-        elif b and b.get("goods"):
-            WB_CACHE[company] = base
-            threading.Thread(target=_wb_refresh, args=(company,), daemon=True).start()
-        else:
-            _wb_refresh(company)      # ни памяти, ни снимка в базе, лимит не активен — тянем живьём
-    elif time.time() - cur.get("t", 0) > WB_TTL and time.time() >= cur.get("next_try", 0):
-        threading.Thread(target=_wb_refresh, args=(company,), daemon=True).start()
-    return WB_CACHE.get(company) or {"goods": [], "cats": {}}
-
-def wb_get_goods(company):
-    return _wb_ensure(company).get("goods") or []
-
-def wb_get_categories(company):
-    return _wb_ensure(company).get("cats") or {}
-
-# --- Wildberries: продажи/чеки/выручка (Statistics API) ---
-# ВАЖНО: у WB нет закупочной цены товара → «прибыль» (в смысле маржи) отсюда посчитать
-# НЕЛЬЗЯ — честно показываем только выручку (то, что реально приходит продавцу — forPay)
-# и число чеков, без выдуманной себестоимости.
-WB_SALES_CACHE = {}     # company -> {"t": unix, "rows": [...], "error": ...}
-WB_SALES_TTL = 1800     # 30 минут — статистика WB и так обновляется у них раз в ~30 мин
-WB_SALES_DAYS = 90      # WB гарантирует хранение данных не более 90 дней
-
-def _wb_fetch_sales(company):
-    date_from = time.strftime("%Y-%m-%dT00:00:00", time.gmtime(time.time() - WB_SALES_DAYS * 86400))
-    data = wb_request(company, "stats", "/api/v1/supplier/sales?dateFrom=%s" % date_from)
-    return data if isinstance(data, list) else []
-
-def _wb_sales_refresh(company):
-    cur0 = WB_SALES_CACHE.get(company) or {}
-    if time.time() < cur0.get("next_try", 0):
-        return
-    try:
-        rows = _wb_fetch_sales(company)
-        WB_SALES_CACHE[company] = {"t": time.time(), "rows": rows}
-        _wb_backup_save("wb_sales_" + company, {"rows": rows})
-    except WBRateLimited as e:
-        cur = WB_SALES_CACHE.get(company) or {"rows": []}
-        cur["t"] = time.time(); cur["error"] = str(e)
-        cur["next_try"] = time.time() + e.retry_after + 5
-        WB_SALES_CACHE[company] = cur
-        _wb_next_try_save("wb_sales_wait_" + company, cur["next_try"])
-    except Exception as e:
-        cur = WB_SALES_CACHE.get(company) or {"rows": []}
-        cur["t"] = time.time()
-        cur["error"] = str(e)
-        WB_SALES_CACHE[company] = cur
-
-def wb_sales_cache(company):
-    cur = WB_SALES_CACHE.get(company)
-    if cur is None:
-        b = _wb_backup_load("wb_sales_" + company)
-        wait_until = _wb_next_try_load("wb_sales_wait_" + company)
-        base = {"t": 0.0, "rows": (b or {}).get("rows") or [], "from_backup": bool(b)}
-        if wait_until and time.time() < wait_until:
-            base["next_try"] = wait_until
-            base["error"] = "Wildberries временно ограничила частоту запросов"
-            WB_SALES_CACHE[company] = base
-        elif b and b.get("rows"):
-            WB_SALES_CACHE[company] = base
-            threading.Thread(target=_wb_sales_refresh, args=(company,), daemon=True).start()
-        else:
-            _wb_sales_refresh(company)         # ни памяти, ни снимка, лимит не активен — тянем живьём
-    elif time.time() - cur.get("t", 0) > WB_SALES_TTL and time.time() >= cur.get("next_try", 0):
-        threading.Thread(target=_wb_sales_refresh, args=(company,), daemon=True).start()
-    return WB_SALES_CACHE.get(company) or {"rows": []}
-
-_WB_NOTE = ("Прибыль недоступна — Wildberries не передаёт закупочную (себестоимость) цену товара, только выручку. "
-            "Суммы пересчитаны из рублей в сом по текущему курсу.")
-
-def wb_sales_day(company, date_str=None):
-    cache = wb_sales_cache(company)
-    rows = cache.get("rows") or []
-    day = date_str if (date_str and len(date_str) == 10) else time.strftime("%Y-%m-%d")
-    day_rows = [r for r in rows if (r.get("date") or "")[:10] == day]
-    s_rows = [r for r in day_rows if (r.get("saleID") or "").startswith("S")]
-    r_rows = [r for r in day_rows if (r.get("saleID") or "").startswith("R")]
-    _rate = rub_to_kgs()   # WB отдаёт суммы в рублях — интерфейс Штурвала везде в сомах
-    net = (sum(_num(x.get("forPay")) for x in s_rows) - sum(_num(x.get("forPay")) for x in r_rows)) * _rate
-    gross = sum(_num(x.get("priceWithDisc")) for x in s_rows) * _rate
-    ret_sum = sum(_num(x.get("forPay")) for x in r_rows) * _rate
-    receipts_out = []
-    for r in sorted(day_rows, key=lambda x: x.get("date") or "", reverse=True)[:200]:
-        is_ret = (r.get("saleID") or "").startswith("R")
-        ts = r.get("date") or ""
-        receipts_out.append({
-            "time": ts[11:16] if len(ts) >= 16 else "",
-            "num": (r.get("srid") or "")[:10],
-            "items": r.get("subject") or r.get("supplierArticle") or "",
-            "seller": r.get("warehouseName") or "Wildberries",
-            "pay": "Онлайн",
-            "total": round(_num(r.get("forPay")) * _rate * (-1 if is_ret else 1)),
-            "type": "Возврат" if is_ret else "",
-        })
-    res = {"date": day, "sales_count": len(s_rows), "net_sales": round(net),
-           "gross_sales": round(gross), "profit": None,
-           "avg_check": round(net / len(s_rows)) if s_rows else 0,
-           "returns_count": len(r_rows), "returns_sum": round(ret_sum),
-           "receipts": receipts_out, "note": _WB_NOTE}
-    if cache.get("error"):
-        res["stale"] = True
-        res["error"] = cache["error"]
-    return res
-
-def wb_sales_history(company, days=14):
-    cache = wb_sales_cache(company)
-    rows = cache.get("rows") or []
-    by_day = {}
-    for r in rows:
-        d = (r.get("date") or "")[:10]
-        if not d:
-            continue
-        agg = by_day.setdefault(d, {"sales": 0.0, "cnt": 0, "ret": 0.0})
-        sid = r.get("saleID") or ""
-        if sid.startswith("S"):
-            agg["sales"] += _num(r.get("forPay")); agg["cnt"] += 1
-        elif sid.startswith("R"):
-            agg["ret"] += _num(r.get("forPay"))
-    _rate = rub_to_kgs()
-    out = []
-    for d in sorted(by_day.keys())[-days:]:
-        v = by_day[d]
-        out.append({"date": d, "sales": round((v["sales"] - v["ret"]) * _rate), "profit": None,
-                    "receipts": v["cnt"], "returns_sum": round(v["ret"] * _rate)})
-    res = {"days": out, "note": _WB_NOTE}
-    if cache.get("error") and not rows:
-        res["error"] = cache["error"]
-    return res
-
-def wb_assortment(company, days=30):
-    cache = wb_sales_cache(company)
-    rows = cache.get("rows") or []
-    cutoff = time.strftime("%Y-%m-%d", time.gmtime(time.time() - days * 86400))
-    by_subj = {}
-    for r in rows:
-        if (r.get("date") or "")[:10] < cutoff:
-            continue
-        if not (r.get("saleID") or "").startswith("S"):
-            continue
-        s = r.get("subject") or "Без категории"
-        agg = by_subj.setdefault(s, {"sales": 0.0, "units": 0})
-        agg["sales"] += _num(r.get("forPay")); agg["units"] += 1
-    _rate = rub_to_kgs()
-    groups = [{"title": k, "sales": round(v["sales"] * _rate), "units": v["units"]}
-              for k, v in sorted(by_subj.items(), key=lambda i: -i[1]["sales"])]
-    res = {"period_days": days, "groups": groups, "floors": [], "tree": groups, "note": _WB_NOTE}
-    if cache.get("error") and not rows:
-        res["error"] = cache["error"]
-    return res
-
-# --- Wildberries: заказы (оформлено покупателем, ещё до подтверждённой продажи/выкупа) ---
-WB_ORDERS_CACHE = {}
-WB_ORDERS_TTL = 1800
-WB_ORDERS_DAYS = 90
-
-def _wb_fetch_orders(company):
-    date_from = time.strftime("%Y-%m-%dT00:00:00", time.gmtime(time.time() - WB_ORDERS_DAYS * 86400))
-    data = wb_request(company, "stats", "/api/v1/supplier/orders?dateFrom=%s" % date_from)
-    return data if isinstance(data, list) else []
-
-def _wb_orders_refresh(company):
-    cur0 = WB_ORDERS_CACHE.get(company) or {}
-    if time.time() < cur0.get("next_try", 0):
-        return
-    try:
-        rows = _wb_fetch_orders(company)
-        WB_ORDERS_CACHE[company] = {"t": time.time(), "rows": rows}
-        _wb_backup_save("wb_orders_" + company, {"rows": rows})
-    except WBRateLimited as e:
-        cur = WB_ORDERS_CACHE.get(company) or {"rows": []}
-        cur["t"] = time.time(); cur["error"] = str(e)
-        cur["next_try"] = time.time() + e.retry_after + 5
-        WB_ORDERS_CACHE[company] = cur
-        _wb_next_try_save("wb_orders_wait_" + company, cur["next_try"])
-    except Exception as e:
-        cur = WB_ORDERS_CACHE.get(company) or {"rows": []}
-        cur["t"] = time.time(); cur["error"] = str(e)
-        WB_ORDERS_CACHE[company] = cur
-
-def wb_orders_cache(company):
-    cur = WB_ORDERS_CACHE.get(company)
-    if cur is None:
-        b = _wb_backup_load("wb_orders_" + company)
-        wait_until = _wb_next_try_load("wb_orders_wait_" + company)
-        base = {"t": 0.0, "rows": (b or {}).get("rows") or [], "from_backup": bool(b)}
-        if wait_until and time.time() < wait_until:
-            base["next_try"] = wait_until
-            base["error"] = "Wildberries временно ограничила частоту запросов"
-            WB_ORDERS_CACHE[company] = base
-        elif b and b.get("rows"):
-            WB_ORDERS_CACHE[company] = base
-            threading.Thread(target=_wb_orders_refresh, args=(company,), daemon=True).start()
-        else:
-            _wb_orders_refresh(company)
-    elif time.time() - cur.get("t", 0) > WB_ORDERS_TTL and time.time() >= cur.get("next_try", 0):
-        threading.Thread(target=_wb_orders_refresh, args=(company,), daemon=True).start()
-    return WB_ORDERS_CACHE.get(company) or {"rows": []}
-
-def wb_orders_overview(company):
-    """Заказы (оформлено покупателем) по периодам — сумма/штук/доля отмен. Это НЕ то же самое,
-    что продажи (wb_sales_*): заказ может быть отменён или возвращён до выкупа."""
-    cache = wb_orders_cache(company)
-    rows = cache.get("rows") or []
-    today = _today_str(); wk = _days_ago(6); mo = today[:7]
-    _rate = rub_to_kgs()
-    def agg(pred):
-        sel = [r for r in rows if pred((r.get("date") or "")[:10])]
-        cancelled = [r for r in sel if r.get("isCancel")]
-        total = sum(_num(r.get("priceWithDisc")) for r in sel if not r.get("isCancel")) * _rate
-        return {"count": len(sel) - len(cancelled), "sum": round(total), "cancelled": len(cancelled)}
-    res = {"today": agg(lambda d: d == today), "week": agg(lambda d: d >= wk),
-           "month": agg(lambda d: (d or "")[:7] == mo),
-           "note": "Суммы пересчитаны из рублей в сом по текущему курсу."}
-    if cache.get("error") and not rows:
-        res["error"] = cache["error"]
-    return res
-
-def wb_sales_sums(company):
-    """Выручка по периодам для «Расходов» — profit=0 (у WB нет закупочной цены, маржу
-    посчитать нечем), иначе «чистая» строка в Расходах врала бы, приравнивая выручку к прибыли."""
-    cache = wb_sales_cache(company)
-    rows = cache.get("rows") or []
-    today = _today_str(); wk = _days_ago(6); mo = today[:7]
-    _rate = rub_to_kgs()
-    def net(pred):
-        s = sum(_num(r.get("forPay")) for r in rows if (r.get("saleID") or "").startswith("S") and pred((r.get("date") or "")[:10]))
-        rt = sum(_num(r.get("forPay")) for r in rows if (r.get("saleID") or "").startswith("R") and pred((r.get("date") or "")[:10]))
-        return round((s - rt) * _rate)
-    return {"today": {"sales": net(lambda d: d == today), "profit": 0},
-            "week": {"sales": net(lambda d: d >= wk), "profit": 0},
-            "month": {"sales": net(lambda d: (d or "")[:7] == mo), "profit": 0}}
-
-# --- Wildberries: финансовый отчёт о реализации (комиссия, логистика, хранение, штрафы) ---
-# Единственный источник, где WB реально показывает СВОИ удержания — раньше «Расходы»
-# могли показать только выручку (forPay), здесь же видно, ЧТО именно WB вычел и сколько
-# реально придёт на счёт (ppvz_for_pay). Себестоимость товара сюда не входит — это
-# отдельно (WB её не знает), поэтому «прибыль» в смысле маржи всё равно не считаем.
-WB_FIN_CACHE = {}
-WB_FIN_TTL = 3600          # отчёт формируется у WB раз в сутки — часа достаточно
-WB_FIN_DAYS = 14           # ответ WB на этот отчёт ОГРОМНЫЙ (~67 МБ за 31 день, ~60 сек скачивания!) —
-                            # короче диапазон = меньше риск для памяти/таймаута сервера
-_WB_FIN_INFLIGHT = set()   # company, для которых фоновый пересчёт уже идёт (не дублировать)
-_WB_FIN_LOCK = threading.Lock()
-_WB_FIN_FIELDS = ("ppvz_sales_commission", "delivery_rub", "storage_fee", "penalty",
-                   "deduction", "acceptance", "additional_payment", "ppvz_for_pay", "retail_amount")
-
-def _wb_fetch_finance_by_day(company):
-    """ВАЖНО: сырые строки (десятки тысяч, десятки МБ) НЕ храним и не кэшируем — сразу же,
-    построчно, складываем в маленькую сводку по дням (rr_dt → суммы). Иначе список из 28к+
-    строк годами копится в памяти процесса и рискует уронить сервер по памяти (уже роняло)."""
-    date_to = time.strftime("%Y-%m-%d", time.gmtime())
-    date_from = time.strftime("%Y-%m-%d", time.gmtime(time.time() - WB_FIN_DAYS * 86400))
-    by_day = {}
-    rrd_id = 0
-    for _ in range(20):     # защита от бесконечной пагинации
-        path = ("/api/v5/supplier/reportDetailByPeriod?dateFrom=%s&dateTo=%s&limit=100000&rrdid=%d"
-                % (date_from, date_to, rrd_id))
-        page = wb_request(company, "stats", path)
-        if not page:
-            break
-        for r in page:
-            d = (r.get("rr_dt") or r.get("date_from") or "")[:10]
-            if not d:
-                continue
-            agg = by_day.setdefault(d, dict.fromkeys(_WB_FIN_FIELDS, 0.0))
-            for f in _WB_FIN_FIELDS:
-                agg[f] += _num(r.get(f))
-        page_len = len(page)
-        last_rrd = page[-1].get("rrd_id", 0)
-        del page                # отпустить сырые строки этой страницы сразу же
-        if page_len < 100000 or not last_rrd or last_rrd == rrd_id:
-            break                # последняя страница — дальше данных нет
-        rrd_id = last_rrd
-    return by_day
-
-def _wb_fin_refresh(company):
-    cur0 = WB_FIN_CACHE.get(company) or {}
-    if time.time() < cur0.get("next_try", 0):
-        return
-    with _WB_FIN_LOCK:
-        if company in _WB_FIN_INFLIGHT:
-            return          # уже считается в другом потоке — не дублируем тяжёлый запрос
-        _WB_FIN_INFLIGHT.add(company)
-    try:
-        by_day = _wb_fetch_finance_by_day(company)
-        WB_FIN_CACHE[company] = {"t": time.time(), "by_day": by_day}
-        _wb_backup_save("wb_fin_" + company, {"by_day": by_day})
-    except WBRateLimited as e:
-        cur = WB_FIN_CACHE.get(company) or {"by_day": {}}
-        cur["t"] = time.time(); cur["error"] = str(e)
-        cur["next_try"] = time.time() + e.retry_after + 5
-        WB_FIN_CACHE[company] = cur
-        _wb_next_try_save("wb_fin_wait_" + company, cur["next_try"])
-    except Exception as e:
-        cur = WB_FIN_CACHE.get(company) or {"by_day": {}}
-        cur["t"] = time.time(); cur["error"] = str(e)
-        cur["next_try"] = time.time() + 120   # временная ошибка (напр. 503 от WB) — повтор через 2 мин,
-        WB_FIN_CACHE[company] = cur           # не через полный WB_FIN_TTL (час)
-    finally:
-        with _WB_FIN_LOCK:
-            _WB_FIN_INFLIGHT.discard(company)
-
-def wb_fin_cache(company):
-    cur = WB_FIN_CACHE.get(company)
-    if cur is None:
-        b = _wb_backup_load("wb_fin_" + company)
-        wait_until = _wb_next_try_load("wb_fin_wait_" + company)
-        base = {"t": 0.0, "by_day": (b or {}).get("by_day") or {}, "from_backup": bool(b)}
-        if wait_until and time.time() < wait_until:
-            base["next_try"] = wait_until
-            base["error"] = "Wildberries временно ограничила частоту запросов"
-            WB_FIN_CACHE[company] = base
-        else:
-            # Ответ WB на этот отчёт огромный (десятки МБ) — первый расчёт ВСЕГДА в фоне,
-            # не блокируя ответ, даже если нет ни памяти, ни снимка в базе.
-            base["computing"] = not bool(b)
-            WB_FIN_CACHE[company] = base
-            if company not in _WB_FIN_INFLIGHT:
-                threading.Thread(target=_wb_fin_refresh, args=(company,), daemon=True).start()
-    elif company not in _WB_FIN_INFLIGHT and time.time() >= cur.get("next_try", 0) and (
-            cur.get("error") or time.time() - cur.get("t", 0) > WB_FIN_TTL):
-        # ошибка (напр. временная 503 от WB) — повторяем раньше обычного TTL, не ждём час
-        threading.Thread(target=_wb_fin_refresh, args=(company,), daemon=True).start()
-    return WB_FIN_CACHE.get(company) or {"by_day": {}}
-
-def wb_finance_overview(company, days=14):
-    """Разбивка удержаний WB за период: комиссия, логистика, хранение, штрафы, доплаты,
-    и реальная сумма к выплате (то, что придёт на счёт). delivery_rub у WB — всегда в
-    рублях (переводим); остальные суммы уже в валюте отчёта (сом для этого продавца).
-    Суммируем по УЖЕ агрегированным дням (by_day) — не по сырым строкам."""
-    cache = wb_fin_cache(company)
-    by_day = cache.get("by_day") or {}
-    cutoff = time.strftime("%Y-%m-%d", time.gmtime(time.time() - days * 86400))
-    _rate = rub_to_kgs()
-    tot = dict.fromkeys(_WB_FIN_FIELDS, 0.0)
-    for d, agg in by_day.items():
-        if d < cutoff:
-            continue
-        for f in _WB_FIN_FIELDS:
-            tot[f] += agg.get(f, 0.0)
-    commission = tot["ppvz_sales_commission"]
-    logistics = tot["delivery_rub"] * _rate
-    storage = tot["storage_fee"]
-    penalty = tot["penalty"]
-    deduction = tot["deduction"]
-    acceptance = tot["acceptance"]
-    additional = tot["additional_payment"]
-    payout = tot["ppvz_for_pay"]
-    retail = tot["retail_amount"]
-    res = {
-        "period_days": days,
-        "retail_amount": round(retail),
-        "commission": round(commission),
-        "logistics": round(logistics),
-        "storage": round(storage),
-        "penalty": round(penalty),
-        "deduction": round(deduction),
-        "acceptance": round(acceptance),
-        "additional_payment": round(additional),
-        "payout": round(payout),
-        "note": "Расходы — реальные удержания Wildberries из финансового отчёта о реализации. "
-                "Себестоимость товара сюда не входит (WB её не знает).",
-    }
-    if cache.get("error") and not by_day:
-        res["error"] = cache["error"]
-    if cache.get("computing") and not by_day:
-        res["computing"] = True
-        res["note"] = "Считаю отчёт за период — первый раз занимает пару минут. Обновите страницу чуть позже."
-    return res
-
-def wb_fin_fees_sums(company):
-    """Реальные удержания WB (комиссия+логистика+хранение+штрафы+прочее, БЕЗ выплаты)
-    по периодам — чтобы попасть в общую строку «Расходы» вверху Финансов, а не только
-    в отдельную карточку. Данные есть только за WB_FIN_DAYS дней — за пределами этого
-    окна «месяц» будет недосчитан (честно, а не выдумано)."""
-    by_day = wb_fin_cache(company).get("by_day") or {}
-    today = _today_str(); wk = _days_ago(6); mo = today[:7]
-    _rate = rub_to_kgs()
-    cost_fields = ("ppvz_sales_commission", "storage_fee", "penalty", "deduction")
-    def fees_for(d):
-        agg = by_day.get(d)
-        if not agg:
-            return 0.0
-        return sum(agg.get(f, 0.0) for f in cost_fields) + agg.get("delivery_rub", 0.0) * _rate
-    def total(pred):
-        return round(sum(fees_for(d) for d in by_day if pred(d)))
-    return {"today": total(lambda d: d == today), "week": total(lambda d: d >= wk),
-            "month": total(lambda d: (d or "")[:7] == mo)}
-
-# --- Wildberries: реклама (продвижение внутри поиска WB — read-only обзор) ---
-WB_HOSTS["advert"] = "https://advert-api.wildberries.ru"
-WB_ADS_CACHE = {}
-
-# --- Сторож памяти -----------------------------------------------------------
-# Render убивает процесс на 512 МБ (oomKilled), и в этот момент все компании
-# теряют доступ, а входящие вебхуки отбрасываются. Кэши WB — самая объёмная и
-# при этом полностью восстановимая часть, поэтому сбрасываем их заранее.
-MEM_SOFT_LIMIT_MB = int(CFG.get("MEM_SOFT_LIMIT_MB") or 400)
-
-
-def _mem_watchdog():
-    while True:
-        time.sleep(120)
-        try:
-            rss = _mem_rss_mb()
-            if rss and rss >= MEM_SOFT_LIMIT_MB:
-                freed = _wb_cache_clear()
-                print("[mem] %s МБ >= порога %s — сброшены кэши WB (%.1f МБ), стало %s МБ" % (
-                    rss, MEM_SOFT_LIMIT_MB, freed / 1048576.0, _mem_rss_mb()), flush=True)
-        except Exception as e:
-            print("[mem] сторож:", e, flush=True)
-
-
-threading.Thread(target=_mem_watchdog, daemon=True).start()
-
-WB_ADS_TTL = 900
-_WB_AD_STATUS = {-1: "удаляется", 4: "готова к запуску", 7: "завершена",
-                  8: "отклонена", 9: "активна", 11: "приостановлена"}
-_WB_AD_TYPE = {4: "в каталоге", 5: "в карточке товара", 6: "в поиске",
-               7: "в рекомендациях", 8: "автоматическая", 9: "аукцион"}
-
-def _wb_ads_refresh(company):
-    cur0 = WB_ADS_CACHE.get(company) or {}
-    if time.time() < cur0.get("next_try", 0):
-        return
-    try:
-        data = wb_request(company, "advert", "/adv/v1/promotion/count")
-        groups = []
-        for g in (data.get("adverts") or []):
-            groups.append({
-                "type": g.get("type"), "type_label": _WB_AD_TYPE.get(g.get("type"), "тип %s" % g.get("type")),
-                "status": g.get("status"), "status_label": _WB_AD_STATUS.get(g.get("status"), "статус %s" % g.get("status")),
-                "count": g.get("count", 0),
-                "campaigns": [{"id": a.get("advertId"), "changed": a.get("changeTime")}
-                              for a in (g.get("advert_list") or [])][:100],
-            })
-        active = sum(g["count"] for g in groups if g["status"] == 9)
-        total = sum(g["count"] for g in groups)
-        WB_ADS_CACHE[company] = {"t": time.time(), "groups": groups, "active": active, "total": total}
-        _wb_backup_save("wb_ads_" + company, {"groups": groups, "active": active, "total": total})
-    except WBRateLimited as e:
-        cur = WB_ADS_CACHE.get(company) or {"groups": [], "active": 0, "total": 0}
-        cur["t"] = time.time(); cur["error"] = str(e)
-        cur["next_try"] = time.time() + e.retry_after + 5
-        WB_ADS_CACHE[company] = cur
-        _wb_next_try_save("wb_ads_wait_" + company, cur["next_try"])
-    except Exception as e:
-        cur = WB_ADS_CACHE.get(company) or {"groups": [], "active": 0, "total": 0}
-        cur["t"] = time.time(); cur["error"] = str(e)
-        WB_ADS_CACHE[company] = cur
-
-def wb_ads_overview(company):
-    if not wb_connected(company):
-        return {"has_token": False}
-    cur = WB_ADS_CACHE.get(company)
-    if cur is None:
-        b = _wb_backup_load("wb_ads_" + company)
-        wait_until = _wb_next_try_load("wb_ads_wait_" + company)
-        base = {"t": 0.0, "groups": (b or {}).get("groups") or [], "active": (b or {}).get("active", 0),
-                "total": (b or {}).get("total", 0), "from_backup": bool(b)}
-        if wait_until and time.time() < wait_until:
-            base["next_try"] = wait_until
-            base["error"] = "Wildberries временно ограничила частоту запросов"
-            WB_ADS_CACHE[company] = base
-        elif b:
-            WB_ADS_CACHE[company] = base
-            threading.Thread(target=_wb_ads_refresh, args=(company,), daemon=True).start()
-        else:
-            _wb_ads_refresh(company)
-    elif time.time() - cur.get("t", 0) > WB_ADS_TTL and time.time() >= cur.get("next_try", 0):
-        threading.Thread(target=_wb_ads_refresh, args=(company,), daemon=True).start()
-    cur = WB_ADS_CACHE.get(company) or {"groups": [], "active": 0, "total": 0}
-    res = {"has_token": True, "active": cur.get("active", 0), "total": cur.get("total", 0),
-           "groups": cur.get("groups", [])}
-    if cur.get("error"):
-        res["error"] = cur["error"]
-    return res
 
 # --- 1С (Yaros DataGate): товары, остатки, цены ---
 import base64
@@ -4913,10 +4233,11 @@ def _refresh_catalog(force=False):
 def get_goods(company=None):
     """Мгновенно отдаёт каталог из памяти. Если устарел — обновляет ФОНОМ, не задерживая ответ.
     Ждать (~50 сек) приходится только при самой первой загрузке, когда кэша ещё нет.
-    Компания, отличная от Бизмарта (например, joru/Wildberries), идёт по СВОЕЙ, полностью
-    отдельной ветке (см. wb_get_goods) — общий кэш/1С этой веткой не трогается."""
+    У компаний, отличных от Бизмарта, своего источника товаров нет (Wildberries
+    убран) — общий кэш/1С такой веткой не трогается."""
     if company and company != BIZMART_ID:
-        return wb_get_goods(company)
+        # Источник товаров для этой компании не подключён (Wildberries убран).
+        return {"goods": [], "cats": {}, "error": "Источник товаров не подключён"}
     if _goods["goods"] is not None:
         if time.time() >= _goods.get("next_try", 0) and not _goods["refreshing"]:
             threading.Thread(target=_refresh_catalog, daemon=True).start()
@@ -4942,7 +4263,7 @@ def get_goods(company=None):
 
 def get_categories(company=None):
     if company and company != BIZMART_ID:
-        return wb_get_categories(company)
+        return {}
     if _goods["cats"] is None:
         try:
             _goods["cats"] = _fetch_cats()
@@ -5183,10 +4504,7 @@ def build_inventory(company=None):
         _inv_res["cost_value"] = None
         _inv_res["margin_value"] = None
         _inv_res["no_cost_data"] = True
-        wbc = WB_CACHE.get(company) or {}
-        if wbc.get("error"):
-            _inv_res["stale"] = True
-            _inv_res["error"] = wbc["error"]
+        _inv_res["error"] = "Источник данных не подключён"
         return _inv_res
     if _goods.get("from_backup"):      # каталог взят из резервной копии (1С недоступна)
         _inv_res["stale"] = True
@@ -6900,16 +6218,15 @@ def expenses_view(company=None):
     if co != BIZMART_ID and co not in GG_CATALOG_COMPANIES:
         # реальные удержания WB (комиссия/логистика/хранение/штрафы) — тоже расходы,
         # прибавляем к тому, что владелец внёс вручную, чтобы «Расходы» вверху были полными
-        wb_fees = wb_fin_fees_sums(co)
-        for p in ("today", "week", "month"):
-            e[p] = round(e[p] + wb_fees.get(p, 0))
+        pass   # внешних удержаний нет: Wildberries отключён
     cat = {}
     for r in rows:
         if (r.get("date", "") or "")[:7] == mo:
             c = (r.get("category") or "Без категории")
             cat[c] = cat.get(c, 0) + _num(r.get("amount"))
     by_cat = [{"category": k, "amount": round(v)} for k, v in sorted(cat.items(), key=lambda i: -i[1])]
-    ss = sales_sums() if co == BIZMART_ID else (gg_sales_sums(co) if co in GG_CATALOG_COMPANIES else wb_sales_sums(co))
+    _empty = {p: {"sales": 0, "profit": 0} for p in ("today", "week", "month")}
+    ss = sales_sums() if co == BIZMART_ID else (gg_sales_sums(co) if co in GG_CATALOG_COMPANIES else _empty)
     periods = {}
     for p in ("today", "week", "month"):
         periods[p] = {"sales": ss[p]["sales"], "profit": ss[p]["profit"],
@@ -6947,9 +6264,6 @@ def expenses_view(company=None):
     # когда строк за месяц больше 200). Итоговые суммы всё равно берём из periods (по ВСЕМ строкам).
     res = {"expenses": rows[:10000], "by_category": by_cat, "periods": periods,
            "by_month": by_month, "sales_by_day": sales_by_day, "total_count": len(rows)}
-    if co != BIZMART_ID and co not in GG_CATALOG_COMPANIES:
-        res["note"] = ("«Расходы» включают и то, что вы внесли вручную, и реальные удержания "
-                        "Wildberries (комиссия/логистика/хранение/штрафы). " + _WB_NOTE)
     return res
 
 # ================== GUZI GOLD: самостоятельный склад ювелирки (без 1С/WB) ==================
@@ -7026,7 +6340,7 @@ def gg_analytics(co):
             "sold_by_category": sorted(sold.values(), key=lambda x: x["category"])}
 
 def gg_sales_sums(co):
-    """Выручка/прибыль по периодам — для «Финансы» (тот же формат, что sales_sums/wb_sales_sums)."""
+    """Выручка/прибыль по периодам — для «Финансы» (тот же формат, что sales_sums)."""
     today = _today_str(); wk = _days_ago(6); mo = today[:7]
     rows = []
     if supa_on():
@@ -9282,10 +8596,8 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 days = 30
             if _co != BIZMART_ID:
-                try:
-                    return self._send(200, wb_assortment(_co, days))
-                except Exception as e:
-                    return self._send(200, {"error": "Нет связи с Wildberries: " + str(e), "groups": []})
+                # Wildberries отключён: у этой компании нет источника данных.
+                return self._send(200, {"error": "Источник данных не подключён"})
             try:
                 if _rf and _rt:   # произвольный период с календаря
                     return self._send(200, get_assortment_range(_rf, _rt))
@@ -9300,20 +8612,16 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 days = 14
             if _co != BIZMART_ID:
-                try:
-                    return self._send(200, wb_sales_history(_co, max(1, min(days, 400))))
-                except Exception as e:
-                    return self._send(200, {"days": [], "error": "Нет связи с Wildberries: " + str(e)})
+                # Wildberries отключён: у этой компании нет источника данных.
+                return self._send(200, {"error": "Источник данных не подключён"})
             return self._send(200, sales_history(max(1, min(days, 400))))
         if self.path.startswith("/api/sales"):
             from urllib.parse import urlparse, parse_qs
             _co = (self._user() or {}).get("company") or COMPANY_ID
             date = (parse_qs(urlparse(self.path).query).get("date", [""])[0] or "").strip()
             if _co != BIZMART_ID:
-                try:
-                    return self._send(200, wb_sales_day(_co, date))
-                except Exception as e:
-                    return self._send(200, {"error": "Нет связи с Wildberries: " + str(e), "receipts": []})
+                # Wildberries отключён: у этой компании нет источника данных.
+                return self._send(200, {"error": "Источник данных не подключён"})
             try:
                 return self._send(200, sales_day(date))
             except Exception as e:
@@ -9326,19 +8634,12 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send(200, {"items": [], "error": str(e)})
         if self.path.startswith("/api/wbads"):
-            _co = (self._user() or {}).get("company") or COMPANY_ID
-            try:
-                return self._send(200, wb_ads_overview(_co))
-            except Exception as e:
-                return self._send(200, {"has_token": True, "error": str(e), "groups": []})
+            # Заглушка: Wildberries убран, маршрут оставлен ради старого фронта.
+            return self._send(200, {"has_token": False, "groups": [], "active": 0, "total": 0})
         if self.path.startswith("/api/wborders"):
-            _co = (self._user() or {}).get("company") or COMPANY_ID
-            if _co == BIZMART_ID:
-                return self._send(200, {"today": {}, "week": {}, "month": {}})
-            try:
-                return self._send(200, wb_orders_overview(_co))
-            except Exception as e:
-                return self._send(200, {"error": str(e)})
+            # Заглушка: Wildberries убран, но маршрут оставлен, чтобы старый
+            # фронт получал нули, а не 404.
+            return self._send(200, {"today": {}, "week": {}, "month": {}})
         if self.path.startswith("/api/wbfinance"):
             from urllib.parse import urlparse, parse_qs
             _co = (self._user() or {}).get("company") or COMPANY_ID
@@ -9349,10 +8650,8 @@ class Handler(BaseHTTPRequestHandler):
                 days = int(parse_qs(urlparse(self.path).query).get("days", ["14"])[0])
             except ValueError:
                 days = 14
-            try:
-                return self._send(200, wb_finance_overview(_co, max(1, min(days, WB_FIN_DAYS))))
-            except Exception as e:
-                return self._send(200, {"error": str(e)})
+            return self._send(200, {"period_days": days, "retail_amount": 0, "commission": 0,
+                                     "logistics": 0, "storage": 0, "penalty": 0, "payout": 0})
         if self.path.startswith("/api/_mem"):
             # Диагностика расхода памяти: сколько занимает процесс и что держат кэши.
             _u = self._user()
@@ -9364,7 +8663,6 @@ class Handler(BaseHTTPRequestHandler):
                 _freed = (sum(_blob_len(v) for v in _ig_outmedia.values())
                           + sum(_blob_len(v) for v in _audio_mp3_cache.values()))
                 _ig_outmedia.clear(); _audio_mp3_cache.clear()
-                _freed += _wb_cache_clear()
                 for _st in list(_assort_cache.values()) + list(_assort_range_cache.values()):
                     if not _st.get("refreshing"):
                         _freed += _blob_len(_st.get("data")); _st["data"] = None
@@ -9385,7 +8683,6 @@ class Handler(BaseHTTPRequestHandler):
                 "audio_mp3_mb": _sz(_audio_mp3_cache), "audio_mp3_n": len(_audio_mp3_cache),
                 "assort_snapshots_mb": round(_snap / 1048576.0, 1),
                 "assort_periods": len(_assort_cache), "assort_ranges": len(_assort_range_cache),
-                "wb_companies": len(WB_CACHE), "wb_cache_mb": round(_wb_cache_bytes() / 1048576.0, 1),
                 "rent_docs": len(_RENT_DOC_CACHE),
             })
         if self.path.startswith("/api/ads/"):
