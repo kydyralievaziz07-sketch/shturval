@@ -674,7 +674,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.82.0<br>Чек-лист кнопок: оживлены «+ аванс»/«+ премия», убрано двойное «сом сом» в зарплате, вкладки больше не падают из-за числа в текстовом поле
+      Штурвал v4.83.0<br>Поиск больше не «слетает»: при наборе сохраняются фокус, курсор и место на странице — в арендах, расходах аренды и расходах магазина
       <br><br><span onclick="hardReload()" style="cursor:pointer;color:#4f8cff;text-decoration:underline">🔄 Обновить приложение</span>
       <span style="color:var(--muted)"> — если новое не появилось</span>
   </aside>
@@ -3292,7 +3292,7 @@
   }
   // Поиск во вкладке «Расходы»: по категории, заметке, сумме и дате
   let expQuery='';
-  function setExpQuery(q){ expQuery=(q||'').trim().toLowerCase(); renderExpensesList(); }
+  function setExpQuery(q){ expQuery=(q||'').trim().toLowerCase(); keepQ('exp-q', renderExpensesList); }
   function clearExpQuery(){ const i=document.getElementById('exp-q'); if(i) i.value=''; setExpQuery(''); }
   // «искать по всей истории» — ставим период от самой ранней записи до сегодня
   function expSearchAll(){
@@ -8611,7 +8611,33 @@
 
   // ---------- АРЕНДЫ ----------
   var RENT_LF='';
-  function rentListFilter(v){ RENT_LF=(v||'').toLowerCase().trim(); renderRentList(); }
+  // Поиск не должен «слетать» (27.08.2026). Перерисовка через innerHTML убивает <input>,
+  // Safari на айфоне создаёт новый, уводит на него фокус и прокручивает страницу — шапка
+  // уезжала вверх на каждой букве. Возвращаем фокус, каретку и позицию прокрутки.
+  function keepQ(id, render){
+    var el=document.getElementById(id);
+    var was=(document.activeElement===el), pos=null;
+    if(el){ try{ pos=el.selectionStart; }catch(e){} }
+    // прокручивается не окно, а <main class="main"> (overflow-y:auto) — ищем настоящий контейнер
+    var box=el;
+    while(box && box!==document.body){
+      var ov=getComputedStyle(box).overflowY;
+      if((ov==='auto'||ov==='scroll') && box.scrollHeight>box.clientHeight+4) break;
+      box=box.parentElement;
+    }
+    if(box===document.body) box=null;
+    var bt=box?box.scrollTop:0, y=window.pageYOffset||document.documentElement.scrollTop||0;
+    render();
+    var n=document.getElementById(id);
+    if(n && was){
+      try{ n.focus({preventScroll:true}); }catch(e){ n.focus(); }
+      try{ if(pos!=null) n.setSelectionRange(pos,pos); }catch(e){}
+    }
+    if(box) box.scrollTop=bt;
+    if(y) window.scrollTo(0,y);
+  }
+
+  function rentListFilter(v){ RENT_LF=(v||'').toLowerCase().trim(); keepQ('rent-list-q', renderRentList); }
   function renderRentList(){
     var b=document.getElementById('rent-list'); if(!b) return;
     var all=rentD().rentals||[];
@@ -8641,14 +8667,14 @@
     var foot='<tfoot><tr><td '+RT_TD+' colspan="6" style="text-align:right;color:var(--muted)">Итого ('+list.length+'):</td>'+
       '<td '+RT_TD+' style="text-align:right"><b>'+fmt(totSum)+'</b></td><td '+RT_TD+'></td>'+
       '<td '+RT_TD+' style="text-align:right;color:'+(totDebt>0?'var(--red)':'var(--muted)')+'"><b>'+fmt(totDebt)+'</b></td><td '+RT_TD+'></td><td '+RT_TD+'></td></tr></tfoot>';
-    var search='<input type="text" placeholder="🔎 поиск: модель, арендатор, статус, дата…" value="'+esc(RENT_LF)+'" oninput="rentListFilter(this.value)" style="width:100%;max-width:420px;margin-bottom:12px;padding:9px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:14px">';
+    var search='<input id="rent-list-q" type="text" placeholder="🔎 поиск: модель, арендатор, статус, дата…" value="'+esc(RENT_LF)+'" oninput="rentListFilter(this.value)" style="width:100%;max-width:420px;margin-bottom:12px;padding:9px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:14px">';
     b.innerHTML=rAddBtn('rental','Аренда')+rentExportBtn('expRentList()')+'<div class="note" style="margin-bottom:12px">🔑 Аренды — всего '+all.length+' (активные сверху по дате сдачи, затем завершённые по дате). 🟡 за день до сдачи · 🟠 в день сдачи · 🔴 просрочка. Суммы в '+MUNIT()+'.</div>'+search+
       rtable(['Кто добавил','Модель','Арендатор','Начало','Конец','Дней','Сумма','Получено','Долг','Статус',''], rows, foot);
   }
 
   // ---------- РАСХОДЫ ----------
   var RENT_EF='';
-  function rentExpFilter(v){ RENT_EF=(v||'').toLowerCase().trim(); renderRentExp(); }
+  function rentExpFilter(v){ RENT_EF=(v||'').toLowerCase().trim(); keepQ('rent-exp-q', renderRentExp); }
   function renderRentExp(){
     var b=document.getElementById('rent-exp'); if(!b) return;
     var all=rentD().expenses||[];
@@ -8664,7 +8690,7 @@
     }).join('');
     var foot='<tfoot><tr><td '+RT_TD+' colspan="4" style="text-align:right;color:var(--muted)">Итого ('+list.length+'):</td>'+
       '<td '+RT_TD+' style="text-align:right"><b>'+fmt(tot)+'</b></td><td '+RT_TD+'></td></tr></tfoot>';
-    var search='<input type="text" placeholder="🔎 поиск: категория, описание, машина…" value="'+esc(RENT_EF)+'" oninput="rentExpFilter(this.value)" style="width:100%;max-width:420px;margin-bottom:12px;padding:9px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:14px">';
+    var search='<input id="rent-exp-q" type="text" placeholder="🔎 поиск: категория, описание, машина…" value="'+esc(RENT_EF)+'" oninput="rentExpFilter(this.value)" style="width:100%;max-width:420px;margin-bottom:12px;padding:9px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:14px">';
     // расходы по месяцам (видно и сотрудникам)
     var mr=(rentD().months||[]).map(function(m){ return '<tr><td '+RT_TD+'><b>'+esc(m.month)+'</b></td><td '+RT_TD+' style="text-align:right">'+esc(m.expenses||'0')+' '+MUNIT()+'</td></tr>'; }).join('');
     var byMonth=mr?('<details style="margin-top:14px"><summary style="cursor:pointer;color:var(--muted);font-size:13px">📅 Расходы по месяцам</summary><div style="margin-top:8px">'+rtable(['Месяц','Расходы'], mr)+'</div></details>'):'';
