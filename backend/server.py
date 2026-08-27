@@ -326,6 +326,7 @@ SECTION_OF = [
     ("/api/categories", "prod"), ("/api/add-product", "prod"),
     ("/api/assortment", "sales"),
     ("/api/sales-history", "sales"), ("/api/sales", "sales"),
+    ("/api/forecast", "sales"),
     ("/api/suppliers", "supl"), ("/api/expenses", "fin"),
     ("/api/rent", "rent"),
     ("/api/track", "rent"),
@@ -4849,6 +4850,189 @@ def sales_history(days=14):
     except Exception as e:
         return {"days": [], "error": str(e)}
 
+
+# ==================== ПРОГНОЗ ВЫРУЧКИ ====================
+# Модель выбрана бэктестом на реальных данных (август 2026): линейный тренд по
+# 14 дням × коэффициент дня недели даёт среднюю ошибку ~11% и НЕ занижает
+# систематически. Медиана за 28 дней ошибалась на 28% и промахивалась вниз
+# каждый день подряд — длинная медиана не успевает за растущим сезоном.
+_FC_CURVE_TTL = 7 * 86400          # форма дня меняется медленно — кэш на неделю
+_FC_DOW_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+
+
+def _fc_dow(ds):
+    """День недели даты 'ГГГГ-ММ-ДД': 0=Пн … 6=Вс."""
+    import datetime
+    return datetime.date.fromisoformat(ds[:10]).weekday()
+
+
+def _fc_med(vals):
+    v = sorted(float(x) for x in vals)
+    if not v:
+        return 0.0
+    n = len(v)
+    return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2.0
+
+
+def _fc_hour_curve(wd, today_str):
+    """Доля дневной выручки, накопленная к каждому часу, для дня недели wd.
+    Считаем по трём последним таким же дням недели и кэшируем: обход чеков
+    тяжёлый, а форма дня стабильна."""
+    key = "fc_curve_%d" % int(wd)
+    c = kv_load(key)
+    if isinstance(c, dict) and c.get("shares") and (time.time() - _num(c.get("ts"))) < _FC_CURVE_TTL:
+        try:
+            return {int(k): float(v) for k, v in c["shares"].items()}
+        except Exception:
+            pass
+    import datetime
+    d0 = datetime.date.fromisoformat(today_str[:10])
+    acc = {}
+    got = 0
+    for i in range(1, 6):
+        if got >= 3:
+            break
+        d = (d0 - datetime.timedelta(days=7 * i)).isoformat()
+        try:
+            f, t = _day_bounds(d)
+            recs = (yaros_get("/receipts/v2?from=%d&to=%d" % (f, t)) or {}).get("receipts", []) or []
+        except Exception:
+            continue
+        by_h = [0.0] * 24
+        tot = 0.0
+        for x in recs:
+            v = _num(x.get("receiptTotal"))
+            if v <= 0:                     # возвраты форму дня не описывают
+                continue
+            h = time.localtime(int(_num(x.get("dateTime")))).tm_hour
+            by_h[h] += v
+            tot += v
+        if tot <= 0:
+            continue
+        got += 1
+        s = 0.0
+        for h in range(24):
+            s += by_h[h]
+            acc.setdefault(h, []).append(s / tot)
+    if not got:
+        return None
+    shares = {h: _fc_med(v) for h, v in acc.items()}
+    try:
+        kv_save(key, {"ts": int(time.time()), "shares": {str(k): v for k, v in shares.items()}})
+    except Exception:
+        pass
+    return shares
+
+
+def _fc_level(vals):
+    """Уровень на следующий день по линейному тренду последних 14 значений."""
+    n = len(vals)
+    if n < 2:
+        return vals[-1] if vals else 0.0
+    xs = list(range(n))
+    mx = sum(xs) / n
+    my = sum(vals) / n
+    den = sum((x - mx) ** 2 for x in xs) or 1.0
+    b = sum((xs[i] - mx) * (vals[i] - my) for i in range(n)) / den
+    return max(0.0, my + b * (n - mx))
+
+
+def _fc_dow_k(hist, wd, win=56):
+    """Во сколько раз этот день недели сильнее обычного (по последним 8 неделям)."""
+    pool = hist[-win:]
+    same = [v for d, v in pool if _fc_dow(d) == wd]
+    allv = [v for d, v in pool]
+    if not same or not allv:
+        return 1.0
+    base = _fc_med(allv)
+    return (_fc_med(same) / base) if base else 1.0
+
+
+def _fc_predict(hist, target_date):
+    """Прогноз на дату по истории [(дата, выручка)] строго ДО неё."""
+    if len(hist) < 21:
+        return None
+    return _fc_level([v for _, v in hist[-14:]]) * _fc_dow_k(hist, _fc_dow(target_date))
+
+
+def build_forecast():
+    """Прогноз выручки на сегодня и на конец месяца + честная оценка точности.
+    Точность считаем бэктестом: прогоняем модель по последним 14 дням, каждый раз
+    зная только прошлое, и сравниваем с фактом."""
+    h = (sales_history(120) or {}).get("days") or []
+    hist = [(r.get("date"), _num(r.get("sales"))) for r in h if r.get("date") and _num(r.get("sales")) > 0]
+    hist.sort(key=lambda x: x[0])
+    if len(hist) < 21:
+        return {"error": "Мало истории для прогноза — нужно хотя бы 3 недели продаж."}
+
+    today = _today_str()
+    past = [x for x in hist if x[0] < today]
+    so_far = next((v for d, v in hist if d == today), 0.0)
+
+    # --- точность на последних 14 полных днях ---
+    errs = []
+    for i in range(max(21, len(past) - 14), len(past)):
+        d, actual = past[i]
+        f = _fc_predict(past[:i], d)
+        if f and actual > 0:
+            errs.append(abs(f - actual) / actual * 100.0)
+    mape = round(sum(errs) / len(errs), 1) if errs else None
+    hits = sum(1 for e in errs if e <= 10)
+
+    # --- сегодня: дневная модель, при возможности уточняем по времени суток ---
+    daily = _fc_predict(past, today) or 0.0
+    method = "по тренду и дню недели"
+    fc_today = daily
+    share = None
+    hour = time.localtime().tm_hour
+    if so_far > 0:
+        curve = _fc_hour_curve(_fc_dow(today), today)
+        # ранним утром доля крошечная — деление на неё даёт дикий разброс
+        if curve and curve.get(hour, 0) >= 0.15:
+            share = curve[hour]
+            fc_today = so_far / share
+            method = "по времени суток (%d:00 — обычно %d%% дня)" % (hour, round(share * 100))
+    fc_today = max(fc_today, so_far)      # прогноз не может быть меньше уже набранного
+
+    # --- месяц: факт + прогноз на оставшиеся дни ---
+    import datetime, calendar as _cal
+    d0 = datetime.date.fromisoformat(today)
+    mstart = d0.replace(day=1).isoformat()
+    m_actual = sum(v for d, v in hist if d >= mstart)
+    last_day = _cal.monthrange(d0.year, d0.month)[1]
+    rest = 0.0
+    virt = list(past)
+    for day in range(d0.day + 1, last_day + 1):
+        ds = d0.replace(day=day).isoformat()
+        p = _fc_predict(virt, ds) or 0.0
+        rest += p
+        virt.append((ds, p))              # прогноз становится историей для следующего дня
+    m_fc = m_actual - so_far + fc_today + rest
+
+    return {
+        "today": {
+            "date": today,
+            "dow": _FC_DOW_RU[_fc_dow(today)],
+            "so_far": round(so_far),
+            "forecast": round(fc_today),
+            "low": round(fc_today * (1 - (mape or 15) / 100.0)),
+            "high": round(fc_today * (1 + (mape or 15) / 100.0)),
+            "method": method,
+            "share_now": round(share * 100) if share else None,
+            "hour": hour,
+        },
+        "month": {
+            "actual": round(m_actual),
+            "forecast": round(m_fc),
+            "days_done": d0.day,
+            "days_total": last_day,
+        },
+        "dow_k": {_FC_DOW_RU[i]: round(_fc_dow_k(past, i), 2) for i in range(7)},
+        "accuracy": {"mape": mape, "hits": hits, "n": len(errs)},
+        "updated": time.strftime("%d.%m.%Y %H:%M"),
+    }
+
+
 def _day_bounds(date_str):
     """Unix-границы бишкекского дня 'ГГГГ-ММ-ДД' (TZ сервера = Asia/Bishkek)."""
     t0 = int(time.mktime(time.strptime(date_str + " 00:00:00", "%Y-%m-%d %H:%M:%S")))
@@ -8604,6 +8788,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, get_assortment(days))
             except Exception as e:
                 return self._send(200, {"error": "Нет связи с 1С: " + str(e), "groups": []})
+        if self.path.startswith("/api/forecast"):
+            _co = (self._user() or {}).get("company") or COMPANY_ID
+            if _co != BIZMART_ID:
+                return self._send(200, {"error": "Прогноз считается только по данным 1С."})
+            try:
+                return self._send(200, build_forecast())
+            except Exception as e:
+                return self._send(200, {"error": "Не удалось посчитать прогноз: " + str(e)})
         if self.path.startswith("/api/sales-history"):
             from urllib.parse import urlparse, parse_qs
             _co = (self._user() or {}).get("company") or COMPANY_ID

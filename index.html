@@ -750,6 +750,11 @@
         <div class="card kpi"><div class="label">Прибыль сегодня</div><div class="value">—</div></div>
         <div class="card kpi"><div class="label">Средний чек</div><div class="value">—</div></div>
       </div>
+      <div class="card" id="dash-forecast" style="margin-bottom:18px;display:none">
+        <h3 style="margin:0 0 4px">🔮 Прогноз выручки</h3>
+        <div class="note" id="dash-fc-note" style="margin:0 0 10px">—</div>
+        <div id="dash-fc-body" class="kpis"></div>
+      </div>
       <div class="card" id="dash-dept-check" style="margin-bottom:18px;display:none">
         <h3 style="margin:0 0 4px">🧾 Средний чек по отделам</h3>
         <div class="note" id="dash-dept-cap" style="margin:0 0 10px">—</div>
@@ -4219,6 +4224,30 @@
     }catch(e){ box.style.display='none'; }
     finally{ _deptBusy=false; }
   }
+  // Прогноз выручки. Модель на бэкенде: тренд 14 дней × коэффициент дня недели,
+  // а на сегодня — уточнение по времени суток (половина дня уже известна).
+  async function loadDashForecast(){
+    const box=document.getElementById('dash-forecast'); if(!box||!ONEC_BASE||!isBizmart()) return;
+    try{
+      const r=await apiFetch('/api/forecast',{},ONEC_BASE); const d=await r.json();
+      if(!d||d.error||!d.today){ box.style.display='none'; return; }
+      box.style.display='';
+      const t=d.today, m=d.month, ac=d.accuracy||{};
+      const done=t.forecast?Math.round(t.so_far/t.forecast*100):0;
+      const km=(l,som,sub)=>'<div class="card kpi"><div class="label">'+l+'</div>'
+        +'<div class="value"><span class="money" data-som="'+(som||0)+'">'+fmt(som||0)+'</span></div>'
+        +(sub?'<div class="note" style="margin:4px 0 0">'+sub+'</div>':'')+'</div>';
+      document.getElementById('dash-fc-body').innerHTML=
+        km('Прогноз на сегодня ('+esc(t.dow)+')',t.forecast,
+           'уже '+fmt(t.so_far)+' — это '+done+'% · диапазон '+fmt(t.low)+'–'+fmt(t.high))+
+        km('Прогноз на '+esc(String(m.days_total))+'-й день месяца',m.forecast,
+           'факт за '+m.days_done+' дн.: '+fmt(m.actual));
+      document.getElementById('dash-fc-note').innerHTML=
+        'Считаю '+esc(t.method)+'. Средняя ошибка модели на последних '+(ac.n||0)+' днях — <b>'
+        +(ac.mape!=null?ac.mape+'%':'—')+'</b>, попаданий в ±10%: '+(ac.hits||0)+'/'+(ac.n||0)+'.';
+      renderMoney();
+    }catch(e){ box.style.display='none'; }
+  }
   function dashSetRange(){
     const f=(document.getElementById('dash-from')||{}).value, t=(document.getElementById('dash-to')||{}).value;
     if(!f||!t){ alert('Выбери обе даты периода.'); return; }
@@ -4237,6 +4266,7 @@
     if(!ONEC_BASE) return;
     loadSalesHistory();
     loadDashDeptCheck();          // средний чек по отделам (свой запрос, не блокирует KPI)
+    loadDashForecast();           // прогноз выручки на сегодня и на месяц
     try{
       const r=await apiFetch('/api/sales',{},ONEC_BASE); const d=await r.json();
       if(d&&!d.error){
