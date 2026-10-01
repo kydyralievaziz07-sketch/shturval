@@ -772,51 +772,23 @@ def rent_build(period=None, company=None):
             lo, hi = rng
             return bool((not lo or dt >= lo) and (not hi or dt <= hi))
         return ("%04d-%02d" % (dt.year, dt.month)) == sel
-    # ── аренда разносится по дням, а не целиком в месяц старта ──────────────
-    # Аренда 29.07–03.08 отработана и в июле, и в августе. Считаем сутки по дню
-    # их начала: сутки № i начинаются в день start+i. Сколько таких суток попало
-    # в период — такая доля денег и засчитывается этому периоду.
-    def _per_bounds():
-        if rng:
-            return rng
-        if sel and len(sel) >= 7:
-            import calendar
-            y, mo = int(sel[:4]), int(sel[5:7])
-            return (datetime.date(y, mo, 1), datetime.date(y, mo, calendar.monthrange(y, mo)[1]))
-        return (None, None)
-    _plo, _phi = _per_bounds()
-
-    def _rshare(r):
-        """(доля аренды в периоде 0..1, суток внутри периода)"""
-        if not sel:
-            return 1.0, int(r.get("_days") or 0)
-        sd = _rdate(r.get("start"))
-        if not sd:
-            return 0.0, 0
-        total = int(r.get("_days") or 0)
-        if total <= 0:                       # аренда без длительности — по дате старта
-            return (1.0, 0) if inper(r.get("start")) else (0.0, 0)
-        inside = 0
-        for i in range(total):
-            day = sd + datetime.timedelta(days=i)
-            if (not _plo or day >= _plo) and (not _phi or day <= _phi):
-                inside += 1
-        return (inside / total if inside else 0.0), inside
-
+    # ── аренда учитывается ЦЕЛИКОМ в день, когда её записали ────────────────
+    # Решение владельца: деньги ложатся на дату начала аренды полностью, даже
+    # если машину забрали 30-го числа на весь следующий месяц. Так цифра в отчёте
+    # всегда совпадает с суммой в карточке самой аренды и с кассой того дня.
     frent = []
     for r in rentals:
-        k, dn = _rshare(r)
-        if k <= 0:
+        if not inper(r.get("start")):
             continue
         x = dict(r)
-        x["_k"] = k
-        x["_days_in"] = dn or int(r.get("_days") or 0)
+        x["_k"] = 1.0                        # доля не дробится
+        x["_days_in"] = int(r.get("_days") or 0)
         frent.append(x)
     fexp = [e for e in exps if inper(e.get("date"))]
     fhanded = [h for h in handed if inper(h.get("date"))]
     fsalary = [s for s in salary if inper(s.get("date"))]
     funder = [u for u in under if inper(u.get("date"))]
-    # суммы за выбранный период (доля аренды, отработанная внутри него)
+    # суммы за выбранный период (аренда целиком по дате записи)
     revenue = sum(r["_got"] * r["_k"] for r in frent)
     accrued = sum(r["_sum"] * r["_k"] for r in frent)
     debts = sum(r["_debt"] * r["_k"] for r in frent)
