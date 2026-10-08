@@ -584,6 +584,8 @@ def _rent_key(company=None):
     br = _rent_branch()
     return "rent_" + (company or COMPANY_ID) + ("_" + br if br else "")
 RENT_DEPOSIT = 3000          # залог по умолчанию за завершённую аренду, сом
+RENT_DEPOSIT_FROM = (2026, 10, 8)   # с какой даты залог ставится сам (старые аренды не трогаем:
+                                    # по ним залоги давно возвращены, иначе «на руках» врёт)
 RENT_BRANCHES = {"2"}        # какие вторые кабинеты проката разрешены
 RENT_MONTHS_RU = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
                   "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
@@ -727,10 +729,13 @@ def rent_build(period=None, company=None):
         # Когда аренда завершена, за клиентом числится залог. Сумма по умолчанию
         # RENT_DEPOSIT (3000), её можно поменять вручную; галочка «вернули» снимает долг.
         done = not active
+        _dfrom = datetime.date(*RENT_DEPOSIT_FROM)
         if str(x.get("dep")) not in ("", "None"):
-            dep = _rnum(x.get("dep"))
+            dep = _rnum(x.get("dep"))                       # сумму задали вручную
+        elif done and ed and ed >= _dfrom:
+            dep = RENT_DEPOSIT                              # завершилась после запуска функции
         else:
-            dep = RENT_DEPOSIT if done else 0
+            dep = 0                                         # старые аренды — залог не домысливаем
         x["_dep"] = dep
         x["_dep_back"] = bool(x.get("dep_back"))
         x["_dep_hold"] = 0 if (x["_dep_back"] or not done) else dep   # сколько ещё на руках
