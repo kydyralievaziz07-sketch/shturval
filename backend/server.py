@@ -572,10 +572,19 @@ def rent_data():
 # ====== АВТО РЕНТ: собственная база (Supabase KV) — ввод учёта прямо на сайте ======
 # Данные хранятся одним документом в kv_cache (ключ rent_<company>). Таблица Google
 # больше не нужна — сайт самостоятельная система. Импорт из таблицы — разовый (seed).
+def _rent_branch():
+    """Какой прокат открыт: "" — основной, "2" — второй кабинет (своя база, те же функции)."""
+    b = str(getattr(_REQ, "rent_branch", "") or "").strip()
+    return b if b in RENT_BRANCHES else ""
+
 def _rent_key(company=None):
     # ключ данных аренды зависит от КОМПАНИИ вошедшего пользователя (мульти-тенант):
     # у Бизмарта rent_bizmart, у демо-клиента rent_<его компания> — данные не пересекаются.
-    return "rent_" + (company or COMPANY_ID)   # COMPANY_ID определён ниже; вызывается в рантайме
+    # Второй прокат того же владельца живёт в соседнем ключе rent_<компания>_2.
+    br = _rent_branch()
+    return "rent_" + (company or COMPANY_ID) + ("_" + br if br else "")
+RENT_DEPOSIT = 3000          # залог по умолчанию за завершённую аренду, сом
+RENT_BRANCHES = {"2"}        # какие вторые кабинеты проката разрешены
 RENT_MONTHS_RU = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
                   "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
 RENT_WEEKDAYS_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
@@ -714,6 +723,17 @@ def rent_build(period=None, company=None):
         x["_overdue_days"] = odays
         x["_overdue"] = overdue
         x["_debt"] = max(summ - got, 0) + overdue
+        # ── ДЕПОЗИТ ───────────────────────────────────────────────────────────
+        # Когда аренда завершена, за клиентом числится залог. Сумма по умолчанию
+        # RENT_DEPOSIT (3000), её можно поменять вручную; галочка «вернули» снимает долг.
+        done = not active
+        if str(x.get("dep")) not in ("", "None"):
+            dep = _rnum(x.get("dep"))
+        else:
+            dep = RENT_DEPOSIT if done else 0
+        x["_dep"] = dep
+        x["_dep_back"] = bool(x.get("dep_back"))
+        x["_dep_hold"] = 0 if (x["_dep_back"] or not done) else dep   # сколько ещё на руках
         rentals.append(x)
     ts = lambda r: r.get("ts", 0)
     rentals.sort(key=ts, reverse=True)
@@ -896,6 +916,34 @@ def rent_build(period=None, company=None):
                 "revenue": _rmoney(c["rev"]), "debt": _rmoney(c["debt"]), "_debt": c["debt"],
                 "last": c["last"], "cars": ", ".join(sorted(c["cars"]))}
                for c in sorted(cl_map.values(), key=lambda x: x["rev"], reverse=True)]
+    # ── ДЕПОЗИТЫ: кто сколько оставил, что ещё не вернули ────────────────────
+    dep_map = {}
+    for r in frent:
+        if not r.get("_dep"):
+            continue
+        nm = (r.get("renter") or "").strip()
+        ph = (r.get("phone") or "").strip()
+        if not nm and not ph:
+            nm = "—"
+        key = (nm.lower() + "|" + ph)
+        c = dep_map.setdefault(key, {"name": nm, "phone": ph, "count": 0, "sum": 0,
+                                     "hold": 0, "back": 0, "cars": set(), "last": ""})
+        c["count"] += 1
+        c["sum"] += r["_dep"]
+        c["hold"] += r["_dep_hold"]
+        c["back"] += (r["_dep"] - r["_dep_hold"])
+        if r.get("model"):
+            c["cars"].add(r["model"])
+        if r.get("end"):
+            c["last"] = r["end"]
+    deposits = [{"name": c["name"] or "—", "phone": c["phone"], "count": str(c["count"]),
+                 "sum": _rmoney(c["sum"]), "hold": _rmoney(c["hold"]) if c["hold"] else "",
+                 "back": _rmoney(c["back"]) if c["back"] else "", "_hold": c["hold"],
+                 "last": c["last"], "cars": ", ".join(sorted(c["cars"]))}
+                for c in sorted(dep_map.values(), key=lambda x: (-x["hold"], -x["sum"]))]
+    dep_hold_sum = sum(r["_dep_hold"] for r in frent)
+    dep_total_sum = sum(r["_dep"] for r in frent)
+
     # план выручки: цель на месяц и % выполнения по каждому месяцу (по всем данным)
     plan_target = _rnum(d.get("plan_target")) or 400000
     plan_rows = []
@@ -914,6 +962,7 @@ def rent_build(period=None, company=None):
     summary = {
         "profit": _rmoney(profit), "revenue": _rmoney(revenue), "debts": _rmoney(debts), "expenses": _rmoney(exp_sum),
         "handed": _rmoney(handed_sum), "balance": _rmoney(balance), "salary": _rmoney(salary_sum), "undercollect": _rmoney(under_sum),
+        "dep_hold": _rmoney(dep_hold_sum), "dep_total": _rmoney(dep_total_sum), "dep_default": _rmoney(RENT_DEPOSIT),
         "cars_total": str(sum(1 for c in cars if "продан" not in (c.get("status") or "").lower())),
         "cars_free": str(scnt("свобод")), "cars_rented": str(scnt("аренд")), "cars_repair": str(scnt("ремонт")),
         "rev_accrued": _rmoney(accrued), "avg_check": _rmoney(round(accrued / cnt) if cnt else 0),
@@ -935,7 +984,9 @@ def rent_build(period=None, company=None):
                 "debt": _rmoney(r["_debt"]), "status": r.get("status", ""), "note": r.get("note", ""),
                 "overdue": _rmoney(r["_overdue"]) if r["_overdue"] else "", "overdue_days": r["_overdue_days"],
                 "by": r.get("by", ""), "edit_by": r.get("edit_by", ""),
-                "price_raw": _rnum(r.get("price")), "got_raw": _rnum(r.get("got"))}
+                "price_raw": _rnum(r.get("price")), "got_raw": _rnum(r.get("got")),
+                "dep": _rmoney(r["_dep"]) if r["_dep"] else "", "dep_raw": r["_dep"],
+                "dep_back": r["_dep_back"], "dep_hold": _rmoney(r["_dep_hold"]) if r["_dep_hold"] else ""}
     def fe(e):
         return {"id": e.get("id", ""), "date": e.get("date", ""), "model": e.get("model", ""),
                 "cat": e.get("cat", ""), "desc": e.get("desc", ""), "sum": _rmoney(_rnum(e.get("sum"))),
@@ -948,7 +999,7 @@ def rent_build(period=None, company=None):
                      "undercollect": [fh(u) for u in under], "months": months_list,
                      "caranalysis": car_an, "plan": plan_block,
                      "abc": abc, "weekdays": weekdays, "best_weekday": best_wd, "daily": daily,
-                     "clients": clients,
+                     "clients": clients, "deposits": deposits,
                      "audit": sorted(d.get("audit", []), key=lambda x: x.get("ts", 0), reverse=True)[:400],
                      "notes": sorted(d.get("notes", []), key=lambda x: x.get("ts", 0), reverse=True),
                      "rtasks": sorted(d.get("rtasks", []), key=lambda x: (x.get("status") == "done", -x.get("ts", 0))),
@@ -1041,14 +1092,27 @@ def rent_apply(action, p, company=None, user=None):
             # Полей-запретов нет: сотрудник правит аренду целиком. Контроль — журнал
             # изменений ниже (вкладка «История изменений» у владельца: было → стало).
             _before = dict(r)
-            for f in ("model", "renter", "phone", "start", "end", "return_time", "price", "got", "status", "note"):
+            for f in ("model", "renter", "phone", "start", "end", "return_time", "price", "got", "status", "note", "dep", "dep_back"):
                 if f in p:
                     r[f] = p[f]
             stamp_edit(r)
             _rent_log(d, "edit", "аренда", r.get("id"),
                       ((r.get("model") or "") + (" · " + r.get("renter") if r.get("renter") else "")),
-                      _rent_diff(_before, r, ("model", "renter", "phone", "start", "end", "return_time", "price", "got", "status", "note")),
+                      _rent_diff(_before, r, ("model", "renter", "phone", "start", "end", "return_time", "price", "got", "status", "note", "dep", "dep_back")),
                       who, now_ms)
+    elif action == "set_dep":
+        # Галочка «залог вернули» и правка суммы залога прямо из таблицы аренд.
+        r = find(d["rentals"], p.get("id"))
+        if r:
+            _before = dict(r)
+            if "dep" in p:
+                r["dep"] = p.get("dep")
+            if "dep_back" in p:
+                r["dep_back"] = bool(p.get("dep_back"))
+            stamp_edit(r)
+            _rent_log(d, "edit", "залог", r.get("id"),
+                      ((r.get("model") or "") + (" · " + r.get("renter") if r.get("renter") else "")),
+                      _rent_diff(_before, r, ("dep", "dep_back")), who, now_ms)
     elif action == "del_rental":
         _dr = find(d["rentals"], p.get("id"))
         if _dr:
@@ -7548,6 +7612,7 @@ class Handler(BaseHTTPRequestHandler):
             if not _allowed(u, self.path):
                 return self._send(403, {"error": "Нет доступа к этому разделу"})
             _REQ.company = u.get("company") or COMPANY_ID
+            _REQ.rent_branch = ""        # сбрасываем на каждом запросе: поток переиспользуется
         if self.path.startswith("/api/rent"):
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -7557,6 +7622,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 _u = self._user() or {}
                 _co = _u.get("company") or COMPANY_ID
+                _REQ.rent_branch = str(body.get("br") or "").strip()   # какой прокат правим
                 res = rent_apply(body.get("action"), body, _co, _u)
             except Exception as e:
                 return self._send(500, {"error": "Не удалось сохранить: %s" % e})
@@ -8614,6 +8680,7 @@ class Handler(BaseHTTPRequestHandler):
             if not _allowed(u, self.path):
                 return self._send(403, {"error": "Нет доступа к этому разделу"})
             _REQ.company = u.get("company") or COMPANY_ID
+            _REQ.rent_branch = ""        # сбрасываем на каждом запросе: поток переиспользуется
         if self.path.startswith("/api/bot-feedback"):
             return self._send(200, {"fixes": BOT_FEEDBACK, "total": len(BOT_FEEDBACK)})
         if self.path.startswith("/api/payroll"):
@@ -8670,7 +8737,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/rent"):
             # доступ уже проверен общим шлюзом выше (раздел "rent")
             from urllib.parse import urlparse, parse_qs
-            per = (parse_qs(urlparse(self.path).query).get("period", [""])[0] or "").strip()
+            _q = parse_qs(urlparse(self.path).query)
+            per = (_q.get("period", [""])[0] or "").strip()
+            _REQ.rent_branch = (_q.get("br", [""])[0] or "").strip()   # какой прокат открыт
             _co = (self._user() or {}).get("company") or COMPANY_ID
             return self._send(200, rent_build(per or None, _co))
         if self.path.startswith("/api/track"):
@@ -8678,6 +8747,7 @@ class Handler(BaseHTTPRequestHandler):
             from urllib.parse import urlparse, parse_qs
             q = parse_qs(urlparse(self.path).query)
             per = (q.get("period", [""])[0] or "").strip()
+            _REQ.rent_branch = (q.get("br", [""])[0] or "").strip()    # какой прокат открыт
             _co = (self._user() or {}).get("company") or COMPANY_ID
             try:
                 iv = int(q.get("interval", [None])[0] or rent_doc(_co).get("oil_interval") or 5000)

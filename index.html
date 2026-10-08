@@ -674,7 +674,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.84.0<br>Авто Рент: выручка, прибыль, расходы и «сдано руководителю» считаются по дате записи — аренда целиком попадает в день, когда её оформили
+      Штурвал v4.85.0<br>Авто Рент: второй кабинет проката со своей базой (пункт «Авто Рент 2») и залоги — у завершённой аренды сам ставится залог 3000 с галочкой «вернули»
       <br><br><span onclick="hardReload()" style="cursor:pointer;color:#4f8cff;text-decoration:underline">🔄 Обновить приложение</span>
       <span style="color:var(--muted)"> — если новое не появилось</span>
   </aside>
@@ -1867,11 +1867,13 @@
     {key:'mkt',  icon:'📣', label:'Реклама', tabs:['ads','adsreport','adsanalysis']},
     {key:'shop', icon:'📦', label:'Магазин', tabs:['dash','prod','sales','assort','report','analytics','supl','fin','exp']},
     {key:'rent', icon:'🚗', label:'Авто Рент', tabs:['rentdash','renttasks','rentnotes','rentcars','rentlist','rentalert','rentexp','renthanded','rentanalysis','rentplan','rentclients','rentcalendar','rentgps','rentaudit']},
+    {key:'rent2', icon:'🚙', label:'Авто Рент 2', tabs:['rentdash','renttasks','rentnotes','rentcars','rentlist','rentalert','rentexp','renthanded','rentanalysis','rentplan','rentclients','rentcalendar','rentgps','rentaudit']},
     {key:'dailyrep', icon:'📋', label:'Отчёты', tabs:['reportdash']},
     {key:'team', icon:'👥', label:'Команда', tabs:['myday','hr']},
     {key:'ai',   icon:'🤖', label:'ИИ',      tabs:['ai','sim']}
   ];
   let curModule='crm', curTab='dash';
+  let RENT_BR='';                 // '' — основной прокат, '2' — второй кабинет
   function rentBrand(){ return 'Авто Рент'; }
   function modLabel(m){ return m.label; }
   function tabVisible(tab){
@@ -1960,7 +1962,9 @@
   }
   function openTab(tab){
     curTab=tab;
-    const mod=MODULES.find(m=>m.tabs.indexOf(tab)>=0); if(mod) curModule=mod.key;
+    const mod=MODULES.find(m=>m.key===curModule&&m.tabs.indexOf(tab)>=0)||MODULES.find(m=>m.tabs.indexOf(tab)>=0);
+    if(mod) curModule=mod.key;
+    RENT_BR = (curModule==='rent2') ? '2' : '';
     document.querySelectorAll('main section').forEach(s=>s.classList.add('hide'));
     const sec=document.getElementById('tab-'+tab); if(sec) sec.classList.remove('hide');
     document.body.classList.toggle('tab-wa', tab==='wainbox');   // WhatsApp на всю высоту, без скролла страницы
@@ -1992,7 +1996,11 @@
   }
   function selectModule(key){
     const m=MODULES.find(x=>x.key===key); if(!m) return;
-    curModule=key; renderTopNav(); renderSubmenu();
+    const wasBr=RENT_BR; curModule=key; RENT_BR=(key==='rent2')?'2':'';
+    if(wasBr!==RENT_BR){            // сменили прокат — данные прошлого больше не годятся
+      try{ RENT=null; TRACK=null; _trackTries=0; }catch(e){}
+    }
+    renderTopNav(); renderSubmenu();
     const tabs=m.tabs.filter(tabVisible);
     if(tabs.length) openTab(tabs.indexOf(curTab)>=0?curTab:tabs[0]);
   }
@@ -2100,6 +2108,11 @@
   async function apiFetch(path,opts,base){
     opts=opts||{}; const h=Object.assign({},opts.headers||{}); const p=getPw(); const lg=getLg();
     if(p) h['X-Auth']=p; if(lg) h['X-Login']=lg; opts.headers=h;
+    // Второй прокат: та же логика, другая база. Помечаем каждый запрос аренды.
+    if(typeof RENT_BR!=='undefined' && RENT_BR && (path.indexOf('/api/rent')===0||path.indexOf('/api/track')===0)){
+      path += (path.indexOf('?')>=0?'&':'?')+'br='+RENT_BR;
+      if(opts.body){ try{ const _b=JSON.parse(opts.body); _b.br=RENT_BR; opts.body=JSON.stringify(_b); }catch(e){} }
+    }
     if(base===undefined) base=API_BASE;
     const r=await fetch(base+path,opts);
     if(r.status===401){
@@ -8638,6 +8651,47 @@
   }
 
   function rentListFilter(v){ RENT_LF=(v||'').toLowerCase().trim(); keepQ('rent-list-q', renderRentList); }
+  // ---------- ЗАЛОГ (депозит) ----------
+  // У завершённой аренды залог проставляется сам (по умолчанию 3000). Галочка снимает его
+  // с клиента: сумма перестаёт числиться «на руках», но остаётся в истории.
+  function depCell(r){
+    var dep=rnum(r.dep_raw||r.dep), back=!!r.dep_back, done=!rIsActive(r);
+    if(!dep && !done) return '<td '+RT_TD+' style="text-align:right;color:var(--muted)">—</td>';
+    var chk='<label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:'+(back?'var(--green)':'var(--muted)')+';cursor:pointer;white-space:nowrap">'+
+      '<input type="checkbox"'+(back?' checked':'')+' onchange="depToggle(\''+esc(r.id)+'\',this.checked)" style="cursor:pointer"> '+(back?'вернули':'вернуть')+'</label>';
+    return '<td '+RT_TD+' style="text-align:right;white-space:nowrap">'+
+      '<span style="'+(back?'color:var(--muted);text-decoration:line-through':'font-weight:600')+'">'+esc(fmt(dep))+'</span>'+
+      '<div>'+chk+'</div></td>';
+  }
+  function depToggle(id,back){
+    apiFetch('/api/rent',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'set_dep',id:id,dep_back:!!back})},ONEC_BASE)
+      .then(function(r){ return r.json(); })
+      .then(function(d){ if(d&&!d.error){ RENT=d; renderRentList(); if(typeof renderRentDash==='function'&&curTab==='rentdash') renderRentDash(); } })
+      .catch(function(){ toast&&toast('Не удалось сохранить залог'); });
+  }
+  // список под таблицей: кто сколько оставил и что ещё не вернули
+  function renderDepList(){
+    var ds=(rentD().deposits)||[]; if(!ds.length) return '';
+    var hold=0, tot=0;
+    var rows=ds.map(function(c){
+      hold+=rnum(c.hold); tot+=rnum(c.sum);
+      var left=rnum(c.hold);
+      return '<tr><td '+RT_TD+'><b>'+esc(c.name||'—')+'</b>'+(c.phone?('<div style="font-size:11px;color:var(--muted)">'+esc(c.phone)+'</div>'):'')+'</td>'+
+        '<td '+RT_TD+' style="text-align:center">'+esc(c.count||'')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right">'+esc(c.sum||'')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right;color:'+(left>0?'var(--yellow,#f3b02c)':'var(--muted)')+';font-weight:'+(left>0?'600':'400')+'">'+(left>0?esc(c.hold):'—')+'</td>'+
+        '<td '+RT_TD+' style="text-align:right;color:var(--muted)">'+(c.back?esc(c.back):'—')+'</td>'+
+        '<td '+RT_TD+' style="font-size:12px;color:var(--muted)">'+esc(c.cars||'')+'</td></tr>';
+    }).join('');
+    var foot='<tfoot><tr><td '+RT_TD+' colspan="2" style="text-align:right;color:var(--muted)">Итого:</td>'+
+      '<td '+RT_TD+' style="text-align:right"><b>'+fmt(tot)+'</b></td>'+
+      '<td '+RT_TD+' style="text-align:right"><b>'+fmt(hold)+'</b></td><td '+RT_TD+'></td><td '+RT_TD+'></td></tr></tfoot>';
+    return '<div style="margin-top:22px"><h3 style="margin:0 0 10px;font-size:16px">💰 Залоги — кто сколько оставил</h3>'+
+      '<div class="note" style="margin-bottom:12px">Залог ставится сам, когда аренда завершена ('+esc((rentD().summary&&rentD().summary.dep_default)||'3 000')+' '+MUNIT()+'). Отметьте галочку в таблице выше, когда вернули деньги.</div>'+
+      rtable(['Клиент','Аренд','Всего залогов','Ещё на руках','Возвращено','Машины'], rows, foot)+'</div>';
+  }
+
   function renderRentList(){
     var b=document.getElementById('rent-list'); if(!b) return;
     var all=rentD().rentals||[];
@@ -8649,9 +8703,9 @@
       if(aa){ var ea=ruToDate(a.end),eb=ruToDate(b.end); return (ea?ea.getTime():9e15)-(eb?eb.getTime():9e15); }
       var sa=ruToDate(a.start),sb=ruToDate(b.start); return (sb?sb.getTime():0)-(sa?sa.getTime():0);
     });
-    var totSum=0,totDebt=0;
+    var totSum=0,totDebt=0,totHold=0;
     var rows=list.map(function(r){
-      totSum+=rnum(r.sum); totDebt+=rnum(r.debt); var debt=rnum(r.debt);
+      totSum+=rnum(r.sum); totDebt+=rnum(r.debt); totHold+=rnum(r.dep_hold); var debt=rnum(r.debt);
       var u=rentUrg(r), trst=u?(' style="background:'+u.bg+'"'):'';
       var endTime=r.return_time?('<div style="font-size:11px;color:var(--muted)">⏰ '+esc(r.return_time)+'</div>'):'';
       var endCell=u?('<span style="color:'+u.col+';font-weight:600">'+esc(r.end||'')+'</span>'+endTime+'<div style="font-size:11px;color:'+u.col+'">'+u.tag+'</div>'):(esc(r.end||'')+endTime);
@@ -8662,14 +8716,17 @@
         '<td '+RT_TD+' style="text-align:center">'+esc(r.days||'')+'</td><td '+RT_TD+' style="text-align:right">'+esc(r.sum||'')+'</td>'+
         '<td '+RT_TD+' style="text-align:right">'+esc(r.got||'')+'</td>'+
         '<td '+RT_TD+' style="text-align:right;color:'+(debt>0?'var(--red)':'var(--muted)')+'">'+(debt>0?esc(r.debt):'0')+(r.overdue_days>0?'<div style="font-size:11px;color:var(--red)">просрочка '+r.overdue_days+' дн</div>':'')+'</td>'+
+        depCell(r)+
         '<td '+RT_TD+'>'+rstatusChip(r.status)+'</td>'+rActs('rental',r.id)+'</tr>';
     }).join('');
     var foot='<tfoot><tr><td '+RT_TD+' colspan="6" style="text-align:right;color:var(--muted)">Итого ('+list.length+'):</td>'+
       '<td '+RT_TD+' style="text-align:right"><b>'+fmt(totSum)+'</b></td><td '+RT_TD+'></td>'+
-      '<td '+RT_TD+' style="text-align:right;color:'+(totDebt>0?'var(--red)':'var(--muted)')+'"><b>'+fmt(totDebt)+'</b></td><td '+RT_TD+'></td><td '+RT_TD+'></td></tr></tfoot>';
+      '<td '+RT_TD+' style="text-align:right;color:'+(totDebt>0?'var(--red)':'var(--muted)')+'"><b>'+fmt(totDebt)+'</b></td>'+
+      '<td '+RT_TD+' style="text-align:right"><b>'+fmt(totHold)+'</b><div style="font-size:11px;color:var(--muted)">на руках</div></td>'+
+      '<td '+RT_TD+'></td><td '+RT_TD+'></td></tr></tfoot>';
     var search='<input id="rent-list-q" type="text" placeholder="🔎 поиск: модель, арендатор, статус, дата…" value="'+esc(RENT_LF)+'" oninput="rentListFilter(this.value)" style="width:100%;max-width:420px;margin-bottom:12px;padding:9px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:14px">';
     b.innerHTML=rAddBtn('rental','Аренда')+rentExportBtn('expRentList()')+'<div class="note" style="margin-bottom:12px">🔑 Аренды — всего '+all.length+' (активные сверху по дате сдачи, затем завершённые по дате). 🟡 за день до сдачи · 🟠 в день сдачи · 🔴 просрочка. Суммы в '+MUNIT()+'.</div>'+search+
-      rtable(['Кто добавил','Модель','Арендатор','Начало','Конец','Дней','Сумма','Получено','Долг','Статус',''], rows, foot);
+      rtable(['Кто добавил','Модель','Арендатор','Начало','Конец','Дней','Сумма','Получено','Долг','Залог','Статус',''], rows, foot)+renderDepList();
   }
 
   // ---------- РАСХОДЫ ----------
