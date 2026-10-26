@@ -674,7 +674,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.85.0<br>Авто Рент: второй кабинет проката со своей базой (пункт «Авто Рент 2») и залоги — у завершённой аренды сам ставится залог 3000 с галочкой «вернули»
+      Штурвал v4.86.0<br>CRM: клиент узнаётся по переписке, а не по имени — покупатель, сменивший имя, больше не падает в «Новые заявки»; тёзки не сливаются
       <br><br><span onclick="hardReload()" style="cursor:pointer;color:#4f8cff;text-decoration:underline">🔄 Обновить приложение</span>
       <span style="color:var(--muted)"> — если новое не появилось</span>
   </aside>
@@ -4593,10 +4593,10 @@
   try{ const s=JSON.parse(localStorage.getItem('shturval_crm')); if(s) CRM=Object.assign(CRM,s); }catch(e){}
   migrateStatuses(); purgeImported(); dedupeClients();
   // индексы для быстрого поиска (иначе перебор по тысячам сделок тормозит после импорта)
-  let _cById=new Map(), _cByName=new Map(), _dById=new Map(), _dByClient=new Map();
+  let _cById=new Map(), _cByName=new Map(), _cByExt=new Map(), _dById=new Map(), _dByClient=new Map();
   function rebuildCrmIndex(){
-    _cById=new Map(); _cByName=new Map(); _dById=new Map(); _dByClient=new Map();
-    (CRM.clients||[]).forEach(c=>{ _cById.set(c.id,c); if(c.name) _cByName.set(c.name.toLowerCase(),c); });
+    _cById=new Map(); _cByName=new Map(); _cByExt=new Map(); _dById=new Map(); _dByClient=new Map();
+    (CRM.clients||[]).forEach(c=>{ _cById.set(c.id,c); if(c.name) _cByName.set(c.name.toLowerCase(),c); (c.ext||[]).forEach(k=>_cByExt.set(k,c)); });
     (CRM.deals||[]).forEach(d=>{ _dById.set(d.id,d); if(!_dByClient.has(d.client_id)) _dByClient.set(d.client_id,d); });
   }
   rebuildCrmIndex();
@@ -4903,6 +4903,7 @@
       LAST_CHAT_ERR=(!COCKPIT_CHATS.length&&(dig.error||dwa.error||dtg.error))?(dig.error||dwa.error||dtg.error):'';
     }
     catch(e){ COCKPIT_CHATS=[]; LAST_CHAT_ERR='нет связи с сервером'; }
+    linkChatsToClients();
     autoClassify();
     renderLeft(); renderFunnel(); renderCrmStats(); renderCrmDash(); renderCrmHome();
     if(typeof renderNotifs==='function') renderNotifs();
@@ -5077,10 +5078,31 @@
   // Сделки, которые двигали ВРУЧНУЮ (d.manual===true), не трогаем.
   let AUTO_ON=true; try{ AUTO_ON=localStorage.getItem('shturval_auto')!=='0'; }catch(e){}
   function setAuto(on){ AUTO_ON=!!on; try{localStorage.setItem('shturval_auto',on?'1':'0');}catch(e){} const sw=document.getElementById('sw-auto'); if(sw) sw.checked=AUTO_ON; if(on){ autoClassify(); renderFunnel&&renderFunnel(); renderLeft&&renderLeft(); renderCrmDash&&renderCrmDash(); } }
+  // Клиент CRM ↔ переписка по постоянному id (канал:customer_id), а не по имени профиля.
+  // Сменил имя в Instagram/WhatsApp → всё равно узнаём его и показываем под именем из CRM,
+  // поэтому покупатель не всплывает заново в «Новой заявке».
+  function linkChatsToClients(){
+    let changed=false;
+    COCKPIT_CHATS.forEach(c=>{
+      if(!c.customer_id) return;
+      const key=(c.channel||'ig')+':'+c.customer_id;
+      let cl=_cByExt.get(key);
+      if(cl){ if(cl.name && cl.name!==c.name){ c.rawName=c.name; c.name=cl.name; } return; }
+      cl=findClient(c.name); if(!cl) return;
+      const ch=(c.channel||'ig')+':';
+      if((cl.ext||[]).some(k=>k.indexOf(ch)===0)){                  // у клиента уже есть другой чат в этом канале — это тёзка
+        c.rawName=c.name; c.name=c.name+' · '+String(c.customer_id).slice(-4); return;
+      }
+      (cl.ext=cl.ext||[]).push(key); _cByExt.set(key,cl); changed=true;
+    });
+    if(changed) crmPersist();
+  }
+  const BOUGHT=['Готов к отправке','В пути','Клиент получил товар'];
   function autoClassify(){
     if(!AUTO_ON) return; let changed=false;
     COCKPIT_CHATS.forEach(c=>{
       let d=findDealByName(c.name);
+      if(d && BOUGHT.indexOf(d.status)>=0) return;                 // покупателя авто-воронка не возвращает в начало
       // Клиент снова написал в «Отказано»/«Купить позже» → возвращаем его в «Новую заявку»
       if(d && (d.status==='Отказ'||d.status==='Купить позже')){
         const lastIn=c.unread?((c.ts||0)*1000):0;                 // клиент написал последним = новое сообщение
