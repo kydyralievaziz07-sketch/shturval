@@ -674,7 +674,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.86.0<br>CRM: клиент узнаётся по переписке, а не по имени — покупатель, сменивший имя, больше не падает в «Новые заявки»; тёзки не сливаются
+      Штурвал v4.86.1<br>CRM: клиент узнаётся по переписке, а не по имени — покупатель, сменивший имя, больше не падает в «Новые заявки» (Instagram и WhatsApp)
       <br><br><span onclick="hardReload()" style="cursor:pointer;color:#4f8cff;text-decoration:underline">🔄 Обновить приложение</span>
       <span style="color:var(--muted)"> — если новое не появилось</span>
   </aside>
@@ -5090,9 +5090,7 @@
       if(cl){ if(cl.name && cl.name!==c.name){ c.rawName=c.name; c.name=cl.name; } return; }
       cl=findClient(c.name); if(!cl) return;
       const ch=(c.channel||'ig')+':';
-      if((cl.ext||[]).some(k=>k.indexOf(ch)===0)){                  // у клиента уже есть другой чат в этом канале — это тёзка
-        c.rawName=c.name; c.name=c.name+' · '+String(c.customer_id).slice(-4); return;
-      }
+      if((cl.ext||[]).some(k=>k.indexOf(ch)===0)) return;             // тёзка (в WA сотни «.»/«а») — не привязываем, как и раньше идёт по имени
       (cl.ext=cl.ext||[]).push(key); _cByExt.set(key,cl); changed=true;
     });
     if(changed) crmPersist();
