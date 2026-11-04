@@ -5,8 +5,29 @@
 Токен хранится здесь, на сервере, и НЕ попадает в код сайта.
 Запуск: python3 server.py   (или двойной клик по «Запустить-сервер.command»)
 """
-import os, json, time, threading, urllib.request, urllib.error, urllib.parse, hmac, hashlib, gzip, re, calendar
+import os, sys, json, time, threading, urllib.request, urllib.error, urllib.parse, hmac, hashlib, gzip, re, calendar
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+def _tune_process():
+    """Настройки процесса ДО запуска потоков (Render Starter = 512 МБ, падаем при превышении)."""
+    # журнал сразу уходит в Render: иначе print копится в буфере и при падении теряется
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+        sys.stderr.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+    # glibc: без этого каждый поток заводит свою кучу, а большие буферы остаются в них после
+    # освобождения, и память процесса только растёт. На Mac библиотеки нет — работаем как есть.
+    try:
+        import ctypes
+        libc = ctypes.CDLL("libc.so.6")
+        libc.mallopt(-8, 2)              # M_ARENA_MAX: не больше 2 куч на все потоки
+        libc.mallopt(-3, 256 * 1024)     # M_MMAP_THRESHOLD: большие буферы сразу отдаём системе
+        libc.mallopt(-1, 1024 * 1024)    # M_TRIM_THRESHOLD: свободную вершину кучи тоже
+    except Exception:
+        pass
+
+_tune_process()
 
 # Часовой пояс — Бишкек (UTC+6). Чтобы «сегодня», время сообщений, явка, касса
 # и отчёты считались по бишкекскому времени, а не по времени сервера (UTC).
@@ -4697,7 +4718,7 @@ def _wa_fallback_sweep():
 
 
 # --- 1С (Yaros DataGate): товары, остатки, цены ---
-import base64
+import base64, codecs
 
 _COMPANY_CFG_CACHE = {}
 def company_cfg(company=None):
@@ -4725,18 +4746,20 @@ def company_cfg(company=None):
         }
     return _COMPANY_CFG_CACHE[co]
 
-def yaros_get(path, company=None):
-    """GET к 1С с Basic-авторизацией. Каталог большой (~20 МБ), поэтому таймаут щедрый."""
+def _yaros_request(path, company=None):
     cc = company_cfg(company)
     url = cc["yaros_url"].rstrip("/") + path
     auth = base64.b64encode(
         (cc["yaros_login"] + ":" + cc["yaros_pass"]).encode("utf-8")
     ).decode("ascii")
-    req = urllib.request.Request(url, headers={
+    return urllib.request.Request(url, headers={
         "Authorization": "Basic " + auth,
         "User-Agent": "Shturval/1.0",
     })
-    with urllib.request.urlopen(req, timeout=180) as r:
+
+def yaros_get(path, company=None):
+    """GET к 1С с Basic-авторизацией. Таймаут щедрый: 1С отвечает медленно."""
+    with urllib.request.urlopen(_yaros_request(path, company), timeout=180) as r:
         return json.loads(r.read().decode("utf-8"))
 
 def _num(x):
@@ -4746,19 +4769,80 @@ def _num(x):
         return 0.0
 
 def _price_by_type(item, type_name):
-    for p in item.get("PRICES", []):
+    for p in item.get("PRICES") or []:
         if p.get("TYPE") == type_name:
             return _num(p.get("PRICE"))
     return 0.0
 
-# каталог тяжёлый (~20 МБ, ~50 сек на загрузку) — держим в памяти, обновляем фоном
+# Каталог: 27 тысяч товаров, 30 МБ текста, ~40 сек на загрузку. Обновляем фоном и держим в памяти
+# ТОЛЬКО нужные поля. Раньше разбирали целиком: 184 МБ на пике плюс 95 МБ старой копии каждые
+# 30 минут, из-за этого сервер несколько раз в день падал по памяти. Теперь пик ~10-20 МБ.
 _goods = {"t": 0.0, "goods": None, "cats": None, "cats_t": 0.0, "refreshing": False,
           "next_try": 0.0, "fail_n": 0}
 _goods_lock = threading.Lock()
 CATALOG_TTL = 1800          # каталог меняется редко — обновляем не чаще раза в 30 мин (бережём 1С)
 
+def _good_cost(x):
+    c = x.get("COST")
+    return c if c is not None else _price_by_type(x, "Закупочная")
+
+def _slim_good(g, cat_ids=None):
+    """Товар для склада и поиска: только нужные поля. cat_ids — общий словарь, чтобы одинаковые
+    id категорий не хранились тысячами копий."""
+    cat = g.get("CATEGORY_ID")
+    if cat_ids is not None:
+        cat = cat_ids.setdefault(cat, cat)
+    return {"TITLE": g.get("TITLE", ""), "CATEGORY_ID": cat, "PRICE": _num(g.get("PRICE")),
+            "QUANTITY": _num(g.get("QUANTITY")), "COST": _good_cost(g)}
+
+def _iter_goods(r, chunk=1 << 18):
+    """Товары из ответа 1С по одному, не держа ответ в памяти целиком. Оборванный ответ или
+    ответ без списка — ошибка: лучше остаться на старом каталоге, чем показать половину склада."""
+    dec = json.JSONDecoder()
+    utf8 = codecs.getincrementaldecoder("utf-8")()
+    buf, pos = "", 0
+
+    def more():
+        nonlocal buf, pos
+        b = r.read(chunk)
+        if not b:
+            return False
+        buf = buf[pos:] + utf8.decode(b)
+        pos = 0
+        return True
+
+    while True:                          # начало массива товаров
+        i = buf.find('"goods"')
+        j = buf.find("[", i) if i >= 0 else -1
+        if j >= 0:
+            pos = j + 1
+            break
+        if not more():
+            raise ValueError("1С: в ответе нет списка товаров")
+    while True:
+        while pos < len(buf) and buf[pos] in " \r\n\t,":
+            pos += 1
+        if pos >= len(buf):
+            if not more():
+                raise ValueError("1С: ответ оборвался")
+            continue
+        if buf[pos] == "]":
+            return
+        try:
+            obj, pos = dec.raw_decode(buf, pos)
+        except ValueError:               # товар не дочитан — подгружаем следующий кусок
+            if not more():
+                raise ValueError("1С: ответ оборвался")
+            continue
+        yield obj
+
 def _fetch_goods():
-    return yaros_get("/goods").get("goods", [])
+    goods, cat_ids = [], {}
+    with urllib.request.urlopen(_yaros_request("/goods"), timeout=180) as r:
+        for g in _iter_goods(r):
+            if isinstance(g, dict):
+                goods.append(_slim_good(g, cat_ids))
+    return goods
 
 def _fetch_cats():
     data = yaros_get("/categories")
@@ -4777,7 +4861,9 @@ def _refresh_catalog(force=False):
         return                           # ещё рано — не долбим 1С
     _goods["refreshing"] = True
     try:
-        goods = _fetch_goods()           # ~50 сек, но в фоне
+        goods = _fetch_goods()           # ~40 сек, но в фоне
+        if not goods:
+            raise ValueError("1С вернула пустой каталог")   # склад не обнуляем, остаёмся на старом
         _goods["goods"] = goods          # подменяем разом
         _goods["t"] = now
         _goods["from_backup"] = False    # данные снова живые из 1С
@@ -4796,6 +4882,7 @@ def _refresh_catalog(force=False):
         _goods["next_try"] = now + min(CATALOG_TTL, 300 * (2 ** min(_goods["fail_n"] - 1, 3)))
     finally:
         _goods["refreshing"] = False
+        _mem_release()
 
 def get_goods(company=None):
     """Мгновенно отдаёт каталог из памяти. Если устарел — обновляет ФОНОМ, не задерживая ответ.
@@ -4844,21 +4931,19 @@ def get_categories(company=None):
 # Полный каталог (20 МБ) хранится только в памяти и теряется при перезапуске Render.
 # Поэтому после каждой удачной загрузки сохраняем СЖАТУЮ копию нужных полей в Supabase
 # (kv_cache, ключ catalog_v1). При холодном старте/сбое 1С отдаём её — без «1С недоступна».
-_CAT_FIELDS = ("TITLE", "CATEGORY_ID", "PRICE", "QUANTITY", "PRICES")
 _catalog_backup_t = {"t": 0.0}
 
 def _save_catalog_backup(goods, cats):
-    """Сжать каталог (только нужные поля) и положить в базу. Не чаще раза в 30 мин —
-    чтобы не гонять мегабайты при каждом фоновом обновлении (каждые ~2 мин)."""
+    """Сжать каталог (в памяти и так только нужные поля) и положить в базу. Не чаще раза в 30 мин."""
     if not supa_on() or not goods:
         return
     if time.time() - _catalog_backup_t["t"] < 1800:
         return
     try:
-        slim = [{k: g.get(k) for k in _CAT_FIELDS} for g in goods]
-        payload = json.dumps({"goods": slim, "cats": cats or {}}, ensure_ascii=False).encode("utf-8")
+        payload = json.dumps({"goods": goods, "cats": cats or {}}, ensure_ascii=False).encode("utf-8")
         packed = base64.b64encode(gzip.compress(payload, 6)).decode("ascii")
-        kv_save("catalog_v1", {"z": packed, "n": len(slim), "t": int(time.time())})
+        payload = None
+        kv_save("catalog_v1", {"z": packed, "n": len(goods), "t": int(time.time())})
         _catalog_backup_t["t"] = time.time()
     except Exception:
         pass
@@ -4872,6 +4957,9 @@ def _load_catalog_backup():
             return None
         raw = gzip.decompress(base64.b64decode(v["z"])).decode("utf-8")
         d = json.loads(raw)
+        raw = None
+        ids = {}                         # копии старого формата приводим к нужным полям
+        d["goods"] = [_slim_good(g, ids) for g in d.get("goods") or []]
         d["t"] = v.get("t", 0)
         return d
     except Exception:
@@ -4918,6 +5006,7 @@ def _warmer():
         ths = [threading.Thread(target=j, daemon=True) for j in jobs]
         for t in ths: t.start()
         for t in ths: t.join()
+        _mem_release()                    # всё, что освободили прогревы, отдаём системе
         time.sleep(110)
 
 # ====== Крупные категории товаров (по запросу владельца) ======
@@ -5001,7 +5090,7 @@ def build_inventory(company=None):
     for x in goods:
         qty = _num(x.get("QUANTITY"))
         price = _num(x.get("PRICE"))
-        cost = _price_by_type(x, "Закупочная")
+        cost = _good_cost(x)
         # Стоимость склада считаем С УЧЁТОМ отрицательных остатков (пересорт): по факту в 1С
         # минусы уменьшают оценку, иначе склад завышается (плюсы где-то тоже завышены).
         # Наличие, категории и «на исходе» — только по плюсовым остаткам.
@@ -5147,7 +5236,7 @@ def search_products(q, page, per=50, cat=None, in_stock=False, scat=None, compan
             "title": x.get("TITLE", ""),
             "category": cats.get(x.get("CATEGORY_ID"), "—") or "—",
             "price": _num(x.get("PRICE")),
-            "cost": _price_by_type(x, "Закупочная"),
+            "cost": _good_cost(x),
             "qty": int(_num(x.get("QUANTITY"))),
         })
     res = {"total": total, "page": page, "per": per, "items": out}
@@ -9527,6 +9616,12 @@ class Handler(BaseHTTPRequestHandler):
                 "assort_snapshots_mb": round(_snap / 1048576.0, 1),
                 "assort_periods": len(_assort_cache), "assort_ranges": len(_assort_range_cache),
                 "rent_docs": len(_RENT_DOC_CACHE),
+                "rent_docs_mb": round(_deep_size(_RENT_DOC_CACHE) / 1048576.0, 1),
+                "goods_n": len(_goods.get("goods") or []),
+                "goods_mb": round(_deep_size(_goods.get("goods")) / 1048576.0, 1),
+                "cache_top_mb": sorted(((k, round(_deep_size(v) / 1048576.0, 1)) for k, v in list(_cache.items())),
+                                       key=lambda kv: -kv[1])[:8],
+                "threads": threading.active_count(),
             })
         if self.path.startswith("/api/ads/"):
             from urllib.parse import urlparse, parse_qs
