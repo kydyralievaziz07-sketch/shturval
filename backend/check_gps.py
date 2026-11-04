@@ -145,6 +145,34 @@ for wrong in ("", "2026-13-01", "2026-02-30", "abc", "2020-01-01", "2999-01-01",
 b = s._gps_day_bounds(today)
 check("сутки начинаются в полночь по Бишкеку", (b[0] + s.WIA_TZ) % 86400 == 0 and b[1] <= time.time() + 1)
 
+# --- пробег по дням: одно обращение на день, сумма дней = итог ---
+today_t = s._gps_day_bounds(today)
+d2 = time.strftime("%Y-%m-%d", time.gmtime(today_t[0] - 2 * 86400 + s.WIA_TZ))
+odo_by_end = {today_t[0] - 2 * 86400 - 1: 1000000, today_t[0] - 86400 - 1: 1050000, today_t[0] - 1: 1050000}
+calls = []
+
+
+def fake_call(kind, svc, params, timeout=60):
+    calls.append(svc)
+    if svc == "messages/unload":
+        return {}
+    t = params["lastTime"]
+    v = odo_by_end.get(t, 1075500)                      # сегодня: текущий момент
+    return {"messages": [{"p": {"io_16": v}}]}
+
+
+real_call = s._gps_call
+s._gps_call = fake_call
+code, kmr = s._gps_km(7, d2, today, True)
+check("пробег по дням: %s" % kmr.get("days"), code == 200 and [x["km"] for x in kmr["days"]] == [50.0, 0.0, 25.5])
+check("сумма дней = итог", kmr["km"] == 75.5)
+check("обращений: начало + по одному на день + выгрузка", calls.count("messages/load_last") == 4 and calls.count("messages/unload") == 1)
+n_calls = len(calls)
+s._gps_km(7, d2, today, True)
+check("повтор берётся из кэша", len(calls) == n_calls)
+s._gps_call = real_call
+check("слишком длинный период", s._gps_km(7, "2026-01-01", today, True)[0] == 400)
+
 print()
 if fails:
     sys.exit("НЕ ПРОШЛО: %d" % len(fails))

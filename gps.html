@@ -1038,7 +1038,7 @@ function renderKmBox(){
     el('button',{class:'btn'+(kmState&&kmState.days===30?' on':''),text:'За 30 дней',onclick:function(){ loadKm(30); }}));
   const body=[];
   if(kmState){
-    if(kmState.state==='loading') body.push(el('div',{class:'muted',text:'Считаю пробег…'}));
+    if(kmState.state==='loading') body.push(el('div',{class:'muted',text:'Считаю пробег, это может занять до минуты…'}));
     if(kmState.state==='err') body.push(el('div',{class:'err',text:kmState.error}));
     if(kmState.state==='ok'){
       const d=kmState.data;
@@ -1057,13 +1057,13 @@ async function loadKm(days){
   renderKmBox();
   const to=dayStr(now()), from=shiftDay(to,-(days-1));
   try{
-    for(let i=0;i<4;i++){
+    for(let i=0;i<8;i++){
       const r=await api('/api/gps/km?unit='+encodeURIComponent(uid)+'&from='+from+'&to='+to+'&by=day');
       if(token!==kmToken) return;
       if(r.status===401){ onUnauth(); return; }
       const d=await r.json();
       if(token!==kmToken) return;
-      if(r.status===503){ await sleep(Math.min(d.retry||5,15)*1000); if(token!==kmToken) return; continue; }
+      if(r.status===503){ await sleep(Math.min(d.retry||10,15)*1000); if(token!==kmToken) return; continue; }
       if(!d.ok) throw new Error(d.error||'Не удалось посчитать пробег');
       kmState={days:days,state:'ok',data:d};
       renderKmBox();

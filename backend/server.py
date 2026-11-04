@@ -1857,12 +1857,13 @@ GPS_RSS_GUARD_MB = 450      # память на пределе — тяжёлы�
 GPS_VERSION = "1.0"
 GPS_HIDE_PARAMS = ("iccid", "io_11", "io_14")   # номера SIM-карт на экране не нужны
 
-_GPS_SID = {}               # "live"/"hist" → sid: история грузится в своей сессии и не мешает живым позициям
-_GPS_SID_LOCKS = {"live": threading.Lock(), "hist": threading.Lock()}
+_GPS_SID = {}               # "live"/"hist"/"km" → sid: у каждой задачи своя сессия, они не мешают друг другу
+_GPS_SID_LOCKS = {"live": threading.Lock(), "hist": threading.Lock(), "km": threading.Lock()}
 _GPS_TOKEN_FL = {"fl": None}
 _GPS_LIVE = {"data": None, "params": {}}
 _GPS_LIVE_LOCK = threading.Lock()
 _GPS_HIST_LOCK = threading.Lock()
+_GPS_KM_LOCK = threading.Lock()
 _GPS_CARS = {}
 _GPS_KM_CACHE = {}
 # Вход по личной ссылке: виртуальный пользователь, которому открыто только чтение карты.
@@ -2259,35 +2260,23 @@ def _gps_history(unit_id, t0, t1, min_stop):
         _GPS_HIST_LOCK.release()
         _mem_release()
 
-def _gps_mileage(uid, t0, t1):
-    """Пробег за интервал, км: одометр в конце минус одометр в начале, по ОДНОМУ сообщению с краёв."""
-    a = None
-    for span in (48 * 3600, 7 * 86400, 31 * 86400):
-        t_end = min(t1, t0 + span)
-        try:
-            r = _gps_call("hist", "messages/load_interval", {"itemId": uid, "timeFrom": t0, "timeTo": t_end,
-                                                            "flags": 0, "flagsMask": 0, "loadCount": 1})
-        except WiaError as e:
-            if e.code != 1001:
-                raise
-            r = {}
-        a = _wia_odo((r or {}).get("messages"))
-        if a is not None or t_end >= t1:
-            break
-    if a is None:
-        return None
+def _gps_odo_at(uid, t):
+    """Одометр последнего сообщения не позже момента t, метры. Грузим ровно одно сообщение."""
     try:
-        r = _gps_call("hist", "messages/load_last", {"itemId": uid, "lastTime": t1, "lastCount": 1,
-                                                    "flags": 0, "flagsMask": 0, "loadCount": 1})
+        r = _gps_call("km", "messages/load_last", {"itemId": uid, "lastTime": t, "lastCount": 1,
+                                                  "flags": 0, "flagsMask": 0, "loadCount": 1})
     except WiaError as e:
         if e.code != 1001:
             raise
         return None
-    b = _wia_odo((r or {}).get("messages"))
-    return None if b is None or b < a else round((b - a) / 1000.0, 1)
+    return _wia_odo((r or {}).get("messages"))
+
+def _gps_km_between(a, b):
+    return None if a is None or b is None or b < a else round((b - a) / 1000.0, 1)
 
 def _gps_km(unit_id, d_from, d_to, by_day):
-    """Километры за период (и по дням, если просят). Лёгкий запрос: сам трек не выгружается."""
+    """Километры за период и по дням. День = одометр в конце дня минус одометр в конце предыдущего:
+    одно обращение на день. До Wialon с сервера далеко, поэтому каждое обращение на счету."""
     b0, b1 = _gps_day_bounds(d_from), _gps_day_bounds(d_to)
     if not b0 or not b1 or b0[0] > b1[0]:
         return 400, {"ok": False, "error": "Неверный период"}
@@ -2298,20 +2287,26 @@ def _gps_km(unit_id, d_from, d_to, by_day):
     hit = _GPS_KM_CACHE.get(key)
     if hit and time.time() - hit[0] < GPS_KM_TTL:
         return 200, hit[1]
-    if _mem_rss_mb() > GPS_RSS_GUARD_MB:
-        return 503, {"ok": False, "error": "Сервер сейчас перегружен, повторите через минуту", "retry": 60}
-    if not _GPS_HIST_LOCK.acquire(timeout=0.1):
-        return 503, {"ok": False, "error": "История уже загружается, повторите через 5 секунд", "retry": 5}
+    if not _GPS_KM_LOCK.acquire(timeout=0.1):
+        return 503, {"ok": False, "error": "Пробег уже считается, повторите через 10 секунд", "retry": 10}
     loaded = False
     try:
-        out = {"ok": True, "unit_id": unit_id, "from": d_from, "to": d_to,
-               "km": _gps_mileage(unit_id, b0[0], b1[1])}
+        start = _gps_odo_at(unit_id, b0[0] - 1)
+        out = {"ok": True, "unit_id": unit_id, "from": d_from, "to": d_to}
         if by_day:
             out["days"] = []
+            prev = start
             for i in range(n_days):
                 t0 = b0[0] + i * 86400
+                cur = _gps_odo_at(unit_id, min(t0 + 86399, b1[1]))
                 out["days"].append({"date": time.strftime("%Y-%m-%d", time.gmtime(t0 + WIA_TZ)),
-                                    "km": _gps_mileage(unit_id, t0, min(t0 + 86399, b1[1]))})
+                                    "km": _gps_km_between(prev, cur)})
+                if cur is not None:
+                    prev = cur
+            vals = [x["km"] for x in out["days"] if x["km"] is not None]
+            out["km"] = round(sum(vals), 1) if vals else None
+        else:
+            out["km"] = _gps_km_between(start, _gps_odo_at(unit_id, b1[1]))
         _GPS_KM_CACHE[key] = (time.time(), out)
         while len(_GPS_KM_CACHE) > GPS_KM_CACHE_MAX:
             _GPS_KM_CACHE.pop(min(_GPS_KM_CACHE, key=lambda k: _GPS_KM_CACHE[k][0]), None)
@@ -2328,10 +2323,10 @@ def _gps_km(unit_id, d_from, d_to, by_day):
     finally:
         if loaded:
             try:
-                _gps_call("hist", "messages/unload", {}, timeout=20)
+                _gps_call("km", "messages/unload", {}, timeout=20)
             except Exception:
                 pass
-        _GPS_HIST_LOCK.release()
+        _GPS_KM_LOCK.release()
 
 def _gps_status():
     """Самопроверка для владельца: режим просмотра, права ключа Wialon, память."""
