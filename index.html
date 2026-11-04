@@ -674,7 +674,7 @@
   <aside class="sidebar">
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      Штурвал v4.86.1<br>CRM: клиент узнаётся по переписке, а не по имени — покупатель, сменивший имя, больше не падает в «Новые заявки» (Instagram и WhatsApp)
+      Штурвал v4.87.0<br>GPS-пульт: карта машин, живые позиции, история и маршрут — отдельная вкладка (только просмотр)
       <br><br><span onclick="hardReload()" style="cursor:pointer;color:#4f8cff;text-decoration:underline">🔄 Обновить приложение</span>
       <span style="color:var(--muted)"> — если новое не появилось</span>
   </aside>
@@ -8372,7 +8372,7 @@
   function trackLoad(){
     var b=document.getElementById('rent-gps'); if(!b) return;
     var url='/api/track?period='+encodeURIComponent(TRACK_PER)+'&interval='+TRACK_IV;
-    apiFetch(url).then(function(r){ return r.json(); }).then(function(d){
+    apiFetch(url,undefined,ONEC_BASE).then(function(r){ return r.json(); }).then(function(d){
       if(d && d.ready===false){                       // считается в фоне — ждём
         _trackTries++;
         renderRentGps({calc:true});
@@ -8394,7 +8394,7 @@
   function trackSetIv(v){
     TRACK_IV=parseInt(v,10)||5000; TRACK=null; _trackTries=0; renderRentGps({calc:true});
     if(rentIsOwner()) apiFetch('/api/rent',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({action:'set_oil_interval',km:TRACK_IV})}).catch(function(){});
+      body:JSON.stringify({action:'set_oil_interval',km:TRACK_IV})},ONEC_BASE).catch(function(){});
     trackLoad();
   }
   function _trkPerBtns(){
@@ -8438,7 +8438,8 @@
   }
   function renderRentGps(opt){
     var b=document.getElementById('rent-gps'); if(!b) return;
-    var note='<div class="note" style="margin-bottom:14px">🛰 <b>GPS · Пробег</b> — сколько километров прошла каждая машина за выбранный период, по данным трекеров. Ниже — когда меняли масло и сколько проехали с тех пор.</div>';
+    var note='<div class="card" style="margin-bottom:14px"><a class="btn" href="gps.html" target="_blank" rel="noopener" style="display:inline-block;text-decoration:none">🛰 Открыть GPS-пульт</a> <span style="color:var(--muted);font-size:13px;margin-left:8px">карта, живые позиции, история и маршрут в отдельной вкладке</span></div>'+
+      '<div class="note" style="margin-bottom:14px">🛰 <b>GPS · Пробег</b> — сколько километров прошла каждая машина за выбранный период, по данным трекеров. Ниже — когда меняли масло и сколько проехали с тех пор.</div>';
     if(opt&&opt.calc){
       b.innerHTML=note+_trkPerBtns()+'<div class="card"><span style="color:var(--muted)">⏳ Считаю пробег по трекерам — это занимает до минуты…</span></div>';
       return;

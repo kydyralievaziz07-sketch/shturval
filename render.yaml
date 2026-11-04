@@ -72,6 +72,8 @@ services:
         sync: false
       - key: WIALON_TOKEN
         sync: false
+      - key: GPS_VIEW_KEY
+        sync: false
 
       # --- WhatsApp ---
       - key: WA_TOKEN

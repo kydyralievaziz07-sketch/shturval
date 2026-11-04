@@ -91,6 +91,8 @@ def load_secret():
     # GPS-мониторинг автопарка (Wialon Remote API, хостинг GPS Realcom)
     cfg["WIALON_HOST"] = env("WIALON_HOST")
     cfg["WIALON_TOKEN"] = env("WIALON_TOKEN")
+    # Личная ссылка на GPS-пульт (gps.html#k=...): смотреть карту без логина. Пусто — ссылка выключена.
+    cfg["GPS_VIEW_KEY"] = env("GPS_VIEW_KEY")
     # Название компании для этого деплоя (мульти-тенант: bizmart / freeways / joru...)
     cfg["BRAND_NAME"] = env("BRAND_NAME") or "Штурвал"
     return cfg
@@ -330,6 +332,7 @@ SECTION_OF = [
     ("/api/suppliers", "supl"), ("/api/expenses", "fin"),
     ("/api/rent", "rent"),
     ("/api/track", "rent"),
+    ("/api/gps", "rent"),
     ("/api/market", "market"),
     ("/api/chats", "chats"), ("/api/chat", "chats"), ("/api/send", "chats"),
     ("/api/bot-feedback", "chats"),
@@ -371,6 +374,10 @@ def _allowed(user, path):
     # дашборд показывает сводку amoCRM → доступ к /api/overview даём и роли "dash", и "crm"
     if path.startswith("/api/overview"):
         return _can(user, "crm") or _can(user, "dash")
+    # GPS-пульт: где сейчас машины видит только владелец кабинета или тот, кому дали право rent_gps
+    if path.startswith("/api/gps"):
+        s = (user or {}).get("sections", []) or []
+        return bool((user or {}).get("owner")) or ("all" in s) or ("rent_gps" in s)
     # Авто Рент: доступ даёт «rent» (весь раздел) ИЛИ любое под-разрешение «rent_*» (отдельные вкладки)
     if path.startswith("/api/rent") or path.startswith("/api/track"):
         s = (user or {}).get("sections", [])
@@ -1547,7 +1554,17 @@ TRACK_SKIP = ("uburu", "убару")
 def wia_on():
     return bool(CFG.get("WIALON_HOST") and CFG.get("WIALON_TOKEN"))
 
+# Режим «только просмотр»: к Wialon уходят ТОЛЬКО читающие вызовы. Команды трекерам
+# (блокировка двигателя и т.п.) сюда намеренно не входят и отсекаются до обращения к сети.
+WIA_READ_SVC = frozenset(("token/login", "core/search_items", "messages/load_interval",
+                          "messages/load_last", "messages/unload"))
+
+class WiaReadOnly(PermissionError):
+    pass
+
 def _wia_raw(svc, params, sid=None, timeout=90):
+    if svc not in WIA_READ_SVC:
+        raise WiaReadOnly("Wialon: разрешено только чтение, вызов %r запрещён" % (svc,))
     q = {"svc": svc, "params": json.dumps(params, ensure_ascii=False)}
     if sid:
         q["sid"] = sid
@@ -1814,6 +1831,524 @@ def track_get(company, period, interval_km):
         _TRACK_CALC.add(key)
         threading.Thread(target=worker, daemon=True).start()
     return {"ready": False, "status": "Считаю пробег по трекерам…"}
+
+# ====== GPS-ПУЛЬТ (только просмотр): где машины сейчас, история за день, пробег ======
+# Страница gps.html в отдельной вкладке. Команд трекерам нет: см. WIA_READ_SVC.
+# Память: сервер и так живёт впритык к 512 МБ, поэтому в процессе держим только маленький
+# снимок позиций, а историю пропускаем транзитом — одна машина, один день, один запрос за раз.
+import math
+
+GPS_LIVE_FLAGS = 0x203401   # база + позиция и последнее сообщение + датчики + счётчики + связь
+GPS_LIVE_TTL = 5            # снимок позиций живёт 5 с: сколько бы вкладок ни было открыто
+GPS_STALE_S = 600           # при сбое Wialon показываем последний снимок, если ему меньше 10 минут
+GPS_CARS_TTL = 120          # список машин меняется редко, а документ аренды большой
+GPS_FRESH_S = 300           # «едет» и «заведена» верим, только если сигнал моложе 5 минут
+GPS_OFFLINE_S = 3600        # молчит больше часа — «нет сигнала»
+GPS_MOVING_KMH = 3          # ниже этой скорости стоит (дрожание GPS)
+GPS_HIST_DAYS = 92          # насколько назад можно смотреть историю
+GPS_HIST_MAX_MSGS = 3000    # потолок сообщений за один запрос (активная машина: ~1500 в сутки)
+GPS_PTS_MAX = 1500          # потолок точек трека в ответе
+GPS_STOPS_MAX = 200
+GPS_KM_MAX_DAYS = 92
+GPS_KM_BYDAY_MAX = 31
+GPS_KM_TTL = 900
+GPS_KM_CACHE_MAX = 64
+GPS_RSS_GUARD_MB = 450      # память на пределе — тяжёлые запросы отклоняем, а не падаем
+GPS_VERSION = "1.0"
+GPS_HIDE_PARAMS = ("iccid", "io_11", "io_14")   # номера SIM-карт на экране не нужны
+
+_GPS_SID = {}               # "live"/"hist" → sid: история грузится в своей сессии и не мешает живым позициям
+_GPS_SID_LOCKS = {"live": threading.Lock(), "hist": threading.Lock()}
+_GPS_TOKEN_FL = {"fl": None}
+_GPS_LIVE = {"data": None, "params": {}}
+_GPS_LIVE_LOCK = threading.Lock()
+_GPS_HIST_LOCK = threading.Lock()
+_GPS_CARS = {}
+_GPS_KM_CACHE = {}
+# Вход по личной ссылке: виртуальный пользователь, которому открыто только чтение карты.
+_GPS_VIEW_USER = {"name": "GPS-ссылка", "login": "gps-view", "sections": ["rent_gps"],
+                  "company": COMPANY_ID, "owner": False, "gps_view": True}
+
+class WiaError(Exception):
+    """Wialon ответил кодом ошибки."""
+    def __init__(self, code, svc=""):
+        Exception.__init__(self, "Wialon error %s" % code)
+        self.code = code
+        self.svc = svc
+
+def _gps_view_user(got):
+    """Пользователь по ключу из личной ссылки. Нет или слишком короткий ключ на сервере — ссылка не работает."""
+    key = (CFG.get("GPS_VIEW_KEY") or "").strip()
+    got = (got or "").strip()
+    if len(key) < 24 or not got:
+        return None
+    return _GPS_VIEW_USER if hmac.compare_digest(key.encode("utf-8"), got.encode("utf-8")) else None
+
+def _gps_errmsg(e):
+    """Понятный текст для экрана. Текст исключения наружу не отдаём: в адресе запроса к Wialon есть токен."""
+    if isinstance(e, WiaError):
+        return {1: "Сессия Wialon сброшена, повторите",
+                7: "Нет прав на чтение у ключа Wialon",
+                1001: "Нет сообщений за этот период",
+                1003: "Трекеры сейчас заняты, повторите"}.get(e.code, "Ошибка Wialon %s" % e.code)
+    return "Сервер трекеров не отвечает"
+
+def _gps_log(where, e):
+    print("[gps] %s: %s %s" % (where, type(e).__name__, getattr(e, "code", "")))
+
+def _gps_sid(kind, force=False):
+    if not force and _GPS_SID.get(kind):
+        return _GPS_SID[kind]
+    with _GPS_SID_LOCKS[kind]:        # медленный вход для истории не задерживает живые позиции
+        if force or not _GPS_SID.get(kind):
+            res = _wia_raw("token/login", {"token": CFG["WIALON_TOKEN"]}, timeout=20)
+            if not isinstance(res, dict) or not res.get("eid"):
+                raise WiaError((res or {}).get("error", 0) if isinstance(res, dict) else 0, "token/login")
+            _GPS_SID[kind] = res["eid"]
+            try:
+                _GPS_TOKEN_FL["fl"] = json.loads(res.get("token") or "{}").get("fl")
+            except Exception:
+                pass
+        return _GPS_SID[kind]
+
+def _gps_call(kind, svc, params, timeout=60):
+    """Вызов Wialon в своей сессии. Протухшую сессию (error 1) лечим одним перелогином и повтором."""
+    sid = _gps_sid(kind)
+    res = _wia_raw(svc, params, sid, timeout)
+    if isinstance(res, dict) and res.get("error") == 1:
+        sid = _gps_sid(kind, force=_GPS_SID.get(kind) == sid)   # другой поток мог уже перелогиниться
+        res = _wia_raw(svc, params, sid, timeout)
+    if isinstance(res, dict) and res.get("error"):
+        raise WiaError(res["error"], svc)
+    return res
+
+def _gps_cars():
+    """Машины обоих кабинетов проката: только то, что нужно карте. Кабинеты сопоставляются по очереди."""
+    now = time.time()
+    hit = _GPS_CARS.get("v")
+    if hit and now - hit[0] < GPS_CARS_TTL:
+        return hit[1]
+    groups = []
+    try:
+        for br in ("",) + tuple(sorted(RENT_BRANCHES)):
+            _REQ.rent_branch = br
+            d = rent_doc(COMPANY_ID)
+            active = set()
+            for r in d.get("rentals", []):
+                st = str(r.get("status") or "").lower()
+                if st and "заверш" not in st:
+                    active.add((r.get("model") or "").strip().lower())
+            rows = []
+            for c in d.get("cars", []):
+                man = (c.get("status") or "").strip()
+                if man.startswith("Прода"):
+                    continue
+                if "ремонт" in man.lower():
+                    live = man
+                else:
+                    live = "В аренде" if (c.get("model") or "").strip().lower() in active else "Свободна"
+                rows.append({"id": c.get("id"), "model": c.get("model", ""), "plate": c.get("plate", ""),
+                             "status_live": live})
+            groups.append(rows)
+    finally:
+        _REQ.rent_branch = ""
+    if hit and not any(groups):       # база моргнула — не теряем названия машин на карте
+        return hit[1]
+    _GPS_CARS["v"] = (now, groups)
+    return groups
+
+def _gps_loose_match(cars, units):
+    """Вторая попытка для подписей на карте: в учёте номера бывают с опечаткой в букве или без «KG»,
+    поэтому сверяем цифры номера, а затем слово из названия модели, если совпадение единственное."""
+    out, used = {}, set()
+    def digits(s):
+        return set(d for d in (re.sub(r"\D", "", p) for p in _track_plates(s)) if len(d) >= 5)
+    for c in cars:
+        keys = digits(c.get("plate", "")) | digits(c.get("model", ""))
+        hits = [u for u in units if u["id"] not in used and keys & digits(u.get("nm", ""))]
+        if len(hits) == 1:
+            out[c.get("id")] = hits[0]
+            used.add(hits[0]["id"])
+    for c in cars:
+        if c.get("id") in out:
+            continue
+        words = [_track_norm(w) for w in re.split(r"\s+", c.get("model") or "") if len(w) >= 4]
+        hits = [u for u in units if u["id"] not in used and any(w and w in _track_norm(u.get("nm", "")) for w in words)]
+        if len(hits) == 1:
+            out[c.get("id")] = hits[0]
+            used.add(hits[0]["id"])
+    return out
+
+def _gps_pairs(groups, units):
+    """Какая машина на каком объекте Wialon → ({unit_id: машина}, машины без трекера)."""
+    by_unit, no_tracker, rest = {}, [], list(units)
+    for cars in groups:
+        pairs = track_match(cars, rest)
+        taken = set(u["id"] for u in pairs.values())
+        pairs.update(_gps_loose_match([c for c in cars if c.get("id") not in pairs],
+                                      [u for u in rest if u["id"] not in taken]))
+        for c in cars:
+            u = pairs.get(c.get("id"))
+            if u:
+                by_unit[u["id"]] = c
+            else:
+                no_tracker.append(c)
+        used = set(u["id"] for u in pairs.values())
+        rest = [u for u in rest if u["id"] not in used]
+    return by_unit, no_tracker
+
+def _gps_parse_unit(u, now):
+    """Объект Wialon → плоская запись для карты. Сырые параметры дальше не идут."""
+    pos = u.get("pos") or {}
+    lmsg = u.get("lmsg") or {}
+    p = lmsg.get("p") or {}
+    ign = blk = volt = None
+    sens = u.get("sens") or {}
+    for s in (sens.values() if isinstance(sens, dict) else sens):
+        if not isinstance(s, dict):
+            continue
+        t, name, par = (s.get("t") or "").lower(), (s.get("n") or "").lower(), s.get("p")
+        if t == "engine operation" and ign is None:
+            ign = p.get(par)
+        elif t == "digital" and "глуш" in name and blk is None:
+            blk = p.get(par)
+        elif t == "voltage" and volt is None:
+            volt = p.get(par)
+    last_t = max(int(pos.get("t") or 0), int(lmsg.get("t") or 0)) or None
+    age = int(now - last_t) if last_t else None
+    pos_age = int(now - pos["t"]) if pos.get("t") else None
+    speed = pos.get("s") or 0
+    row = {"unit_id": u.get("id"), "unit": u.get("nm", ""),
+           "lat": pos.get("y"), "lon": pos.get("x"), "speed": speed, "course": pos.get("c"),
+           "sats": pos.get("sc"), "pos_t": pos.get("t"), "pos_age_s": pos_age, "last_t": last_t, "age_s": age,
+           "online": u.get("netconn") == 1,
+           "ignition": None if ign is None else bool(ign),
+           "blocked": None if blk is None else bool(blk),
+           "volt": volt, "odo": u.get("cnm"), "engine_h": u.get("cneh")}
+    row["state"] = _gps_state(row)
+    return row
+
+def _gps_state(r):
+    """едет / стоит заведённая / на парковке / нет сигнала. Передачу (P/D) трекеры не передают."""
+    if r.get("lat") is None or r.get("age_s") is None or r["age_s"] > GPS_OFFLINE_S:
+        return "offline"
+    if r["age_s"] <= GPS_FRESH_S:
+        pos_age = r.get("pos_age_s")
+        if (r.get("speed") or 0) >= GPS_MOVING_KMH and (pos_age is None or pos_age <= GPS_FRESH_S):
+            return "moving"
+        if r.get("ignition"):
+            return "idle"
+    return "parked"
+
+def _gps_live_build(units):
+    now = int(time.time())
+    try:
+        groups = _gps_cars()
+    except Exception as e:            # без названий машин карта всё равно должна работать
+        _gps_log("cars", e)
+        groups = []
+    by_unit, no_tracker = _gps_pairs(groups, units)
+    cars, counts, params = [], {"units": 0, "moving": 0, "idle": 0, "parked": 0, "offline": 0}, {}
+    for u in units:
+        row = _gps_parse_unit(u, now)
+        c = by_unit.get(u.get("id"))
+        row.update({"car_id": (c or {}).get("id"), "model": (c or {}).get("model", ""),
+                    "plate": (c or {}).get("plate", ""), "status_live": (c or {}).get("status_live", "")})
+        cars.append(row)
+        counts["units"] += 1
+        counts[row["state"]] += 1
+        lm = u.get("lmsg") or {}
+        params[u.get("id")] = {"t": lm.get("t"), "p": dict((k, v) for k, v in (lm.get("p") or {}).items()
+                                                           if k not in GPS_HIDE_PARAMS)}
+    _GPS_LIVE["params"] = params          # замещается целиком, ничего не накапливается
+    return {"ok": True, "readonly": True, "stale": False, "ts": now, "cars": cars,
+            "no_tracker": [{"car_id": c.get("id"), "model": c.get("model", ""), "plate": c.get("plate", ""),
+                            "status_live": c.get("status_live", "")} for c in no_tracker],
+            "counts": counts}
+
+def _gps_live_stale(old, msg):
+    if old and time.time() - old["ts"] < GPS_STALE_S:
+        return dict(old, ok=False, stale=True, error=msg)
+    return {"ok": False, "readonly": True, "stale": True, "error": msg, "ts": int(time.time()), "cars": [],
+            "no_tracker": [], "counts": {"units": 0, "moving": 0, "idle": 0, "parked": 0, "offline": 0}}
+
+def _gps_live():
+    """Снимок всех машин. Кэш 5 с: в Wialon ходит один поток, остальные берут готовое."""
+    data = _GPS_LIVE["data"]
+    if data and time.time() - data["ts"] < GPS_LIVE_TTL:
+        return data
+    if not _GPS_LIVE_LOCK.acquire(timeout=25):
+        return _gps_live_stale(data, "Сервер трекеров не отвечает")
+    try:
+        data = _GPS_LIVE["data"]
+        if data and time.time() - data["ts"] < GPS_LIVE_TTL:
+            return data
+        try:
+            res = _gps_call("live", "core/search_items", {
+                "spec": {"itemsType": "avl_unit", "propName": "sys_name",
+                         "propValueMask": "*", "sortType": "sys_name"},
+                "force": 1, "flags": GPS_LIVE_FLAGS, "from": 0, "to": 0}, timeout=20)
+            fresh = _gps_live_build(res.get("items") or [])
+            _GPS_LIVE["data"] = fresh
+            return fresh
+        except Exception as e:
+            _gps_log("live", e)
+            return _gps_live_stale(data, _gps_errmsg(e))
+    finally:
+        _GPS_LIVE_LOCK.release()
+
+def _gps_unit_arg(q):
+    """id объекта из запроса. Принимаем только объекты из текущего списка, чужие id в Wialon не уходят."""
+    s = (q.get("unit", [""])[0] or "").strip()
+    if not re.match(r"^\d{1,10}$", s):
+        return None
+    uid = int(s)
+    return uid if any(c.get("unit_id") == uid for c in _gps_live().get("cars", [])) else None
+
+def _gps_day_bounds(s):
+    """'YYYY-MM-DD' → (начало, конец) суток по Бишкеку. None — неверная дата или вне окна истории."""
+    import datetime
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", s or ""):
+        return None
+    y, m, d = (int(x) for x in s.split("-"))
+    try:
+        datetime.date(y, m, d)
+    except Exception:
+        return None
+    t0 = calendar.timegm((y, m, d, 0, 0, 0, 0, 0)) - WIA_TZ
+    now = int(time.time())
+    if t0 > now or t0 < now - (GPS_HIST_DAYS + 1) * 86400:
+        return None
+    return t0, min(t0 + 86399, now)
+
+def _gps_haversine(a_lat, a_lon, b_lat, b_lon):
+    """Расстояние между точками, км."""
+    p1, p2 = math.radians(a_lat), math.radians(b_lat)
+    dp, dl = p2 - p1, math.radians(b_lon - a_lon)
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 6371.0 * 2 * math.asin(min(1.0, math.sqrt(h)))
+
+def _gps_track_reduce(msgs, min_stop):
+    """Один проход по сообщениям дня: точки трека (прорежены), стоянки, пробег, время в движении."""
+    pts, stops = [], []
+    km_geo, moving_s, vmax = 0.0, 0, 0
+    min_lat = min_lon = max_lat = max_lon = None
+    first_t = last_t = None
+    prev = kept = run = None        # prev/kept: (lat, lon, t, s); run: текущая серия «стоит»
+
+    def add_stop(lat, lon, t0, t1, open_start=False, open_end=False):
+        if len(stops) >= GPS_STOPS_MAX:
+            return
+        st = {"lat": round(lat, 6), "lon": round(lon, 6), "from": t0, "to": t1, "dur_s": t1 - t0}
+        if open_start:
+            st["open_start"] = True
+        if open_end:
+            st["open_end"] = True
+        stops.append(st)
+
+    for m in msgs:
+        pos = m.get("pos") or {}
+        lat, lon, t = pos.get("y"), pos.get("x"), pos.get("t") or m.get("t")
+        if lat is None or lon is None or not t or (not lat and not lon):
+            continue
+        if pos.get("sc") is not None and pos["sc"] < 3:
+            continue                    # плохой приём: координаты ненадёжны
+        s = pos.get("s") or 0
+        if s <= 250:
+            vmax = max(vmax, s)
+        if first_t is None:
+            first_t = t
+            min_lat = max_lat = lat
+            min_lon = max_lon = lon
+        last_t = t
+        min_lat, max_lat = min(min_lat, lat), max(max_lat, lat)
+        min_lon, max_lon = min(min_lon, lon), max(max_lon, lon)
+        dt = dist = 0
+        if prev:
+            dt = t - prev[2]
+            dist = _gps_haversine(prev[0], prev[1], lat, lon)
+            if dt > 0 and dist / (dt / 3600.0) <= 200:     # отсекаем «прыжки» GPS
+                km_geo += dist
+            if dt <= 300 and (s > GPS_MOVING_KMH or prev[3] > GPS_MOVING_KMH):
+                moving_s += dt
+            if run is not None and dt >= min_stop and dist > 0.5:   # трекер молчал, а машина оказалась в другом месте
+                if run["t1"] - run["t0"] >= min_stop:
+                    add_stop(run["lat"], run["lon"], run["t0"], run["t1"], open_start=run["first"])
+                run = None
+        if s <= GPS_MOVING_KMH:
+            if run is None:
+                run = {"t0": t, "t1": t, "lat": lat, "lon": lon, "n": 1, "first": prev is None}
+                if prev and dt >= min_stop and dist <= 0.5:   # трекер молчал, пока машина стояла
+                    run["t0"] = prev[2]
+            else:
+                run["t1"] = t
+                run["n"] += 1
+                run["lat"] += (lat - run["lat"]) / run["n"]
+                run["lon"] += (lon - run["lon"]) / run["n"]
+        else:
+            if run is not None:
+                if t - run["t0"] >= min_stop:
+                    add_stop(run["lat"], run["lon"], run["t0"], t, open_start=run["first"])
+                run = None
+            elif prev and dt >= min_stop and dist <= 0.5:
+                add_stop(prev[0], prev[1], prev[2], t)
+        if kept is None or _gps_haversine(kept[0], kept[1], lat, lon) >= 0.015 \
+                or (s > GPS_MOVING_KMH and t - kept[2] >= 60):
+            kept = (lat, lon, t, s)
+            pts.append([round(lat, 6), round(lon, 6), t, s])
+        prev = (lat, lon, t, s)
+    if run is not None and run["t1"] - run["t0"] >= min_stop:
+        add_stop(run["lat"], run["lon"], run["t0"], run["t1"], open_start=run["first"], open_end=True)
+    if prev and kept and kept[2] != prev[2]:
+        pts.append([round(prev[0], 6), round(prev[1], 6), prev[2], prev[3]])
+    if len(pts) > GPS_PTS_MAX:
+        last = pts[-1]
+        pts = pts[::int(math.ceil(len(pts) / float(GPS_PTS_MAX)))]
+        if pts[-1] is not last:
+            pts.append(last)
+    a, b = _wia_odo(msgs), _wia_odo(msgs[::-1])
+    km, src = round(km_geo, 1), "geo"
+    if a is not None and b is not None and b >= a and (b - a) / 1000.0 <= 2000:
+        km, src = round((b - a) / 1000.0, 1), "odometer"
+    return {"km": km if first_t is not None else None, "km_src": src, "km_geo": round(km_geo, 1),
+            "moving_s": moving_s, "max_speed": vmax, "first_t": first_t, "last_t": last_t,
+            "bounds": [[min_lat, min_lon], [max_lat, max_lon]] if first_t is not None else None,
+            "points": pts, "stops": stops}
+
+def _gps_history(unit_id, t0, t1, min_stop):
+    """Трек, стоянки и километры одной машины за одни сутки. Без кэша, один запрос за раз на процесс."""
+    if _mem_rss_mb() > GPS_RSS_GUARD_MB:
+        print("[gps] history отказ: память %.0f МБ" % _mem_rss_mb())
+        return 503, {"ok": False, "error": "Сервер сейчас перегружен, повторите через минуту", "retry": 60}
+    if not _GPS_HIST_LOCK.acquire(timeout=0.1):
+        return 503, {"ok": False, "error": "История уже загружается, повторите через 5 секунд", "retry": 5}
+    res = msgs = None
+    loaded = False
+    try:
+        try:
+            res = _gps_call("hist", "messages/load_interval", {
+                "itemId": unit_id, "timeFrom": t0, "timeTo": t1, "flags": 1, "flagsMask": 65281,
+                "loadCount": GPS_HIST_MAX_MSGS}, timeout=60)
+            loaded = True
+        except WiaError as e:
+            if e.code != 1001:
+                raise
+            res = {}
+        msgs = (res or {}).get("messages") or []
+        out = _gps_track_reduce(msgs, min_stop)
+        out.update({"ok": True, "unit_id": unit_id, "from": t0, "to": t1, "min_stop": min_stop,
+                    "msgs": len(msgs), "truncated": len(msgs) >= GPS_HIST_MAX_MSGS, "next_from": None})
+        if out["truncated"]:
+            out["next_from"] = int(msgs[-1].get("t") or t1) + 1
+        return 200, out
+    except WiaError as e:
+        _gps_log("history", e)
+        if e.code == 1003:
+            return 503, {"ok": False, "error": _gps_errmsg(e), "retry": 10}
+        return 200, {"ok": False, "error": _gps_errmsg(e)}
+    except Exception as e:
+        _gps_log("history", e)
+        return 200, {"ok": False, "error": _gps_errmsg(e)}
+    finally:
+        if loaded:
+            try:
+                _gps_call("hist", "messages/unload", {}, timeout=20)
+            except Exception:
+                pass
+        res = msgs = None
+        _GPS_HIST_LOCK.release()
+        _mem_release()
+
+def _gps_mileage(uid, t0, t1):
+    """Пробег за интервал, км: одометр в конце минус одометр в начале, по ОДНОМУ сообщению с краёв."""
+    a = None
+    for span in (48 * 3600, 7 * 86400, 31 * 86400):
+        t_end = min(t1, t0 + span)
+        try:
+            r = _gps_call("hist", "messages/load_interval", {"itemId": uid, "timeFrom": t0, "timeTo": t_end,
+                                                            "flags": 0, "flagsMask": 0, "loadCount": 1})
+        except WiaError as e:
+            if e.code != 1001:
+                raise
+            r = {}
+        a = _wia_odo((r or {}).get("messages"))
+        if a is not None or t_end >= t1:
+            break
+    if a is None:
+        return None
+    try:
+        r = _gps_call("hist", "messages/load_last", {"itemId": uid, "lastTime": t1, "lastCount": 1,
+                                                    "flags": 0, "flagsMask": 0, "loadCount": 1})
+    except WiaError as e:
+        if e.code != 1001:
+            raise
+        return None
+    b = _wia_odo((r or {}).get("messages"))
+    return None if b is None or b < a else round((b - a) / 1000.0, 1)
+
+def _gps_km(unit_id, d_from, d_to, by_day):
+    """Километры за период (и по дням, если просят). Лёгкий запрос: сам трек не выгружается."""
+    b0, b1 = _gps_day_bounds(d_from), _gps_day_bounds(d_to)
+    if not b0 or not b1 or b0[0] > b1[0]:
+        return 400, {"ok": False, "error": "Неверный период"}
+    n_days = (b1[0] - b0[0]) // 86400 + 1
+    if n_days > (GPS_KM_BYDAY_MAX if by_day else GPS_KM_MAX_DAYS):
+        return 400, {"ok": False, "error": "Слишком длинный период"}
+    key = (unit_id, d_from, d_to, by_day)
+    hit = _GPS_KM_CACHE.get(key)
+    if hit and time.time() - hit[0] < GPS_KM_TTL:
+        return 200, hit[1]
+    if _mem_rss_mb() > GPS_RSS_GUARD_MB:
+        return 503, {"ok": False, "error": "Сервер сейчас перегружен, повторите через минуту", "retry": 60}
+    if not _GPS_HIST_LOCK.acquire(timeout=0.1):
+        return 503, {"ok": False, "error": "История уже загружается, повторите через 5 секунд", "retry": 5}
+    loaded = False
+    try:
+        out = {"ok": True, "unit_id": unit_id, "from": d_from, "to": d_to,
+               "km": _gps_mileage(unit_id, b0[0], b1[1])}
+        if by_day:
+            out["days"] = []
+            for i in range(n_days):
+                t0 = b0[0] + i * 86400
+                out["days"].append({"date": time.strftime("%Y-%m-%d", time.gmtime(t0 + WIA_TZ)),
+                                    "km": _gps_mileage(unit_id, t0, min(t0 + 86399, b1[1]))})
+        _GPS_KM_CACHE[key] = (time.time(), out)
+        while len(_GPS_KM_CACHE) > GPS_KM_CACHE_MAX:
+            _GPS_KM_CACHE.pop(min(_GPS_KM_CACHE, key=lambda k: _GPS_KM_CACHE[k][0]), None)
+        loaded = True
+        return 200, out
+    except WiaError as e:
+        _gps_log("km", e)
+        if e.code == 1003:
+            return 503, {"ok": False, "error": _gps_errmsg(e), "retry": 10}
+        return 200, {"ok": False, "error": _gps_errmsg(e)}
+    except Exception as e:
+        _gps_log("km", e)
+        return 200, {"ok": False, "error": _gps_errmsg(e)}
+    finally:
+        if loaded:
+            try:
+                _gps_call("hist", "messages/unload", {}, timeout=20)
+            except Exception:
+                pass
+        _GPS_HIST_LOCK.release()
+
+def _gps_status():
+    """Самопроверка для владельца: режим просмотра, права ключа Wialon, память."""
+    try:
+        _gps_sid("live")
+    except Exception as e:
+        _gps_log("status", e)
+    fl = _GPS_TOKEN_FL.get("fl")
+    data = _GPS_LIVE["data"]
+    return {"ok": True, "readonly": True, "version": GPS_VERSION,
+            "token_flags": hex(fl) if isinstance(fl, int) else None,
+            "token_can_send_commands": bool(fl & 0x2000) if isinstance(fl, int) else None,
+            "svc_allowed": sorted(WIA_READ_SVC),
+            "view_link": len((CFG.get("GPS_VIEW_KEY") or "").strip()) >= 24,
+            "units": data["counts"]["units"] if data else None,
+            "live_age_s": int(time.time() - data["ts"]) if data else None,
+            "rss_mb": _mem_rss_mb(), "guard_mb": GPS_RSS_GUARD_MB, "hist_days": GPS_HIST_DAYS}
 
 # ====== АВТО-ВОРОНКА: классификация чатов по содержанию переписки ======
 # Ключевые слова (нижний регистр). Достаточно вхождения подстроки.
@@ -7330,6 +7865,81 @@ class Handler(BaseHTTPRequestHandler):
     def _authed(self):
         return self._user() is not None
 
+    def _gps_html_send(self):
+        """Страница GPS-пульта. Данных в файле нет, читаем с диска: в памяти процесса не держим."""
+        try:
+            with open(os.path.join(HERE, "..", "gps.html"), "rb") as f:
+                data = f.read()
+        except Exception:
+            return self._send(404, {"error": "не найдено"})
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        try:
+            self.wfile.write(data)
+        except Exception:
+            pass
+
+    def _gps_get(self):
+        """GET /api/gps/*: обычный вход (X-Auth/X-Login) или личная ссылка (X-GPS-Key, только чтение карты)."""
+        u = self._user() or _gps_view_user(self.headers.get("X-GPS-Key"))
+        if not u:
+            return self._send(401, {"error": "Требуется вход"})
+        if not _allowed(u, self.path):
+            return self._send(403, {"error": "Нет доступа к этому разделу"})
+        if (u.get("company") or COMPANY_ID) != COMPANY_ID:
+            return self._send(403, {"ok": False, "error": "GPS-пульт подключён только для кабинета владельца"})
+        _REQ.company = COMPANY_ID
+        _REQ.rent_branch = ""
+        if not wia_on():
+            return self._send(200, {"ok": False, "error": "GPS не подключён: нет WIALON_HOST / WIALON_TOKEN"})
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        sub = parsed.path[len("/api/gps/"):]
+        q = parse_qs(parsed.query)
+        if u.get("gps_view") and sub not in ("live", "history", "km", "unit"):
+            return self._send(403, {"error": "Нет доступа к этому разделу"})
+        try:
+            if sub == "live":
+                return self._send(200, dict(_gps_live(), now=int(time.time())))
+            if sub == "status":
+                return self._send(200, _gps_status())
+            if sub not in ("history", "km", "unit"):
+                return self._send(404, {"error": "не найдено"})
+            uid = _gps_unit_arg(q)
+            if uid is None:
+                return self._send(400, {"ok": False, "error": "Неизвестная машина"})
+            if sub == "unit":
+                info = _GPS_LIVE["params"].get(uid) or {}
+                return self._send(200, {"ok": True, "unit_id": uid, "t": info.get("t"), "params": info.get("p") or {}})
+            if sub == "km":
+                by_day = (q.get("by", [""])[0] or "") == "day"
+                code, out = _gps_km(uid, (q.get("from", [""])[0] or "").strip(),
+                                    (q.get("to", [""])[0] or "").strip(), by_day)
+                return self._send(code, out)
+            bounds = _gps_day_bounds((q.get("date", [""])[0] or "").strip())
+            if not bounds:
+                return self._send(400, {"ok": False, "error": "Неверная дата: история хранится %d дн." % GPS_HIST_DAYS})
+            t0, t1 = bounds
+            try:
+                min_stop = int(q.get("min_stop", ["300"])[0])
+                if q.get("from"):
+                    t0 = int(q["from"][0])       # дозагрузка длинного дня с места обрыва
+            except Exception:
+                return self._send(400, {"ok": False, "error": "Неверный запрос"})
+            if not (60 <= min_stop <= 3600) or not (bounds[0] <= t0 <= t1):
+                return self._send(400, {"ok": False, "error": "Неверный запрос"})
+            code, out = _gps_history(uid, t0, t1, min_stop)
+            return self._send(code, out)
+        except WiaReadOnly as e:
+            _gps_log("readonly", e)
+            return self._send(403, {"ok": False, "error": "Команды трекерам запрещены: пульт только для просмотра"})
+        except Exception as e:
+            _gps_log(sub, e)
+            return self._send(200, {"ok": False, "error": _gps_errmsg(e)})
+
     def do_POST(self):
         # Приостановка за неоплату — записи тоже закрыты (см. PAY_LOCK).
         if PAY_LOCK and self.path.startswith("/api/"):
@@ -8554,6 +9164,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if PAY_LOCK and self.path.startswith("/api/"):
             return self._send(402, {"error": PAY_LOCK_MSG, "paylock": PAY_LOCK_MSG})
+        if self.path.split("?", 1)[0] == "/gps.html":
+            return self._gps_html_send()
         # Свой фронтенд для деплоев без отдельного статического хостинга (не-Бизмарт компании).
         if self.path == "/" or self.path.startswith("/index.html"):
             data = _index_html()
@@ -8672,6 +9284,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.end_headers()
                 self.wfile.write(("<h2>Ошибка</h2><pre>%s</pre>" % str(e)).encode())
             return
+        if self.path.startswith("/api/gps/"):
+            return self._gps_get()       # проверяет вход сам: кроме логина принимает личную ссылку
         # всё остальное под /api/ — нужен вход и доступ к разделу
         if self.path.startswith("/api/"):
             u = self._user()

@@ -21,3 +21,9 @@ bot_feedback.log
 backend/payroll.json
 payroll.json
 RESTORE.py
+graphify-out/
+# локальные заметки и копии с паролями и токенами: репозиторий публичный
+backup/
+Знания/
+CLAUDE.md
+О-ПРОЕКТЕ.md
