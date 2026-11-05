@@ -76,11 +76,14 @@
   #grab::before{content:"";width:40px;height:5px;border-radius:3px;background:var(--line)}
   #strip{display:flex;gap:8px;overflow-x:auto;padding:0 12px 12px;flex:none;scrollbar-width:none;-webkit-overflow-scrolling:touch}
   #strip::-webkit-scrollbar{display:none}
+  #chips{display:flex;gap:8px}
+  .chip.chip-all{position:sticky;left:12px;z-index:1;background:var(--accent);color:var(--on-accent);padding:4px 14px 4px 10px;box-shadow:-12px 0 0 var(--panel),8px 0 10px var(--panel)}
+  .chip-v{font-weight:700;color:var(--moving-t);font-variant-numeric:tabular-nums}
   .chip{display:flex;align-items:center;gap:8px;flex:none;min-height:44px;padding:4px 12px 4px 6px;background:var(--panel2);border-radius:22px;font-size:13px;font-weight:600;white-space:nowrap}
   .chip small{font-weight:500;color:var(--muted);font-variant-numeric:tabular-nums}
   #scroll{overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;flex:1 1 auto;min-height:0}
   #panel[data-view="list"][data-size="min"] #scroll{display:none}
-  #panel[data-view="list"][data-size="mid"] #strip,#panel[data-view="car"] #strip{display:none}
+  #panel[data-view="list"][data-size="full"] #strip,#panel[data-view="car"] #strip{display:none}
   #panel[data-view="car"] #list-box,#panel[data-view="list"] #card{display:none}
   #panel[data-view="car"][data-size="min"] .card-more{display:none}
 
@@ -99,6 +102,7 @@
   .mk .bdg{width:34px;height:34px;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35)}
   .mk.sel .bdg{width:38px;height:38px;box-shadow:0 0 0 4px rgba(47,111,237,.45),0 2px 8px rgba(0,0,0,.4)}
   .mk-l{position:absolute;top:38px;left:50%;transform:translateX(-50%);padding:1px 6px;background:rgba(255,255,255,.94);color:#1b2030;border-radius:6px;font-size:11px;font-weight:600;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+  .mk-v{position:absolute;bottom:40px;left:50%;transform:translateX(-50%);padding:1px 6px;background:#0b7a45;color:#fff;border-radius:6px;font-size:12px;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums;box-shadow:0 1px 3px rgba(0,0,0,.35)}
   .hide-labels .mk-l{display:none}
   .hide-labels .mk.sel .mk-l{display:block}
   .me-dot{width:18px;height:18px;border-radius:50%;background:#1a73e8;border:3px solid #fff;box-shadow:0 0 0 2px rgba(26,115,232,.35),0 1px 4px rgba(0,0,0,.4)}
@@ -106,14 +110,23 @@
   .stop-mk{width:24px;height:24px;border-radius:50%;background:#7c3aed;color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)}
 
   /* список */
+  #list-head{position:sticky;top:0;z-index:2;background:var(--panel)}
+  .lh-row{display:flex;align-items:center;gap:10px;padding:0 14px 8px}
+  #list-title{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
+  #list-close{margin-left:auto;min-height:40px;padding:0 14px;border-radius:20px;background:var(--panel2);font-size:14px;font-weight:600}
+  #list-warn{display:none;margin:0 12px 10px;padding:8px 12px;background:var(--panel2);border-left:4px solid var(--idle);border-radius:10px;font-size:13px}
   #filters{display:flex;gap:6px;overflow-x:auto;padding:0 12px 10px;scrollbar-width:none}
   #filters::-webkit-scrollbar{display:none}
   .flt{flex:none;min-height:36px;padding:0 12px;border-radius:18px;background:var(--panel2);font-size:13px;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums}
   .flt.on{background:var(--accent);color:var(--on-accent)}
   .row{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:10px 14px;min-height:60px;border-top:1px solid var(--line)}
-  .row:hover{background:var(--panel2)}
+  @media (hover:hover){ .row:hover{background:var(--panel2)} }
   .row-m{flex:1;min-width:0}
   .row-t{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row-t small{margin-left:6px;font-size:12px;font-weight:500;color:var(--muted);text-transform:uppercase}
+  .row-r{flex:none;min-width:74px;display:flex;flex-direction:column;align-items:flex-end;gap:1px}
+  .spd{font-size:15px;font-weight:600;line-height:1.25;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .spd.live{font-size:18px;font-weight:700;color:var(--moving-t)}
   .row-s{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .age{flex:none;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
   .age.fresh{color:var(--moving-t)} .age.warn{color:var(--idle-t)} .age.old{color:var(--offline-t)}
@@ -127,6 +140,8 @@
   .card-title{font-size:17px;font-weight:700;line-height:1.25;overflow-wrap:anywhere}
   .card-sub{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
   .card-x{width:44px;height:44px;margin:-8px -10px 0 auto;flex:none;display:flex;align-items:center;justify-content:center;color:var(--muted)}
+  .spd-big{font-size:28px;font-weight:800;line-height:1.1;color:var(--moving-t);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .spd-big small{font-size:14px;font-weight:700}
   .state-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;font-weight:600;margin-bottom:10px}
   .btns{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
   .btn{min-height:44px;padding:8px 10px;border-radius:12px;background:var(--panel2);font-size:14px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:6px;text-align:center}
@@ -176,7 +191,13 @@
 
   #toast{position:fixed;z-index:2100;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top) + 58px);max-width:calc(100vw - 32px);width:max-content;padding:10px 14px;background:#1b2030;color:#fff;border-radius:12px;font-size:14px;box-shadow:var(--shadow)}
 
+  @media (max-width:899px){
+    #panel[data-size="full"]{height:calc(100vh - env(safe-area-inset-top) - 58px);height:calc(100dvh - env(safe-area-inset-top) - 58px);max-height:none}
+    body.list-full #fabs,body.list-full .leaflet-bottom{display:none}
+    body.list-full #list-warn{display:block}
+  }
   @media (min-width:900px){
+    #list-close{display:none}
     #panel{left:12px;top:12px;bottom:12px;right:auto;width:370px;max-height:none;border-radius:var(--radius);padding-bottom:0}
     #grab,#strip{display:none!important}
     #panel #scroll{display:block!important}
@@ -214,13 +235,20 @@
 
 <aside id="panel" data-view="list" data-size="min" aria-label="Машины">
   <button id="grab" aria-label="Развернуть или свернуть панель"></button>
-  <div id="strip"></div>
+  <div id="strip">
+    <button class="chip chip-all" id="list-open"><span class="ic" data-ic="list"></span>Список</button>
+    <div id="chips"></div>
+  </div>
   <div id="scroll">
     <div id="list-box">
-      <div id="filters"></div>
+      <div id="list-head">
+        <div class="lh-row"><span id="list-title">Все машины</span><button id="list-close">На карту</button></div>
+        <div id="list-warn" role="alert" hidden></div>
+        <div id="filters"></div>
+      </div>
       <div id="list"></div>
       <div id="no-tracker" class="note" hidden></div>
-      <div id="foot">Режим просмотра: команды трекерам отсюда не отправляются. Передачу (P/D) трекеры не сообщают, поэтому «на парковке» значит: стоит, зажигание выключено.<br>Карта © OpenStreetMap · GPS-пульт v1.0 · Штурвал v4.87.1</div>
+      <div id="foot">Режим просмотра: команды трекерам отсюда не отправляются. Передачу (P/D) трекеры не сообщают, поэтому «на парковке» значит: стоит, зажигание выключено.<br>Страница обновляется раз в 5 секунд, а скорость присылает трекер: на ходу обычно каждые несколько секунд, на прямой дороге реже, до раза в минуту. Об остановке он обычно сообщает с задержкой около минуты.<br>Карта © OpenStreetMap · GPS-пульт v1.1 · Штурвал v4.88.0</div>
     </div>
     <div id="card"></div>
   </div>
@@ -247,14 +275,17 @@
 'use strict';
 // Единственная настройка адреса сервера: переезд пульта на другой сервер — правка этой строки и CSP выше.
 const API=/^(localhost|127\.0\.0\.1)$/.test(location.hostname)?'http://'+location.hostname+':8787':'https://shturval-backend.onrender.com';
-const POLL_MS=10000, POLL_ERR_MS=15000, TZ_S=6*3600;
+const POLL_MS=5000, POLL_ERR_MS=15000, TZ_S=6*3600;
+// Цифре скорости верим 90 с: на ходу следующее сообщение трекера укладывается в это время в 99,7% случаев (замер 05.11.2026).
+const SPEED_LIVE_S=90;
 const PW_KEY='shturval_pw', LG_KEY='shturval_login', VIEW_KEY='shturval_gps_view', LAST_KEY='shturval_gps_last', THEME_KEY='shturval_gps_theme';
 const ICONS={
   menu:'<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>',
   locate:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>',
   fit:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
   close:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
-  arrow:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 19-7-4-7 4z"/></svg>'
+  arrow:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 19-7-4-7 4z"/></svg>',
+  list:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9 6h12M9 12h12M9 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>'
 };
 const STATE_ORDER={moving:0,idle:1,parked:2,offline:3};
 const COMPASS=['север','северо-восток','восток','юго-восток','юг','юго-запад','запад','северо-запад'];
@@ -294,6 +325,20 @@ function el(tag,attrs){
   return n;
 }
 function icon(name){ const s=el('span',{class:'ic'}); s.innerHTML=ICONS[name]; return s; }
+// Экран обновляем на месте, а не пересоздаём: при опросе раз в 5 с иначе сбивались бы нажатия, прокрутка и выделение.
+// Обработчики на узлах остаются старые, поэтому кнопка не запоминает машину, а узнаёт её в момент нажатия (data-id).
+function morph(a,b){
+  if(a.nodeType!==b.nodeType||a.nodeName!==b.nodeName){ a.replaceWith(b); return; }
+  if(a.nodeType===3){ if(a.data!==b.data) a.data=b.data; return; }
+  if(a.nodeType!==1) return;
+  Array.from(a.attributes).forEach(function(x){ if(!b.hasAttribute(x.name)) a.removeAttribute(x.name); });
+  Array.from(b.attributes).forEach(function(x){ if(a.getAttribute(x.name)!==x.value) a.setAttribute(x.name,x.value); });
+  syncKids(a,Array.from(b.childNodes));
+}
+function syncKids(box,kids){
+  kids.forEach(function(k,i){ const cur=box.childNodes[i]; if(cur) morph(cur,k); else box.appendChild(k); });
+  while(box.childNodes.length>kids.length) box.removeChild(box.lastChild);
+}
 let toastTimer=null;
 function toast(msg,ms){ const t=$('toast'); t.textContent=msg; t.hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(function(){ t.hidden=true; },ms||3500); }
 function isNum(x){ return typeof x==='number'&&isFinite(x); }
@@ -323,8 +368,16 @@ function dayStr(t){ return bishIso(t).slice(0,10); }
 function shiftDay(d,n){ const x=new Date(d+'T12:00:00Z'); x.setUTCDate(x.getUTCDate()+n); return x.toISOString().slice(0,10); }
 function dayRu(d){ return d.slice(8,10)+'.'+d.slice(5,7); }
 function sleep(ms){ return new Promise(function(r){ setTimeout(r,ms); }); }
-function stateText(c){
-  if(c.state==='moving') return 'Едет '+nf(c.speed)+' км/ч'+(dirOf(c.course)?' на '+dirOf(c.course):'');
+function speedLive(c){ return c.state==='moving'&&isNum(c.speed)&&isNum(c.pos_t)&&now()-c.pos_t<=SPEED_LIVE_S; }
+// Скорость для экрана. Если трекер замолчал на ходу, старая цифра уже не значит, что машина едет так сейчас.
+function speedNow(c){
+  if(c.state==='offline'||!isNum(c.speed)) return null;
+  if(c.state==='moving') return c.speed;
+  return c.speed<3?0:null;   // ниже 3 км/ч сервер считает, что машина стоит
+}
+function speedText(c){ const s=speedNow(c); return s===null?'—':nf(s)+' км/ч'; }
+function stateText(c,noSpeed){
+  if(c.state==='moving') return (speedLive(c)?'Едет':'Ехала')+(noSpeed?'':' '+nf(c.speed)+' км/ч')+(dirOf(c.course)?' на '+dirOf(c.course):'');
   if(c.state==='idle') return 'Стоит, двигатель заведён';
   if(c.state==='parked') return c.ignition===false?'На парковке':'Стоит';
   return 'Нет сигнала';
@@ -432,7 +485,7 @@ if(hasMap){
 function syncLabels(){ if(map) map.getContainer().classList.toggle('hide-labels',map.getZoom()<13); }
 function padding(){
   if(window.innerWidth>=900) return {paddingTopLeft:[396,70],paddingBottomRight:[30,30]};
-  return {paddingTopLeft:[30,76],paddingBottomRight:[70,$('panel').offsetHeight+30]};
+  return {paddingTopLeft:[30,76],paddingBottomRight:[70,Math.min($('panel').offsetHeight,window.innerHeight*.6)+30]};
 }
 function flyTo(lat,lon,zoom){
   if(!map) return;
@@ -522,17 +575,20 @@ document.addEventListener('visibilitychange',function(){
 });
 
 /* ---------- отрисовка ---------- */
-function renderAll(changed){ renderTop(); if(changed){ renderMarkers(); renderStrip(); renderList(); renderCard(); } }
+let liveKey='';
+function liveFlags(){ return CARS.map(speedLive).join(); }
+function renderAll(changed){ renderTop(); if(changed){ liveKey=liveFlags(); renderMarkers(); renderStrip(); renderList(); renderCard(); } }
 function renderTop(){
   const c=COUNTS;
   $('sum-t').textContent=c?('Едут: '+c.moving+' · Стоят: '+(c.idle+c.parked)+' · Нет сигнала: '+c.offline):'Загружаю…';
   $('dot').className=connBad?'bad':'';
-  const b=$('banner');
+  const b=$('banner'), lw=$('list-warn');
   if(connBad){
     const ago=lastGoodTs?ageText(now()-lastGoodTs):'';
     b.textContent=(connMsg||'Нет связи с сервером трекеров')+'. Пробую снова.'+(ago&&CARS.length?' Показаны данные, полученные '+ago+'.':'');
-    b.hidden=false;
-  }else b.hidden=true;
+    lw.textContent=b.textContent;   // открытый на весь экран список закрывает плашку над картой
+    b.hidden=false; lw.hidden=false;
+  }else{ b.hidden=true; lw.hidden=true; }
 }
 function renderMarkers(){
   if(!map) return;
@@ -545,11 +601,12 @@ function renderMarkers(){
       const root=el('div',{class:'mk'});
       const b=el('div',{class:'bdg'});
       const lb=el('div',{class:'mk-l'});
-      root.appendChild(b); root.appendChild(lb);
+      const sp=el('div',{class:'mk-v',hidden:true});
+      root.appendChild(b); root.appendChild(lb); root.appendChild(sp);
       const mk=L.marker([c.lat,c.lon],{icon:L.divIcon({className:'mk-wrap',html:root,iconSize:[38,38],iconAnchor:[19,19]}),title:carName(c),alt:carName(c),riseOnHover:true});
       mk.on('click',function(){ selectCar(c.unit_id,false); });
       mk.addTo(map);
-      m=markers[c.unit_id]={mk:mk,root:root,b:b,lb:lb,key:''};
+      m=markers[c.unit_id]={mk:mk,root:root,b:b,lb:lb,sp:sp,key:''};
     }else{
       m.mk.setLatLng([c.lat,c.lon]);
     }
@@ -557,6 +614,8 @@ function renderMarkers(){
     if(key!==m.key){ m.b.className='bdg st-'+c.state; fillBadge(m.b,c); m.key=key; }
     m.root.className='mk'+(selected===c.unit_id?' sel':'');
     m.lb.textContent=carName(c).slice(0,18);
+    m.sp.hidden=!speedLive(c);
+    if(!m.sp.hidden) m.sp.textContent=nf(c.speed)+' км/ч';
     m.mk.setZIndexOffset(selected===c.unit_id?1000:(c.state==='moving'?500:(c.state==='offline'?-500:0)));
   });
   Object.keys(markers).forEach(function(id){
@@ -573,25 +632,24 @@ function tickAges(){
   document.querySelectorAll('[data-age]').forEach(function(n){
     const t=Number(n.getAttribute('data-age'));
     if(!t) return;
-    const s=now()-t;
-    n.textContent=ageText(s);
-    n.className='age '+ageClass(s);
+    const s=now()-t, text=ageText(s), cls='age '+ageClass(s);
+    if(n.textContent!==text) n.textContent=text;
+    if(n.className!==cls) n.className=cls;
   });
-  if(connBad) renderTop();
+  // цифра скорости устарела, даже если опрос не удался: зелёной она оставаться не должна
+  if(liveFlags()!==liveKey) renderAll(true);
+  else if(connBad) renderTop();
 }
 function renderStrip(){
-  const box=$('strip'), sl=box.scrollLeft;
-  box.replaceChildren.apply(box,CARS.map(function(c){
-    return el('button',{class:'chip',onclick:function(){ selectCar(c.unit_id,true); },'aria-label':carName(c)+', '+stateText(c)},
-      badge(c),carName(c).slice(0,18),ageSpan(c));
+  syncKids($('chips'),CARS.map(function(c){
+    return el('button',{class:'chip','data-id':c.unit_id,'aria-label':carName(c)+', '+stateText(c)},
+      badge(c),carName(c).slice(0,18),speedLive(c)?el('span',{class:'chip-v',text:nf(c.speed)+' км/ч'}):ageSpan(c));
   }));
-  box.scrollLeft=sl;
 }
 function renderFilters(){
   const c=COUNTS||{units:CARS.length,moving:0,idle:0,parked:0,offline:0};
   const items=[['all','Все '+c.units],['moving','Едут '+c.moving],['stand','Стоят '+(c.idle+c.parked)],['offline','Нет сигнала '+c.offline]];
-  const box=$('filters');
-  box.replaceChildren.apply(box,items.map(function(i){
+  syncKids($('filters'),items.map(function(i){
     return el('button',{class:'flt'+(filter===i[0]?' on':''),text:i[1],onclick:function(){ filter=i[0]; renderList(); }});
   }));
 }
@@ -603,17 +661,19 @@ function passFilter(c){
 function renderList(){
   renderFilters();
   const rows=CARS.filter(passFilter);
-  const box=$('list');
+  $('list-title').textContent='Все машины'+(CARS.length?' · '+CARS.length:'');
   if(!rows.length){
-    box.replaceChildren(el('div',{class:'note',text:CARS.length?'В этой группе сейчас никого нет.':'Пока нет данных.'}));
+    syncKids($('list'),[el('div',{class:'note',text:CARS.length?'В этой группе сейчас никого нет.':'Пока нет данных.'})]);
   }else{
-    box.replaceChildren.apply(box,rows.map(function(c){
-      return el('button',{class:'row',onclick:function(){ selectCar(c.unit_id,true); }},
+    syncKids($('list'),rows.map(function(c){
+      return el('button',{class:'row','data-id':c.unit_id},
         badge(c),
         el('div',{class:'row-m'},
-          el('div',{class:'row-t',text:carName(c)}),
-          el('div',{class:'row-s t-'+c.state,text:stateText(c)+(c.status_live?' · '+c.status_live:'')})),
-        ageSpan(c));
+          el('div',{class:'row-t'},carName(c),c.plate?el('small',{text:c.plate}):null),
+          el('div',{class:'row-s t-'+c.state,text:stateText(c,true)+(c.status_live?' · '+c.status_live:'')})),
+        el('div',{class:'row-r'},
+          el('span',{class:'spd'+(speedLive(c)?' live':''),text:speedText(c)}),
+          ageSpan(c)));
     }));
   }
   const nt=$('no-tracker');
@@ -623,11 +683,27 @@ function renderList(){
   }else nt.hidden=true;
 }
 
+function pickFromList(e){
+  const b=e.target.closest('[data-id]');
+  if(b) selectCar(Number(b.getAttribute('data-id')),true);
+}
+$('list').addEventListener('click',pickFromList);
+$('chips').addEventListener('click',pickFromList);
+
 /* ---------- панель ---------- */
 const panel=$('panel');
+let backToList=false;   // карточку открыли из списка на весь экран: крестик возвращает в него, а не на карту
 function setView(v){ panel.setAttribute('data-view',v); }
-function setSize(s){ panel.setAttribute('data-size',s); }
-$('grab').addEventListener('click',function(){ setSize(panel.getAttribute('data-size')==='min'?'mid':'min'); });
+function setSize(s){
+  panel.setAttribute('data-size',s);
+  document.body.classList.toggle('list-full',s==='full'&&panel.getAttribute('data-view')==='list');
+}
+$('grab').addEventListener('click',function(){
+  const open=panel.getAttribute('data-size')!=='min';
+  setSize(open?'min':(panel.getAttribute('data-view')==='list'?'full':'mid'));
+});
+$('list-open').addEventListener('click',function(){ setSize('full'); $('scroll').scrollTop=0; });
+$('list-close').addEventListener('click',function(){ setSize('min'); });
 function syncSheet(){
   const mobile=window.innerWidth<900;
   document.documentElement.style.setProperty('--sheet-h',mobile?panel.offsetHeight+'px':'0px');
@@ -637,6 +713,7 @@ window.addEventListener('resize',syncSheet);
 
 function selectCar(id,fly){
   const c=byId(id); if(!c) return;
+  if(panel.getAttribute('data-view')==='list') backToList=panel.getAttribute('data-size')==='full';
   if(selected!==id){ clearRoute(); clearHistory(); follow=null; paramsOpen=false; paramsData=null; kmState=null; kmToken++; paramsToken++; }
   selected=id;
   setView('car'); setSize('mid');
@@ -649,7 +726,8 @@ function closeCard(){
   clearRoute(); clearHistory();
   kmState=null; paramsOpen=false; paramsData=null; kmToken++; paramsToken++;
   $('card').replaceChildren(); cardBuiltFor=null;
-  setView('list'); setSize('min');
+  setView('list'); setSize(backToList?'full':'min');
+  backToList=false;
   renderMarkers();
 }
 let cardBuiltFor=null;
@@ -659,9 +737,9 @@ function renderCard(){
   if(!c){ $('card').replaceChildren(); cardBuiltFor=null; return; }
   if(cardBuiltFor!==selected){ buildCard(); cardBuiltFor=selected; }
   const live=$('c-live');
-  if(live) live.replaceChildren(liveHead(c));
+  if(live) syncKids(live,[liveHead(c)]);
   const more=$('c-info');
-  if(more) more.replaceChildren(infoBlock(c));
+  if(more) syncKids(more,[infoBlock(c)]);
   const fb=$('c-follow');
   if(fb) fb.className='btn'+(follow===selected?' on':'');
 }
@@ -691,7 +769,8 @@ function liveHead(c){
         sub?el('div',{class:'card-sub',text:sub}):null),
       el('button',{class:'card-x','aria-label':'Закрыть',onclick:closeCard},icon('close'))),
     el('div',{class:'state-line'},
-      el('span',{class:'t-'+c.state,text:stateText(c)}),
+      speedLive(c)?el('span',{class:'spd-big'},nf(c.speed),el('small',{text:' км/ч'})):null,
+      el('span',{class:'t-'+c.state,text:stateText(c,speedLive(c))}),
       c.status_live?el('span',{class:'muted',text:c.status_live}):null,
       ageSpan(c)));
 }
@@ -703,11 +782,12 @@ function navLinks(lat,lon){
     ['Яндекс','https://yandex.ru/maps/?rtext=~'+encodeURIComponent(ll)+'&rtt=auto'],
     ['Apple','https://maps.apple.com/?daddr='+encodeURIComponent(ll)+'&dirflg=d']];
 }
+function llText(c){ return Number(c.lat).toFixed(7)+', '+Number(c.lon).toFixed(7); }
 function infoBlock(c){
   const has=hasPos(c);
-  const ll=has?Number(c.lat).toFixed(7)+', '+Number(c.lon).toFixed(7):'';
+  const ll=has?llText(c):'';
   const rows=[
-    kv('Скорость',isNum(c.speed)?nf(c.speed)+' км/ч':'—'),
+    kv('Скорость',speedText(c)),
     kv('Направление',isNum(c.course)?dirOf(c.course)+', '+c.course+'°':'—'),
     kv('Последний сигнал',c.last_t?dateTimeText(c.last_t):'—'),
     c.pos_t&&c.last_t&&c.last_t-c.pos_t>60?kv('Координаты от',dateTimeText(c.pos_t)):null,
@@ -728,7 +808,7 @@ function infoBlock(c){
     has?el('div',{class:'lbl',text:'Точные координаты от GPS'}):null,
     has?el('div',{class:'coord'},
       el('code',{text:ll}),
-      el('button',{class:'link-btn',text:'Скопировать',onclick:function(){ copyText(ll); }}),
+      el('button',{class:'link-btn',text:'Скопировать',onclick:function(){ const x=byId(selected); if(x&&hasPos(x)) copyText(llText(x)); }}),
       el('a',{class:'link-btn',href:'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(c.lat+','+c.lon),target:'_blank',rel:'noopener noreferrer',text:'Открыть точку'})):null,
     el('div',{class:'kv'},rows));
 }
@@ -788,6 +868,7 @@ function locateOnce(){
 }
 async function focusMe(){
   closeMenu();
+  if(panel.getAttribute('data-size')==='full') setSize('min');
   if(me&&!me.manual&&geoWatch!==null){ flyTo(me.lat,me.lon,15); return; }
   if(me&&me.manual){ me=null; }
   try{
@@ -1150,7 +1231,7 @@ if(!auth.view&&!auth.pw){
   loadLast();
   poll();
 }
-setInterval(tickAges,5000);
+setInterval(tickAges,1000);
 })();
 </script>
 </body>
