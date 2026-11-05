@@ -248,7 +248,7 @@
       </div>
       <div id="list"></div>
       <div id="no-tracker" class="note" hidden></div>
-      <div id="foot">Режим просмотра: команды трекерам отсюда не отправляются. Передачу (P/D) трекеры не сообщают, поэтому «на парковке» значит: стоит, зажигание выключено.<br>Страница обновляется раз в 5 секунд, а скорость присылает трекер: на ходу обычно каждые несколько секунд, на прямой дороге реже, до раза в минуту. Об остановке он обычно сообщает с задержкой около минуты.<br>Карта © OpenStreetMap · GPS-пульт v1.1 · Штурвал v4.88.0</div>
+      <div id="foot">Режим просмотра: команды трекерам отсюда не отправляются. Передачу (P/D) трекеры не сообщают. Заведён ли двигатель, видно только у двух машин с исправным датчиком зажигания, у остальных видно только, что машина стоит.<br>Страница обновляется раз в 5 секунд, а скорость присылает трекер: на ходу обычно каждые несколько секунд, на прямой дороге реже, до раза в минуту. Об остановке он обычно сообщает с задержкой около минуты.<br>Карта © OpenStreetMap · GPS-пульт v1.2 · Штурвал v4.88.1</div>
     </div>
     <div id="card"></div>
   </div>
@@ -278,6 +278,9 @@ const API=/^(localhost|127\.0\.0\.1)$/.test(location.hostname)?'http://'+locatio
 const POLL_MS=5000, POLL_ERR_MS=15000, TZ_S=6*3600;
 // Цифре скорости верим 90 с: на ходу следующее сообщение трекера укладывается в это время в 99,7% случаев (замер 05.11.2026).
 const SPEED_LIVE_S=90;
+// Заведён ли двигатель, верно только у этих трекеров (замер за 7 суток, 05.11.2026): у остальных датчик зажигания
+// всегда «выключено», даже на ходу, а у одного всегда «включено». Подключат провод у других — дописать их сюда.
+const IGN_OK_UNITS=[7471,9803];
 const PW_KEY='shturval_pw', LG_KEY='shturval_login', VIEW_KEY='shturval_gps_view', LAST_KEY='shturval_gps_last', THEME_KEY='shturval_gps_theme';
 const ICONS={
   menu:'<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>',
@@ -291,9 +294,9 @@ const STATE_ORDER={moving:0,idle:1,parked:2,offline:3};
 const COMPASS=['север','северо-восток','восток','юго-восток','юг','юго-запад','запад','северо-запад'];
 // Подписи к показаниям трекера (Teltonika). Неизвестные показываем как есть.
 const PARAM_LABELS={pwr_ext:'Бортовое напряжение, В',pwr_int:'Батарея трекера, В',gsm:'Сигнал GSM (0–5)',hdop:'Точность GPS, HDOP',pdop:'Точность GPS, PDOP',
-  io_1:'Вход 1 (зажигание)',io_2:'Вход 2',io_9:'Аналоговый вход, мВ',io_16:'Одометр трекера, м',io_21:'Сигнал GSM (0–5)',io_24:'Скорость, км/ч',io_66:'Бортовое напряжение, мВ',
+  io_1:'Вход 1 (провод зажигания)',io_2:'Вход 2',io_9:'Аналоговый вход, мВ',io_16:'Одометр трекера, м',io_21:'Сигнал GSM (0–5)',io_24:'Скорость, км/ч',io_66:'Бортовое напряжение, мВ',
   io_67:'Батарея трекера, мВ',io_68:'Ток батареи, мА',io_69:'Статус GPS',io_80:'Режим передачи',io_113:'Заряд батареи трекера, %',io_179:'Выход 1 (глушение)',io_181:'PDOP ×10',io_182:'HDOP ×10',
-  io_199:'Поездка, м',io_200:'Режим сна',io_239:'Зажигание',io_240:'Движение',io_241:'Код оператора',io_263:'Bluetooth',mcc:'Код страны сети',mnc:'Код оператора сети',
+  io_199:'Поездка, м',io_200:'Режим сна',io_239:'Зажигание (расчёт трекера, неточно)',io_240:'Движение',io_241:'Код оператора',io_263:'Bluetooth',mcc:'Код страны сети',mnc:'Код оператора сети',
   prior:'Приоритет записи',event_io_id:'Событие',total_io:'Всего параметров'};
 
 /* ---------- мелочи ---------- */
@@ -506,6 +509,10 @@ const markers={};
 function now(){ return Date.now()/1000+offset; }
 function ageOf(c){ return c.last_t?now()-c.last_t:null; }
 function byId(id){ for(let i=0;i<CARS.length;i++) if(CARS[i].unit_id===id) return CARS[i]; return null; }
+function normCar(c){
+  if(IGN_OK_UNITS.indexOf(c.unit_id)>=0) return c;
+  return Object.assign({},c,{ignition:null,state:c.state==='idle'?'parked':c.state});
+}
 function sortCars(a,b){
   const d=(STATE_ORDER[a.state]||0)-(STATE_ORDER[b.state]||0);
   return d||carName(a).localeCompare(carName(b),'ru');
@@ -517,7 +524,7 @@ function applyLive(d,fromCache){
     renderTop();
     return;
   }
-  CARS=(d.cars||[]).slice().sort(sortCars);
+  CARS=(d.cars||[]).map(normCar).sort(sortCars);
   NO_TRACKER=d.no_tracker||[];
   COUNTS=d.counts||null;
   const key=JSON.stringify([CARS,NO_TRACKER],function(k,v){ return k==='age_s'||k==='pos_age_s'?undefined:v; });
@@ -792,7 +799,7 @@ function infoBlock(c){
     kv('Последний сигнал',c.last_t?dateTimeText(c.last_t):'—'),
     c.pos_t&&c.last_t&&c.last_t-c.pos_t>60?kv('Координаты от',dateTimeText(c.pos_t)):null,
     kv('Спутники',isNum(c.sats)?String(c.sats)+(c.sats<4?' (плохой приём)':''):'—'),
-    kv('Зажигание',c.ignition===null||c.ignition===undefined?'—':(c.ignition?'Включено':'Выключено')),
+    kv('Зажигание',c.ignition===null||c.ignition===undefined?'нет данных':(c.ignition?'Включено':'Выключено')),
     kv('Трекер на связи',c.online?'Да':'Нет'),
     kv('Напряжение',isNum(c.volt)?nf(c.volt,1)+' В':'—'),
     kv('Счётчик трекера',isNum(c.odo)?nf(c.odo)+' км':'—'),
