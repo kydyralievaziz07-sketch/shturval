@@ -9233,8 +9233,11 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, {"error": "не найдено"})
 
     def do_GET(self):
+        # Адрес без параметров: «/?v=…» (кнопка «Обновить приложение») и «/?key=…» (личная ссылка входа)
+        # раньше не совпадали с "/" и отдавали 404.
+        _root = self.path.split("?", 1)[0] == "/"
         # Приостановка за неоплату: кабинет не отдаём, только уведомление (см. PAY_LOCK).
-        if PAY_LOCK and (self.path == "/" or self.path.startswith("/index.html")):
+        if PAY_LOCK and (_root or self.path.startswith("/index.html")):
             data = _paylock_page()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -9251,7 +9254,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.split("?", 1)[0] == "/gps.html":
             return self._gps_html_send()
         # Свой фронтенд для деплоев без отдельного статического хостинга (не-Бизмарт компании).
-        if self.path == "/" or self.path.startswith("/index.html"):
+        if _root or self.path.startswith("/index.html"):
             data = _index_html()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
