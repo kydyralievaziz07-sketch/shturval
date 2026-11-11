@@ -1,0 +1,7 @@
+{
+  "name": "shturval-polygon",
+  "private": true,
+  "type": "module",
+  "description": "Полигон «только чтение» для проверки кабинета Штурвала на настоящих данных",
+  "dependencies": { "acorn": "^8.14.0", "puppeteer-core": "^24.0.0" }
+}
