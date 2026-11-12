@@ -13,7 +13,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
   /* ============================================================
-     ШТУРВАЛ v6.0.0 — оформление
+     ШТУРВАЛ v6.0.1 — оформление
      Плавающий док слева, вкладки-таблетки, главный экран-мозаика, цвет раздела.
      ============================================================ */
   :root{
@@ -467,7 +467,7 @@
     <div class="side-cap" id="side-cap"></div>
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      <span class="ver">Штурвал v6.0.0</span><br>Новый интерфейс: «Главная» со всеми делами на одном экране, разделы в панели слева (на телефоне — внизу), у каждого раздела свой цвет, поиск и команды по ⌘K.<br><br><span onclick="hardReload()" style="cursor:pointer;color:var(--accent);font-weight:700">🔄 Обновить приложение</span>
+      <span class="ver">Штурвал v6.0.1</span><br>Новый интерфейс: «Главная» со всеми делами на одном экране, разделы в панели слева (на телефоне — внизу), у каждого раздела свой цвет, поиск и команды по ⌘K.<br><br><span onclick="hardReload()" style="cursor:pointer;color:var(--accent);font-weight:700">🔄 Обновить приложение</span>
       <span> — если новое не появилось</span>
     </div>
   </aside>
@@ -1357,7 +1357,7 @@
       // «История изменений» — только владельцу кабинета (контроль за сотрудниками)
       if(tab==='rentaudit') return isCabinetOwner();
       // «GPS · Пробег» — владельцу кабинета (данные трекеров есть только у Бизмарта)
-      if(tab==='rentgps') return isCabinetOwner();
+      if(tab==='rentgps') return isCabinetOwner()||canSee('rent_gps');
       if(isOwner()||canSee('rent')) return true;
       // «Требует внимания» — только владельцу (должники/сдачи авто)
       if(tab==='rentalert') return (USER.sections||[]).some(function(s){return s.indexOf('rent')===0;});
@@ -4194,7 +4194,7 @@
     dash:'dash', prod:'prod', sales:'sales', assort:'assort', analytics:'analytics', supl:'supl', fin:'fin', exp:'exp',
     rentdash:'rent_dash', renttasks:'rent_tasks', rentnotes:'rent_notes', rentcars:'rent_cars',
     rentlist:'rent_list', rentalert:'rent_alert', rentexp:'rent_exp', renthanded:'rent_handed',
-    rentanalysis:'rent_analysis', rentplan:'rent_plan', rentclients:'rent_clients', rentcalendar:'rent_calendar',
+    rentanalysis:'rent_analysis', rentplan:'rent_plan', rentclients:'rent_clients', rentcalendar:'rent_calendar', rentgps:'rent_gps',
     hr:'hr', ai:'ai', sim:'sim'
   };
   function _tabLabel(tab){ return (TABMETA[tab]&&TABMETA[tab].label)||(titles[tab]&&titles[tab][0])||tab; }
@@ -4471,7 +4471,7 @@
   }
   function rstatusChip(st){
     st=(st||'').trim(); var low=st.toLowerCase(), col='var(--muted)', bg='var(--panel2)';
-    if(low.indexOf('заверш')>=0){ col='#fff'; bg='var(--green)'; }
+    if(low.indexOf('заверш')>=0){ col='#fff'; bg='#2b6cff'; }
     else if(low.indexOf('аренд')>=0||low.indexOf('актив')>=0){ col='#fff'; bg='var(--accent)'; }
     else if(low.indexOf('ремонт')>=0){ col='#fff'; bg='#9a6a00'; }
     else if(low.indexOf('свобод')>=0){ col='#fff'; bg='var(--green)'; }
