@@ -13,7 +13,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
   /* ============================================================
-     ШТУРВАЛ v6.0.1 — оформление
+     ШТУРВАЛ v6.0.2 — оформление
      Плавающий док слева, вкладки-таблетки, главный экран-мозаика, цвет раздела.
      ============================================================ */
   :root{
@@ -467,7 +467,7 @@
     <div class="side-cap" id="side-cap"></div>
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      <span class="ver">Штурвал v6.0.1</span><br>Новый интерфейс: «Главная» со всеми делами на одном экране, разделы в панели слева (на телефоне — внизу), у каждого раздела свой цвет, поиск и команды по ⌘K.<br><br><span onclick="hardReload()" style="cursor:pointer;color:var(--accent);font-weight:700">🔄 Обновить приложение</span>
+      <span class="ver">Штурвал v6.0.2</span><br>Новый интерфейс: «Главная» со всеми делами на одном экране, разделы в панели слева (на телефоне — внизу), у каждого раздела свой цвет, поиск и команды по ⌘K.<br><br><span onclick="hardReload()" style="cursor:pointer;color:var(--accent);font-weight:700">🔄 Обновить приложение</span>
       <span> — если новое не появилось</span>
     </div>
   </aside>
@@ -1379,7 +1379,7 @@
     return canSee(tab);
   }
   // временно скрытые модули — прячем ИКОНКУ у тех, кто видит их только через «all».
-  const HIDDEN_MODULES=[];
+  const HIDDEN_MODULES=['rent2'];   // владелец (all) не видит «Авто Рент 2»; видит тот, у кого в правах явно есть rent2 (Актилек)
   function _explicitModule(key){
     if(key==='rent') return (USER.sections||[]).some(function(s){ return s==='rent'||s.indexOf('rent_')===0; });
     return (USER.sections||[]).indexOf(key)>=0;
@@ -5975,6 +5975,7 @@ function rptFondVal(id,v){var r=(_rptData.fond_rows||[]).find(function(x){return
       // --- аренда ---
       rentTile('h-rent','t-rent','Авто Рент','rent',R);
       rentTile('h-rent2','t-rent2','Авто Рент 2','rent2',H.rent2);
+      var _t2=document.getElementById('h-rent2'); if(_t2) _t2.style.display=MODULES.some(function(m){ return m.key==='rent2'&&moduleVisible(m); })?'':'none';
       // --- склад ---
       if(inv&&inv.total_sku!=null){ var low=(inv.low||[]), out=low.filter(function(x){ return x.qty<=0; }).length;
         set('h-stock',head('shop','Склад')+'<div class="t-num"><span class="cu">'+num(inv.in_stock||0)+'</span> <small>позиций в наличии</small></div>'
