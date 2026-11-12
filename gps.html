@@ -980,7 +980,7 @@ async function routeToCar(){
 }
 
 /* ---------- история за день ---------- */
-let hist=null, histLayer=null, histToken=0, stopMarkers=[], segLayer=null;
+let hist=null, histLayer=null, histToken=0, stopMarkers=[], segLayer=null, dayLayer=null;
 /* ---------- поездки «от точки до точки» ---------- */
 function haversineKm(a,b){
   const R=6371, r=Math.PI/180, dLa=(b[0]-a[0])*r, dLo=(b[1]-a[1])*r;
@@ -1015,6 +1015,7 @@ function setSeg(i,j){
 function drawSeg(){
   if(!map||!histLayer||!hist||!hist.data) return;
   if(segLayer){ histLayer.removeLayer(segLayer); segLayer=null; }
+  if(dayLayer){ if(hist.seg) histLayer.removeLayer(dayLayer); else if(!histLayer.hasLayer(dayLayer)) histLayer.addLayer(dayLayer); }
   if(!hist.seg) return;
   const w=waypointsOf(hist.data), g=segInfo(hist.data,w,hist.seg.i,hist.seg.j);
   const ll=g.pts.map(function(p){ return [p[0],p[1]]; });
@@ -1131,20 +1132,21 @@ function drawHistory(d){
   if(!map) return;
   if(histLayer) map.removeLayer(histLayer);
   histLayer=L.layerGroup().addTo(map);
+  dayLayer=L.layerGroup().addTo(histLayer);
   segLayer=null; stopMarkers=[];
   const ll=d.points.map(function(p){ return [p[0],p[1]]; });
   if(ll.length>1){
-    L.polyline(ll,{color:'#fff',weight:8,opacity:.9,interactive:false}).addTo(histLayer);
-    L.polyline(ll,{color:'#7c3aed',weight:4.5,opacity:1,interactive:false}).addTo(histLayer);
+    L.polyline(ll,{color:'#fff',weight:8,opacity:.9,interactive:false}).addTo(dayLayer);
+    L.polyline(ll,{color:'#7c3aed',weight:4.5,opacity:1,interactive:false}).addTo(dayLayer);
   }
   if(ll.length){
-    L.circleMarker(ll[0],{radius:7,color:'#fff',weight:2,fillColor:'#0e9f5a',fillOpacity:1}).bindPopup(el('div',{text:'Начало: '+hhmm(d.points[0][2])})).addTo(histLayer);
+    L.circleMarker(ll[0],{radius:7,color:'#fff',weight:2,fillColor:'#0e9f5a',fillOpacity:1}).bindPopup(el('div',{text:'Начало: '+hhmm(d.points[0][2])})).addTo(dayLayer);
     const last=ll[ll.length-1];
-    L.circleMarker(last,{radius:7,color:'#fff',weight:2,fillColor:'#d64545',fillOpacity:1}).bindPopup(el('div',{text:'Конец: '+hhmm(d.points[d.points.length-1][2])})).addTo(histLayer);
+    L.circleMarker(last,{radius:7,color:'#fff',weight:2,fillColor:'#d64545',fillOpacity:1}).bindPopup(el('div',{text:'Конец: '+hhmm(d.points[d.points.length-1][2])})).addTo(dayLayer);
   }
   d.stops.forEach(function(s,i){
     const m=L.marker([s.lat,s.lon],{icon:L.divIcon({className:'mk-wrap',html:el('div',{class:'stop-mk',text:String(i+1)}),iconSize:[24,24],iconAnchor:[12,12]}),title:'Стоянка '+(i+1),zIndexOffset:300})
-      .bindPopup(stopPopup(s,i)).addTo(histLayer);
+      .bindPopup(stopPopup(s,i)).addTo(dayLayer);
     stopMarkers.push(m);
   });
   if(ll.length) map.fitBounds(L.latLngBounds(ll),Object.assign({maxZoom:16},padding()));
