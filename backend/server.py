@@ -5282,8 +5282,8 @@ def build_sales(from_ts=None, to_ts=None, date_label=None):
         total = _num(x.get("receiptTotal"))
         is_return = x.get("operationType") == "Возврат" or total < 0
         net += total
-        # Как в build_assortment: у ~0,5% чеков (возвраты с бонусами) Σ saleAmount ≠ сумме
-        # чека — строку приводим к фактической сумме чека, прибыль = она − себестоимость.
+        # Как в build_assortment: у ~2% продаж скидка на весь чек (1С не пишет её в строки) —
+        # строку приводим к фактической сумме чека, прибыль = она − себестоимость.
         # Тогда прибыль дня сходится с выручкой дня и с «Отчётом по продажам».
         _its = x.get("items", [])
         _isum = sum(_num(it.get("saleAmount")) for it in _its)
@@ -5301,7 +5301,7 @@ def build_sales(from_ts=None, to_ts=None, date_label=None):
             # или отдано за ≤20% прайсовой суммы строки (= скидка ≥80%).
             if not is_return:
                 q = _num(it.get("qty")) or 1
-                sa = _num(it.get("saleAmount"))
+                sa = _rev                         # фактически оплачено (со скидкой на чек)
                 pline = _num(it.get("price")) * q
                 unit = (sa / q) if q else sa
                 kind = None
@@ -5315,7 +5315,7 @@ def build_sales(from_ts=None, to_ts=None, date_label=None):
                     loss_items.append({
                         "name": nm, "qty": int(round(q)), "price": round(pline),
                         "sale": round(sa), "cost": round(_num(it.get("costPrice"))),
-                        "profit": round(_num(it.get("profit"))),
+                        "profit": round(_pr),
                         "disc": (round((1 - sa / pline) * 100) if pline > 0 else 0),
                         "kassa": (x.get("seller") or "—").strip() or "—", "kind": kind,
                     })
@@ -5951,9 +5951,10 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_t
             # раньше qty и прибыль возврата умножались на −1 ещё раз, и возврат ПРИБАВЛЯЛСЯ к
             # прибыли и к «продано» (прибыль месяца была завышена на ~6%).
             # Выручку позиции считаем по ФАКТИЧЕСКОЙ сумме чека, разложенной пропорционально:
-            # у ~0,5% чеков (в основном возвраты с бонусами) Σ saleAmount ≠ сумме чека.
-            # Прибыль = эта выручка − себестоимость (в 1С profit всегда = saleAmount − costPrice),
-            # поэтому прибыль сдвигается на ту же разницу, что и выручка, и с ней сходится.
+            # ~2% продаж идут со СКИДКОЙ НА ВЕСЬ ЧЕК (10–50%), которую 1С в строки не пишет
+            # (discount=0, saleAmount = прайс), плюс возвраты с бонусами. Деньги = сумма чека.
+            # Прибыль = эта выручка − себестоимость (в 1С profit всегда = saleAmount − costPrice):
+            # скидка уменьшает прибыль на всю свою сумму (раньше прибыль лишь умножалась на долю).
             isum = sum(_num(it.get("saleAmount")) for it in items)
             factor = (rtot / isum) if abs(isum) > 0.005 else 1.0
             is_sale = not (x.get("operationType") == "Возврат" or rtot < 0)
@@ -5979,7 +5980,7 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_t
                 # (раньше проверялась лишь последняя строка — блок стоял вне цикла по товарам)
                 if is_sale:
                     q = q or 1
-                    sa = _num(it.get("saleAmount"))
+                    sa = rev_i                             # фактически оплачено (со скидкой на чек)
                     pline = _num(it.get("price")) * q     # прайсовая сумма всей строки
                     unit = (sa / q) if q else sa           # фактическая цена за штуку
                     kind = None
@@ -5991,7 +5992,7 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_t
                         susp.append({"date": dd, "cid": name2cat.get(nm, ""), "name": nm,
                                      "qty": int(round(q)), "sale": round(sa),
                                      "cost": round(_num(it.get("costPrice"))),  # уже сумма всей строки
-                                     "profit": round(_num(it.get("profit"))),
+                                     "profit": round(sa - _num(it.get("costPrice"))),
                                      "price": round(pline),
                                      "disc": (round((1 - sa / pline) * 100) if pline > 0 else 0),
                                      "kassa": seller, "kind": kind})
