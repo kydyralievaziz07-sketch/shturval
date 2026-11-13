@@ -5282,13 +5282,21 @@ def build_sales(from_ts=None, to_ts=None, date_label=None):
         total = _num(x.get("receiptTotal"))
         is_return = x.get("operationType") == "Возврат" or total < 0
         net += total
-        for it in x.get("items", []):
-            profit += _num(it.get("profit"))
+        # Как в build_assortment: у ~0,5% чеков (возвраты с бонусами) Σ saleAmount ≠ сумме
+        # чека — строку приводим к фактической сумме чека, прибыль = она − себестоимость.
+        # Тогда прибыль дня сходится с выручкой дня и с «Отчётом по продажам».
+        _its = x.get("items", [])
+        _isum = sum(_num(it.get("saleAmount")) for it in _its)
+        _f = (total / _isum) if abs(_isum) > 0.005 else 1.0
+        for it in _its:
+            _rev = _num(it.get("saleAmount")) * _f
+            _pr = _rev - _num(it.get("costPrice"))
+            profit += _pr
             nm = (it.get("name") or "").strip() or "—"
             p = by_product.setdefault(nm, {"qty": 0.0, "sum": 0.0, "profit": 0.0})
             p["qty"] += _num(it.get("qty"))
-            p["sum"] += _num(it.get("saleAmount"))
-            p["profit"] += _num(it.get("profit"))
+            p["sum"] += _rev
+            p["profit"] += _pr
             # контроль потерь — только продажи (возвраты не считаем): 0/1 сом за штуку
             # или отдано за ≤20% прайсовой суммы строки (= скидка ≥80%).
             if not is_return:
@@ -5316,6 +5324,17 @@ def build_sales(from_ts=None, to_ts=None, date_label=None):
         else:
             sales_count += 1; gross += total
         pays = x.get("AllPaymentMethods") or [{"name": x.get("paymentMethod"), "summ": total}]
+        # Сдача: 1С пишет внесённые наличные (например 2000 на чек 1660), а не оставшиеся в
+        # кассе. Если оплат больше суммы чека — излишек выдан сдачей из наличных, вычитаем.
+        _over = sum(_num(pm.get("summ")) for pm in pays) - total
+        if total > 0 and _over > 0.5:
+            pays = [dict(pm) for pm in pays]
+            for pm in pays:
+                if (pm.get("name") or "").strip().lower().startswith("налич") and _num(pm.get("summ")) > 0:
+                    _cut = min(_over, _num(pm.get("summ")))
+                    pm["summ"] = _num(pm.get("summ")) - _cut; _over -= _cut
+                    if _over <= 0.5:
+                        break
         for pm in pays:
             nm = (pm.get("name") or "—").strip() or "—"
             by_pay[nm] = by_pay.get(nm, 0.0) + _num(pm.get("summ"))
@@ -5700,14 +5719,20 @@ def backfill_sales(days=30, overwrite=False):
     if not supa_on():
         return {"error": "База не настроена"}
     have = set()
-    if not overwrite:
-        try:
-            rows = _supa("GET", "sales_daily",
-                         "?company_id=eq.%s&select=date&order=date.desc&limit=400" % _q(COMPANY_ID))
-            have = {r.get("date") for r in (rows or [])}
-        except Exception:
-            pass
-    saved = []; skipped = []; failed = []
+    have_cnt = {}   # дата → сколько чеков (продажи + возвраты) уже сохранено
+    try:
+        rows = _supa("GET", "sales_daily",
+                     "?company_id=eq.%s&select=date,receipts,returns_count&order=date.desc&limit=400"
+                     % _q(COMPANY_ID))
+        for r in (rows or []):
+            have.add(r.get("date"))
+            have_cnt[r.get("date")] = int(_num(r.get("receipts")) + _num(r.get("returns_count")))
+    except Exception:
+        if overwrite:
+            # не знаем, что сохранено, — не рискуем затереть полный день неполным
+            return {"saved_count": 0, "saved": [], "skipped": [], "protected": [],
+                    "failed": [{"date": "-", "error": "не прочитали sales_daily"}]}
+    saved = []; skipped = []; failed = []; protected = []
     today = _today_str()
     for i in range(1, int(days) + 1):
         d = time.strftime("%Y-%m-%d", time.localtime(time.time() - i * 86400))
@@ -5718,15 +5743,20 @@ def backfill_sales(days=30, overwrite=False):
         try:
             f, t = _day_bounds(d)
             s = build_sales(f, t, date_label=d)
-            if s.get("total_receipts", 0) > 0:
+            if s.get("total_receipts", 0) <= 0:
+                skipped.append(d)        # день без чеков — не сохраняем
+            elif s.get("total_receipts", 0) < have_cnt.get(d, 0):
+                # 1С отдала МЕНЬШЕ чеков, чем у нас уже сохранено за этот день: у неё пропали
+                # чеки (13.11.2026 так пропали куски октября). Полный день неполным не затираем.
+                protected.append({"date": d, "onec": s.get("total_receipts", 0),
+                                  "saved": have_cnt.get(d, 0)})
+            else:
                 _save_sales_daily(s)
                 saved.append(d)
-            else:
-                skipped.append(d)        # день без чеков — не сохраняем
         except Exception as e:
             failed.append({"date": d, "error": str(e)[:120]})
     return {"saved_count": len(saved), "saved": saved,
-            "skipped": skipped, "failed": failed}
+            "skipped": skipped, "protected": protected, "failed": failed}
 
 
 # ====== АНАЛИЗ АССОРТИМЕНТА ПО ЧИСТОЙ ПРИБЫЛИ (ABC по группам) ======
@@ -5845,6 +5875,11 @@ def _daterange_list(date_from, date_to, cap=400):
         out.append(d.isoformat()); d += datetime.timedelta(days=1)
     return out
 
+def _margin(rev, profit):
+    """Маржа %, только если выручка положительная. При выручке ≤ 0 (товар больше вернули,
+    чем продали) процент не имеет смысла (было «−1180%») — отдаём None, фронт пишет «—»."""
+    return round(profit / rev * 100) if rev > 0.5 else None
+
 _ASSORT_CHUNK = 16   # ПАМЯТЬ: сколько дней чеков держим в памяти одновременно при сборке периода
 
 def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_to=None):
@@ -5901,6 +5936,7 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_t
     # считаем «выручка отдела ÷ число чеков, В КОТОРЫХ отдел встретился» — сумма чеков
     # по отделам поэтому больше общего числа чеков, это нормально.
     dept_rev = {}; dept_chk = {}; dept_qty = {}
+    day_net = {}   # сумма чеков 1С по дням — для сверки полноты с sales_daily
     for dd, recs in _iter_days():
         if recs is None:
             days_fail += 1
@@ -5909,36 +5945,40 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_t
         for x in recs:
             items = x.get("items", [])
             rtot = _num(x.get("receiptTotal"))
-            # Выручку позиции считаем по ФАКТИЧЕСКОЙ сумме чека, разложенной пропорционально
-            # (у части чеков Σ saleAmount ≠ сумме чека из-за обменов/скидок/бонусов, discount=0).
-            # Так итог сходится с кассой, а не завышается «прайсовыми» суммами.
+            day_net[dd] = day_net.get(dd, 0.0) + rtot
+            # 1С отдаёт возвраты УЖЕ со знаком минус (qty, saleAmount, costPrice, profit —
+            # сверено на 1464 возвратах за 120 дней, 13.11.2026). Знак сами НЕ переворачиваем:
+            # раньше qty и прибыль возврата умножались на −1 ещё раз, и возврат ПРИБАВЛЯЛСЯ к
+            # прибыли и к «продано» (прибыль месяца была завышена на ~6%).
+            # Выручку позиции считаем по ФАКТИЧЕСКОЙ сумме чека, разложенной пропорционально:
+            # у ~0,5% чеков (в основном возвраты с бонусами) Σ saleAmount ≠ сумме чека.
+            # Прибыль = эта выручка − себестоимость (в 1С profit всегда = saleAmount − costPrice),
+            # поэтому прибыль сдвигается на ту же разницу, что и выручка, и с ней сходится.
             isum = sum(_num(it.get("saleAmount")) for it in items)
-            factor = (rtot / isum) if isum else 0
-            sign = -1 if (x.get("operationType") == "Возврат" or rtot < 0) else 1
-            pfac = factor if (factor and abs(factor - 1) > 0.001) else sign
+            factor = (rtot / isum) if abs(isum) > 0.005 else 1.0
+            is_sale = not (x.get("operationType") == "Возврат" or rtot < 0)
             seller = (x.get("seller") or "—")
             _depts_here = set()
             for it in items:
                 nm = (it.get("name") or "").strip()
                 if not nm:
                     continue
+                q = _num(it.get("qty"))
+                sa = _num(it.get("saleAmount"))
+                rev_i = sa * factor
                 a = agg.setdefault(nm, {"qty": 0.0, "rev": 0.0, "profit": 0.0})
-                a["qty"] += sign * _num(it.get("qty"))
-                a["rev"] += _num(it.get("saleAmount")) * factor
-                a["profit"] += _num(it.get("profit")) * pfac
+                a["qty"] += q
+                a["rev"] += rev_i
+                a["profit"] += rev_i - _num(it.get("costPrice"))
                 _cid = name2cat.get(nm, "")
                 _d = (top(_cid) if _cid else None) or "— без отдела —"
-                dept_rev[_d] = dept_rev.get(_d, 0.0) + _num(it.get("saleAmount")) * factor
-                dept_qty[_d] = dept_qty.get(_d, 0.0) + sign * _num(it.get("qty"))
+                dept_rev[_d] = dept_rev.get(_d, 0.0) + rev_i
+                dept_qty[_d] = dept_qty.get(_d, 0.0) + q
                 _depts_here.add(_d)
-            # чеки считаем только по продажам: возврат не «покупка», он лишь
-            # уменьшает выручку (так же считает и KPI дашборда — net ÷ sales_count)
-            if sign > 0:
-                for _d in _depts_here:
-                    dept_chk[_d] = dept_chk.get(_d, 0) + 1
-                # контроль потерь — только продажи (возвраты не считаем)
-                if sign > 0:
-                    q = _num(it.get("qty")) or 1
+                # контроль потерь — только продажи (возвраты не считаем); каждая строка чека
+                # (раньше проверялась лишь последняя строка — блок стоял вне цикла по товарам)
+                if is_sale:
+                    q = q or 1
                     sa = _num(it.get("saleAmount"))
                     pline = _num(it.get("price")) * q     # прайсовая сумма всей строки
                     unit = (sa / q) if q else sa           # фактическая цена за штуку
@@ -5955,6 +5995,11 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_t
                                      "price": round(pline),
                                      "disc": (round((1 - sa / pline) * 100) if pline > 0 else 0),
                                      "kassa": seller, "kind": kind})
+            # чеки считаем только по продажам: возврат не «покупка», он лишь
+            # уменьшает выручку (так же считает и KPI дашборда — net ÷ sales_count)
+            if is_sale:
+                for _d in _depts_here:
+                    dept_chk[_d] = dept_chk.get(_d, 0) + 1
     # раскладка по группам
     groups = {}
     for nm, a in agg.items():
@@ -5979,7 +6024,7 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_t
                 "rank": rank, "name": i["name"], "qty": round(i["qty"]),
                 "revenue": round(i["rev"]), "profit": round(i["profit"]),
                 "group_share": round(i["profit"] / gp_profit * 100, 1) if gp_profit else 0,
-                "margin": round(i["rev"] and i["profit"] / i["rev"] * 100),
+                "margin": _margin(i["rev"], i["profit"]),
                 "profit_per_unit": round(ppu),
             })
         out_groups.append({
@@ -5998,7 +6043,7 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_t
             all_products.append({
                 "name": i["name"], "group": grp, "qty": round(i["qty"]),
                 "revenue": round(rev), "profit": round(pr),
-                "margin": round(rev and pr / rev * 100),
+                "margin": _margin(rev, pr),
                 "profit_per_unit": round(pr / i["qty"]) if i["qty"] else 0,
             })
     all_products.sort(key=lambda i: -i["profit"])
@@ -6017,12 +6062,12 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_t
     for fl, fm in fmap.items():
         cats = [{"name": k, "revenue": round(v["revenue"]), "profit": round(v["profit"]),
                  "qty": round(v["qty"]),
-                 "margin": round(v["revenue"] and v["profit"] / v["revenue"] * 100)}
+                 "margin": _margin(v["revenue"], v["profit"])}
                 for k, v in fm["cats"].items()]
         cats.sort(key=lambda c: -c["revenue"])
         floors.append({"floor": fl, "revenue": round(fm["revenue"]),
                        "profit": round(fm["profit"]), "qty": round(fm["qty"]),
-                       "margin": round(fm["revenue"] and fm["profit"] / fm["revenue"] * 100),
+                       "margin": _margin(fm["revenue"], fm["profit"]),
                        "cats": cats})
     floors.sort(key=lambda f: -f["revenue"])
     # РАЗВОРАЧИВАЕМОЕ ДЕРЕВО: этаж → категория → подкатегория → … → товары (для отчёта).
@@ -6046,11 +6091,11 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_t
         items = sorted(n["items"], key=lambda i: -i["profit"])[:15]
         return {"name": name,
                 "revenue": round(n["revenue"]), "profit": round(n["profit"]), "qty": round(n["qty"]),
-                "margin": round(n["revenue"] and n["profit"] / n["revenue"] * 100),
+                "margin": _margin(n["revenue"], n["profit"]),
                 "children": kids,
                 "items": [{"name": i["name"], "revenue": round(i["rev"]), "profit": round(i["profit"]),
                            "qty": round(i["qty"]),
-                           "margin": round(i["rev"] and i["profit"] / i["rev"] * 100)} for i in items]}
+                           "margin": _margin(i["rev"], i["profit"])} for i in items]}
     tree = [_ser_node(k, v) for k, v in troot["children"].items()]
     tree.sort(key=lambda x: -x["revenue"])
     # ── КОНТРОЛЬ ПОТЕРЬ: агрегируем подозрительные позиции (сам считается из чеков) ──
@@ -6095,9 +6140,32 @@ def build_assortment(days=ASSORT_DAYS, top_n=ASSORT_TOPN, date_from=None, date_t
           "checks_per_day": round(dept_chk.get(d, 0) / ndays, 1) if ndays else 0}
          for d, r in dept_rev.items()),
         key=lambda x: -x["revenue"])
+    # ── СВЕРКА ПОЛНОТЫ: 1С иногда «теряет» чеки прошлых дней (13.11.2026 у неё пропали
+    # куски 8, 16–19, 23, 24 октября, хотя в те дни Штурвал их видел). Отчёт строится из 1С
+    # живьём, поэтому сравниваем сумму чеков 1С за каждый завершённый день с сохранённым
+    # итогом дня (sales_daily) и честно показываем дни, где 1С отдала заметно меньше.
+    gaps = []
+    if supa_on() and dates:
+        try:
+            _today = _today_str()
+            _rows = _supa("GET", "sales_daily",
+                          "?company_id=eq.%s&date=gte.%s&date=lte.%s&select=date,sales"
+                          % (_q(COMPANY_ID), _q(min(dates)), _q(max(dates))))
+            for _r in (_rows or []):
+                _dd = _r.get("date"); _db = _num(_r.get("sales"))
+                if not _dd or _dd >= _today or _db <= 0:
+                    continue
+                _oc = day_net.get(_dd, 0.0)
+                if _oc < _db * 0.97 - 1000:
+                    gaps.append({"date": _dd, "onec": round(_oc), "saved": round(_db),
+                                 "missing": round(_db - _oc)})
+            gaps.sort(key=lambda g: g["date"])
+        except Exception:
+            gaps = []
     res = {
         "period_days": ndays, "top_n": top_n,
         "from": res_from, "to": res_to,
+        "gaps": gaps, "gaps_missing": sum(g["missing"] for g in gaps),
         "total_revenue": round(tot_rev), "total_profit": round(tot_profit),
         "avg_margin": round(tot_profit / tot_rev * 100, 1) if tot_rev else 0,
         "total_products": len(agg), "days_ok": days_ok, "days_fail": days_fail,
@@ -6162,7 +6230,7 @@ def get_assortment(days=ASSORT_DAYS):
             threading.Thread(target=_assort_refresh, kwargs={"days": days, "force": True}, daemon=True).start()
         return {"computing": True, "period_days": days, "groups": [], "floors": [], "tree": [],
                 "error": "Идёт расчёт за выбранный период — обновите страницу через минуту."}
-    if "audit" not in d:
+    if "audit" not in d or "gaps" not in d:   # «gaps» — с v6.0.3 (исправлены возвраты)
         st["next"] = 0   # снимок старого формата (без «Контроля потерь») — пересчитать сейчас
     if time.time() >= st.get("next", 0) and not st["refreshing"]:
         threading.Thread(target=_assort_refresh, kwargs={"days": days}, daemon=True).start()

@@ -13,7 +13,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
   /* ============================================================
-     ШТУРВАЛ v6.0.2 — оформление
+     ШТУРВАЛ v6.0.3 — оформление
      Плавающий док слева, вкладки-таблетки, главный экран-мозаика, цвет раздела.
      ============================================================ */
   :root{
@@ -467,7 +467,7 @@
     <div class="side-cap" id="side-cap"></div>
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      <span class="ver">Штурвал v6.0.2</span><br>Новый интерфейс: «Главная» со всеми делами на одном экране, разделы в панели слева (на телефоне — внизу), у каждого раздела свой цвет, поиск и команды по ⌘K.<br><br><span onclick="hardReload()" style="cursor:pointer;color:var(--accent);font-weight:700">🔄 Обновить приложение</span>
+      <span class="ver">Штурвал v6.0.3</span><br>Исправлен «Отчёт по продажам»: возвраты больше не прибавляются к прибыли и к «продано»; при неполных данных 1С отчёт предупреждает.<br><br>Новый интерфейс: «Главная» со всеми делами на одном экране, разделы в панели слева (на телефоне — внизу), у каждого раздела свой цвет, поиск и команды по ⌘K.<br><br><span onclick="hardReload()" style="cursor:pointer;color:var(--accent);font-weight:700">🔄 Обновить приложение</span>
       <span> — если новое не появилось</span>
     </div>
   </aside>
@@ -1909,6 +1909,18 @@
     return n.toLocaleString('ru-RU')+' сом';
   }
   // число без валюты (валюту дописывает MUNIT() рядом) — для кабинета проката, где суммы уже в $
+  // маржа: null = выручка ≤ 0 (вернули больше, чем продали) — процент бессмысленен
+  // Предупреждение о неполных данных 1С: дни, где 1С сейчас отдаёт заметно меньше, чем
+  // Штурвал сохранил в тот день (gaps), и дни, за которые 1С не ответила (days_fail).
+  function gapsNote(d){
+    const g=(d&&d.gaps)||[], f=(d&&d.days_fail)||0; if(!g.length&&!f) return '';
+    const dm=s=>{ const p=String(s||'').split('-'); return p.length===3?(p[2]+'.'+p[1]):esc(s); };
+    let t='<div style="margin-top:6px;color:var(--text)">⚠️ <b>Данные 1С неполные</b> — итоги ниже занижены';
+    if(g.length) t+='. В 1С сейчас не хватает чеков за '+g.map(x=>dm(x.date)).join(', ')+' (≈'+fmt(d.gaps_missing||0)+' выручки, в Главной эти дни учтены полностью)';
+    if(f) t+=(g.length?'; ':'. ')+'1С не ответила за '+f+' дн.';
+    return t+'.</div>';
+  }
+  function mpct(m){ return (m===null||m===undefined)?'—':(m+'%'); }
   function nfmt(n){ return (Number(n)||0).toLocaleString('ru-RU'); }
   // String(): если в поле придёт число (Sheets/Supabase иногда отдают числом), .replace на нём
   // падал и ронял ВСЮ вкладку целиком. Пустые значения ведут себя как раньше — ''.
@@ -2120,7 +2132,7 @@
     const d=window._assortData; const floors=(d&&d.floors)||[];
     const cats=[];
     floors.forEach(f=>(f.cats||[]).forEach(c=>{ if((c.profit||0)>0)
-      cats.push({floor:f.floor,name:c.name,value:c.profit,revenue:c.revenue||0,qty:c.qty||0,margin:c.margin||0}); }));
+      cats.push({floor:f.floor,name:c.name,value:c.profit,revenue:c.revenue||0,qty:c.qty||0,margin:c.margin}); }));
     cats.sort((a,b)=>b.value-a.value);
     const total=cats.reduce((s,c)=>s+c.value,0)||1; let acc=0;
     return cats.map(c=>{ const cum=acc/total; const grp=cum<0.7?'A':cum<0.9?'B':'C'; acc+=c.value;
@@ -2138,7 +2150,7 @@
         '<div class="kpis" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">'+
         ['A','B','C'].map(k=>'<div class="card kpi"><div class="label"><span class="badge '+badge(k)+'">'+k+'</span> · '+g[k].n+' категорий</div><div class="value" style="font-size:18px">'+Math.round(g[k].v/total*100)+'% прибыли</div></div>').join('')+'</div>';
       box.innerHTML=summary+'<table><thead><tr><th>#</th><th>Гр.</th><th>Этаж</th><th>Категория</th><th style="text-align:right">Чистая прибыль</th><th style="text-align:right">Продано</th><th style="text-align:right">Выручка</th><th style="text-align:right">Маржа</th><th style="text-align:right">Доля</th><th style="text-align:right">Накопл.</th></tr></thead><tbody>'+
-        rows.map((r,i)=>'<tr><td style="color:var(--muted)">'+(i+1)+'</td><td><span class="badge '+badge(r.grp)+'">'+r.grp+'</span></td><td>'+esc(r.floor)+'</td><td>'+esc(r.name)+'</td><td style="text-align:right"><span class="money" data-som="'+Math.round(r.value)+'">'+fmt(Math.round(r.value))+'</span></td><td style="text-align:right">'+(r.qty||0).toLocaleString('ru-RU')+'</td><td style="text-align:right">'+fmt(Math.round(r.revenue))+'</td><td style="text-align:right">'+(r.margin||0)+'%</td><td style="text-align:right">'+r.share.toFixed(1)+'%</td><td style="text-align:right;color:var(--muted)">'+r.cum.toFixed(0)+'%</td></tr>').join('')+'</tbody></table>';
+        rows.map((r,i)=>'<tr><td style="color:var(--muted)">'+(i+1)+'</td><td><span class="badge '+badge(r.grp)+'">'+r.grp+'</span></td><td>'+esc(r.floor)+'</td><td>'+esc(r.name)+'</td><td style="text-align:right"><span class="money" data-som="'+Math.round(r.value)+'">'+fmt(Math.round(r.value))+'</span></td><td style="text-align:right">'+(r.qty||0).toLocaleString('ru-RU')+'</td><td style="text-align:right">'+fmt(Math.round(r.revenue))+'</td><td style="text-align:right">'+mpct(r.margin)+'</td><td style="text-align:right">'+r.share.toFixed(1)+'%</td><td style="text-align:right;color:var(--muted)">'+r.cum.toFixed(0)+'%</td></tr>').join('')+'</tbody></table>';
       renderMoney();
     }
     document.getElementById('abcfullbg').classList.add('open');
@@ -2814,9 +2826,9 @@
         if(cur) sel.value=cur;
       }
       if(st){ st.style.borderStyle='solid'; st.style.borderColor=d.stale?'var(--amber)':'var(--green)';
-        st.innerHTML=(d.stale?'🟠 <b>Показываю последний расчёт</b> (1С долго не отвечала) · ':'🟢 <b>Анализ по чистой прибыли</b> · ')+
+        st.innerHTML=(d.stale?'🟠 <b>Показываю последний расчёт</b> (1С долго не отвечала) · ':(((d.gaps||[]).length||d.days_fail)?'🟠':'🟢')+' <b>Анализ по чистой прибыли</b> · ')+
           'период '+esc(d.from||'')+' … '+esc(d.to||'')+' ('+(d.period_days||0)+' дн.) · обновлено '+esc(d.updated||'')+
-          (assortRange?' · <span style="color:var(--muted)">свой период</span>':' · <span style="color:var(--muted)">пересчитывается само, раз в 6 ч</span>'); }
+          (assortRange?' · <span style="color:var(--muted)">свой период</span>':' · <span style="color:var(--muted)">пересчитывается само, раз в 6 ч</span>')+gapsNote(d); if((d.gaps||[]).length||d.days_fail) st.style.borderColor='var(--amber)'; }
       const km=(label,som)=>'<div class="card kpi"><div class="label">'+label+'</div><div class="value"><span class="money" data-som="'+(som||0)+'">'+fmt(som||0)+'</span></div></div>';
       const kp=document.getElementById('assort-kpis');
       if(kp) kp.innerHTML=
@@ -2863,7 +2875,7 @@
             '<td style="padding:6px 8px;text-align:right">'+(p.qty||0).toLocaleString('ru-RU')+'</td>'+
             '<td style="padding:6px 8px;text-align:right">'+fmt(p.revenue)+'</td>'+
             '<td style="padding:6px 8px;text-align:right;font-weight:600">'+fmt(p.profit)+'</td>'+
-            '<td style="padding:6px 8px;text-align:right">'+(p.margin||0)+'%</td>'+
+            '<td style="padding:6px 8px;text-align:right">'+mpct(p.margin)+'</td>'+
             '<td style="padding:6px 8px;text-align:right">'+fmt(p.profit_per_unit)+'</td></tr>').join('')+
         '</table></div></div>';
       return;
@@ -2876,7 +2888,7 @@
       html+='<div class="card" style="margin-bottom:16px">'+
         '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">'+
           '<h3 style="margin:0">'+esc(g.group)+'</h3>'+
-          '<div style="font-size:13px;color:var(--muted)">Прибыль группы: <b style="color:var(--text)">'+fmt(g.profit)+' сом</b> · доля в магазине '+g.share+'%</div>'+
+          '<div style="font-size:13px;color:var(--muted)">Прибыль группы: <b style="color:var(--text)">'+fmt(g.profit)+'</b> · доля в магазине '+g.share+'%</div>'+
         '</div>'+
         '<div class="note" style="margin:8px 0 12px">Всего <b>'+g.count+'</b> позиций. Топ-<b>'+g.keep_n+'</b> дают <b>'+g.keep_profit_share+'%</b> прибыли группы → их оставляем. Остальные <b>'+cut+'</b> позиций = '+(100-g.keep_profit_share)+'% — кандидаты на сокращение.</div>'+
         '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'+
@@ -2895,7 +2907,7 @@
             '<td style="padding:6px 8px;text-align:right">'+fmt(r.revenue)+'</td>'+
             '<td style="padding:6px 8px;text-align:right;font-weight:600">'+fmt(r.profit)+'</td>'+
             '<td style="padding:6px 8px;text-align:right">'+r.group_share+'%</td>'+
-            '<td style="padding:6px 8px;text-align:right">'+r.margin+'%</td>'+
+            '<td style="padding:6px 8px;text-align:right">'+mpct(r.margin)+'</td>'+
             '<td style="padding:6px 8px;text-align:right">'+fmt(r.profit_per_unit)+'</td></tr>').join('')+
         '</table></div></div>';
     });
@@ -2966,7 +2978,7 @@
     const pad=8+depth*12;
     return '<div style="overflow:auto;padding:2px 8px 10px '+pad+'px"><table style="width:100%;border-collapse:collapse;font-size:12px">'+
       '<tr style="text-align:left;color:var(--muted)"><th style="padding:3px 6px">Товар (топ по прибыли)</th><th style="padding:3px 6px;text-align:right">Продано</th><th style="padding:3px 6px;text-align:right">Выручка</th><th style="padding:3px 6px;text-align:right">Прибыль</th><th style="padding:3px 6px;text-align:right">Маржа</th></tr>'+
-      items.map(i=>'<tr style="border-top:1px solid var(--line)"><td style="padding:3px 6px">'+esc(i.name)+'</td><td style="padding:3px 6px;text-align:right">'+(i.qty||0).toLocaleString('ru-RU')+'</td><td style="padding:3px 6px;text-align:right">'+fmt(i.revenue)+'</td><td style="padding:3px 6px;text-align:right;font-weight:600">'+fmt(i.profit)+'</td><td style="padding:3px 6px;text-align:right">'+(i.margin||0)+'%</td></tr>').join('')+
+      items.map(i=>'<tr style="border-top:1px solid var(--line)"><td style="padding:3px 6px">'+esc(i.name)+'</td><td style="padding:3px 6px;text-align:right">'+(i.qty||0).toLocaleString('ru-RU')+'</td><td style="padding:3px 6px;text-align:right">'+fmt(i.revenue)+'</td><td style="padding:3px 6px;text-align:right;font-weight:600">'+fmt(i.profit)+'</td><td style="padding:3px 6px;text-align:right">'+mpct(i.margin)+'</td></tr>').join('')+
       '</table></div>';
   }
   function reportTreeHtml(nodes,depth){
@@ -2976,7 +2988,7 @@
       const caret=openable?'<span class="rcaret" style="display:inline-block;width:13px;color:var(--muted)">▸</span>':'<span style="display:inline-block;width:13px"></span>';
       const head='<summary style="cursor:'+(openable?'pointer':'default')+';list-style:none;display:flex;justify-content:space-between;gap:10px;align-items:baseline;padding:7px 8px 7px '+pad+'px;border-top:1px solid var(--line)">'+
         '<span style="font-weight:'+(depth===0?700:depth===1?600:400)+'">'+caret+esc(n.name)+'</span>'+
-        '<span style="font-size:12px;color:var(--muted);white-space:nowrap">'+fmt(n.revenue)+' сом · приб. <span style="color:var(--text)">'+fmt(n.profit)+'</span> · '+(n.margin||0)+'%</span></summary>';
+        '<span style="font-size:12px;color:var(--muted);white-space:nowrap">'+fmt(n.revenue)+' · приб. <span style="color:var(--text)">'+fmt(n.profit)+'</span> · '+mpct(n.margin)+'</span></summary>';
       let inner='';
       if(hasKids) inner+=reportTreeHtml(n.children,depth+1);
       if(hasItems) inner+=reportItemsTable(n.items,depth+1);
@@ -2991,7 +3003,7 @@
       if(n.children) walk(n.children,np);
     }); })(tree,'');
     let html='';
-    if(cats.length) html+='<div class="card" style="margin-bottom:14px"><h3 style="margin:0 0 8px">📂 Категории ('+cats.length+')</h3><div style="overflow:auto"><table style="width:100%;font-size:13px;border-collapse:collapse"><tr style="text-align:left;color:var(--muted)"><th style="padding:5px 8px">Путь</th><th style="padding:5px 8px;text-align:right">Выручка</th><th style="padding:5px 8px;text-align:right">Прибыль</th><th style="padding:5px 8px;text-align:right">Маржа</th></tr>'+cats.slice(0,120).map(c=>'<tr style="border-top:1px solid var(--line)"><td style="padding:5px 8px">'+esc(c.path)+'</td><td style="padding:5px 8px;text-align:right">'+fmt(c.n.revenue)+'</td><td style="padding:5px 8px;text-align:right">'+fmt(c.n.profit)+'</td><td style="padding:5px 8px;text-align:right">'+(c.n.margin||0)+'%</td></tr>').join('')+'</table></div></div>';
+    if(cats.length) html+='<div class="card" style="margin-bottom:14px"><h3 style="margin:0 0 8px">📂 Категории ('+cats.length+')</h3><div style="overflow:auto"><table style="width:100%;font-size:13px;border-collapse:collapse"><tr style="text-align:left;color:var(--muted)"><th style="padding:5px 8px">Путь</th><th style="padding:5px 8px;text-align:right">Выручка</th><th style="padding:5px 8px;text-align:right">Прибыль</th><th style="padding:5px 8px;text-align:right">Маржа</th></tr>'+cats.slice(0,120).map(c=>'<tr style="border-top:1px solid var(--line)"><td style="padding:5px 8px">'+esc(c.path)+'</td><td style="padding:5px 8px;text-align:right">'+fmt(c.n.revenue)+'</td><td style="padding:5px 8px;text-align:right">'+fmt(c.n.profit)+'</td><td style="padding:5px 8px;text-align:right">'+mpct(c.n.margin)+'</td></tr>').join('')+'</table></div></div>';
     if(prods.length) html+='<div class="card"><h3 style="margin:0 0 8px">🛒 Товары ('+prods.length+')</h3><div style="overflow:auto"><table style="width:100%;font-size:13px;border-collapse:collapse"><tr style="text-align:left;color:var(--muted)"><th style="padding:5px 8px">Товар</th><th style="padding:5px 8px">Категория</th><th style="padding:5px 8px;text-align:right">Продано</th><th style="padding:5px 8px;text-align:right">Выручка</th><th style="padding:5px 8px;text-align:right">Прибыль</th></tr>'+prods.slice(0,200).map(p=>'<tr style="border-top:1px solid var(--line)"><td style="padding:5px 8px">'+esc(p.i.name)+'</td><td style="padding:5px 8px;color:var(--muted)">'+esc(p.path)+'</td><td style="padding:5px 8px;text-align:right">'+(p.i.qty||0).toLocaleString('ru-RU')+'</td><td style="padding:5px 8px;text-align:right">'+fmt(p.i.revenue)+'</td><td style="padding:5px 8px;text-align:right;font-weight:600">'+fmt(p.i.profit)+'</td></tr>').join('')+'</table></div></div>';
     return html||'<div class="card"><span style="color:var(--muted);font-size:13px">Ничего не найдено. (Товары ищутся среди топ-15 по прибыли в каждой категории.)</span></div>';
   }
@@ -3008,8 +3020,8 @@
       return '<div style="flex:1;min-width:150px;background:var(--panel);border:1px solid var(--line);border-left:3px solid '+K.color+';border-radius:10px;padding:10px 12px">'+
         '<div style="font-size:12px;color:var(--muted)">'+K.emoji+' '+K.label+'</div>'+
         '<div style="font-size:18px;font-weight:700;margin-top:2px">'+v.pos+' <span style="font-size:12px;color:var(--muted);font-weight:400">поз · '+v.qty+' шт</span></div>'+
-        '<div style="font-size:12px;color:var(--muted)">себест. '+fmt(v.cost)+' сом</div></div>'; }).join('');
-    const kass=(au.by_kassa||[]).map(k=>'<span style="display:inline-block;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:12px;margin:2px 4px 2px 0">'+esc(k.kassa)+' — <b>'+k.pos+'</b> поз · '+fmt(k.cost)+' сом</span>').join('');
+        '<div style="font-size:12px;color:var(--muted)">себест. '+fmt(v.cost)+'</div></div>'; }).join('');
+    const kass=(au.by_kassa||[]).map(k=>'<span style="display:inline-block;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:12px;margin:2px 4px 2px 0">'+esc(k.kassa)+' — <b>'+k.pos+'</b> поз · '+fmt(k.cost)+'</span>').join('');
     const cat=(au.by_cat||[]).slice(0,14).map(c=>'<tr style="border-top:1px solid var(--line)"><td style="padding:4px 8px">'+esc(c.cat)+'</td><td style="padding:4px 8px;text-align:right">'+c.pos+'</td><td style="padding:4px 8px;text-align:right">'+c.qty+'</td><td style="padding:4px 8px;text-align:right;font-weight:600">'+fmt(c.cost)+'</td></tr>').join('');
     const catTbl='<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px"><tr style="text-align:left;color:var(--muted)"><th style="padding:4px 8px">Категория</th><th style="padding:4px 8px;text-align:right">Позиций</th><th style="padding:4px 8px;text-align:right">Штук</th><th style="padding:4px 8px;text-align:right">Себестоимость</th></tr>'+cat+'</table></div>';
     const KRU={zero:'0 сом',one:'1 сом',big:'скидка ≥80%'}, KCL={zero:'var(--red)',one:'var(--amber)',big:'#F1BC37'};
@@ -3032,7 +3044,7 @@
       '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">'+
         '<h3 style="margin:0">🚨 Контроль потерь <span style="font-size:11px;color:var(--muted);font-weight:400">· считается из чеков сам</span></h3>'+
         '<button class="btn ghost" style="font-size:12px;padding:5px 11px" onclick="exportAudit()">⬇️ В Excel</button></div>'+
-      '<div style="font-size:14px;margin:8px 0 4px"><b>'+t.pos+'</b> позиций · <b>'+t.qty+'</b> шт · потери по себестоимости <b style="color:var(--red)">'+fmt(t.cost)+' сом</b></div>'+
+      '<div style="font-size:14px;margin:8px 0 4px"><b>'+t.pos+'</b> позиций · <b>'+t.qty+'</b> шт · потери по себестоимости <b style="color:var(--red)">'+fmt(t.cost)+'</b></div>'+
       '<div class="note" style="font-size:12px;margin-bottom:12px">Товары, ушедшие по <b>0 сом</b>, <b>1 сом</b> или со скидкой <b>≥80%</b>. Этот убыток <b>уже вычтен</b> из чистой прибыли выше — карточка показывает, <b>где именно</b> он возник (категория / касса / день), чтобы можно было разобраться.</div>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">'+chips+'</div>'+
       (kass?'<div style="font-size:12px;color:var(--muted);margin-bottom:4px">По кассам:</div><div style="margin-bottom:12px">'+kass+'</div>':'')+
@@ -3056,8 +3068,8 @@
     const kp=document.getElementById('report-kpis'); const ch=document.getElementById('report-charts');
     if(!d){ box.innerHTML='<span style="color:var(--muted);font-size:13px">Готовлю отчёт'+periodWord(reportDays)+'… обнови через минуту.</span>'; if(ch) ch.innerHTML=''; if(kp) kp.innerHTML=''; return; }
     if(st){ st.style.borderStyle='solid'; st.style.borderColor=d.stale?'var(--amber)':'var(--green)';
-      st.innerHTML=(d.stale?'🟠 <b>Последний расчёт</b> (1С долго не отвечала) · ':'🟢 <b>Отчёт по продажам</b> · ')+
-        'период '+esc(d.from||'')+' … '+esc(d.to||'')+' ('+(d.period_days||0)+' дн.) · обновлено '+esc(d.updated||''); }
+      st.innerHTML=(d.stale?'🟠 <b>Последний расчёт</b> (1С долго не отвечала) · ':(((d.gaps||[]).length||d.days_fail)?'🟠':'🟢')+' <b>Отчёт по продажам</b> · ')+
+        'период '+esc(d.from||'')+' … '+esc(d.to||'')+' ('+(d.period_days||0)+' дн.) · обновлено '+esc(d.updated||'')+gapsNote(d); if((d.gaps||[]).length||d.days_fail) st.style.borderColor='var(--amber)'; }
     const km=(label,som)=>'<div class="card kpi"><div class="label">'+label+'</div><div class="value"><span class="money" data-som="'+(som||0)+'">'+fmt(som||0)+'</span></div></div>';
     if(kp) kp.innerHTML=kpiCard('Период',(periodWord(reportDays).trim()||((d.period_days||0)+' дн.')))+km('Выручка',d.total_revenue)+km('Чистая прибыль',d.total_profit)+kpiCard('Средняя маржа',(d.avg_margin||0)+'%');
     const tree=(d.tree&&d.tree.length)?d.tree:floorsToTree(d.floors||[]);
