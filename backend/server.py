@@ -6609,6 +6609,21 @@ def _supa(method, table, params="", body=None):
         txt = r.read().decode("utf-8")
         return json.loads(txt) if txt.strip() else []
 
+def _supa_all(table, params, page=1000, cap=200000):
+    """GET ВСЕХ строк. Supabase (PostgREST) отдаёт за запрос не больше 1000 строк и остальное
+    молча отрезает, даже при limit=10000 — так из «Финансов» пропали расходы июня–июля 2026
+    (в базе 1431 расход). Берём страницами limit/offset. В params обязателен order= по
+    уникальному ключу (иначе страницы плавают)."""
+    out, off = [], 0
+    sep = "&" if "?" in params else "?"
+    while True:
+        rows = _supa("GET", table, "%s%slimit=%d&offset=%d" % (params, sep, page, off)) or []
+        out.extend(rows)
+        if len(rows) < page or off >= cap:
+            break
+        off += page
+    return out
+
 def _inbox_save(table, row, retries=2):
     """Сохранить сообщение (ig_inbox / wa_inbox) в БД с повторами. Если после повторов
     не удалось — кладём в постоянный журнал inbox_errors и печатаем предупреждение,
@@ -7057,9 +7072,9 @@ def suppliers_list(company=None):
     sups, txns = [], []
     if supa_on():
         try:
-            sups = _supa("GET", "suppliers", "?company_id=eq.%s&select=*&order=name" % _q(co))
-            txns = _supa("GET", "supplier_txns",
-                         "?company_id=eq.%s&select=*&order=date.desc,id.desc" % _q(co))
+            sups = _supa_all("suppliers", "?company_id=eq.%s&select=*&order=name,id" % _q(co))
+            txns = _supa_all("supplier_txns",
+                             "?company_id=eq.%s&select=*&order=date.desc,id.desc" % _q(co))
         except Exception:
             pass
     bs = {}
@@ -7072,7 +7087,7 @@ def suppliers_list(company=None):
         paid = sum(_num(t.get("amount")) for t in ts if t.get("type") == "payment")
         out.append({"id": s.get("id"), "name": s.get("name", ""), "note": s.get("note", ""),
                     "debt": round(taken - paid), "total_taken": round(taken),
-                    "total_paid": round(paid), "txns": ts[:60]})
+                    "total_paid": round(paid), "txns": ts})   # вся история (раньше 60 последних)
     return {"suppliers": out, "total_debt": round(sum(s["debt"] for s in out)), "count": len(out)}
 
 def sales_sums():
@@ -7081,8 +7096,8 @@ def sales_sums():
     days = {}
     if supa_on():
         try:
-            rows = _supa("GET", "sales_daily",
-                         "?company_id=eq.%s&select=date,sales,profit" % _q(COMPANY_ID))
+            rows = _supa_all("sales_daily",
+                             "?company_id=eq.%s&select=date,sales,profit&order=date" % _q(COMPANY_ID))
             for r in rows:
                 days[r.get("date")] = {"sales": _num(r.get("sales")), "profit": _num(r.get("profit"))}
         except Exception:
@@ -7113,8 +7128,8 @@ def expenses_view(company=None):
     rows = []
     if supa_on():
         try:
-            rows = _supa("GET", "expenses",
-                         "?company_id=eq.%s&select=*&order=date.desc,id.desc&limit=10000" % _q(co))
+            rows = _supa_all("expenses",
+                             "?company_id=eq.%s&select=*&order=date.desc,id.desc" % _q(co))
         except Exception:
             rows = []
     today = _today_str(); wk = _days_ago(6); mo = today[:7]
@@ -7144,8 +7159,8 @@ def expenses_view(company=None):
     sales_by_day = []   # дневные продажи — чтобы фронт мог посчитать выручку/прибыль за ЛЮБОЙ период
     if supa_on() and co == BIZMART_ID:
         try:
-            sd = _supa("GET", "sales_daily",
-                       "?company_id=eq.%s&select=date,sales,profit&order=date.asc" % _q(co))
+            sd = _supa_all("sales_daily",
+                           "?company_id=eq.%s&select=date,sales,profit&order=date.asc" % _q(co))
             for r in (sd or []):
                 dd = r.get("date") or ""
                 if dd:
@@ -7170,7 +7185,7 @@ def expenses_view(company=None):
                          "expense": round(ev), "net": round(sv["profit"] - ev)})
     # Список отдаём шире (было 200 — из-за этого фронт недосчитывал «Расходы за месяц»,
     # когда строк за месяц больше 200). Итоговые суммы всё равно берём из periods (по ВСЕМ строкам).
-    res = {"expenses": rows[:10000], "by_category": by_cat, "periods": periods,
+    res = {"expenses": rows, "by_category": by_cat, "periods": periods,
            "by_month": by_month, "sales_by_day": sales_by_day, "total_count": len(rows)}
     return res
 

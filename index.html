@@ -13,7 +13,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
   /* ============================================================
-     ШТУРВАЛ v6.0.3 — оформление
+     ШТУРВАЛ v6.0.4 — оформление
      Плавающий док слева, вкладки-таблетки, главный экран-мозаика, цвет раздела.
      ============================================================ */
   :root{
@@ -467,7 +467,7 @@
     <div class="side-cap" id="side-cap"></div>
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      <span class="ver">Штурвал v6.0.3</span><br>Исправлен «Отчёт по продажам»: возвраты больше не прибавляются к прибыли и к «продано»; при неполных данных 1С отчёт предупреждает.<br><br>Новый интерфейс: «Главная» со всеми делами на одном экране, разделы в панели слева (на телефоне — внизу), у каждого раздела свой цвет, поиск и команды по ⌘K.<br><br><span onclick="hardReload()" style="cursor:pointer;color:var(--accent);font-weight:700">🔄 Обновить приложение</span>
+      <span class="ver">Штурвал v6.0.4</span><br>Поставщики: видна вся история операций, даты в виде день.месяц.год. Финансы: вернулись расходы за июнь–июль 2026 (раньше сервер брал только 1000 последних расходов).<br><br>Исправлен «Отчёт по продажам»: возвраты больше не прибавляются к прибыли и к «продано»; при неполных данных 1С отчёт предупреждает.<br><br>Новый интерфейс: «Главная» со всеми делами на одном экране, разделы в панели слева (на телефоне — внизу), у каждого раздела свой цвет, поиск и команды по ⌘K.<br><br><span onclick="hardReload()" style="cursor:pointer;color:var(--accent);font-weight:700">🔄 Обновить приложение</span>
       <span> — если новое не появилось</span>
     </div>
   </aside>
@@ -2547,14 +2547,15 @@
                                  : (b.debt-a.debt));
     if(all.length && !sups.length){ box.innerHTML='<div class="card"><span style="color:var(--muted);font-size:13px">По запросу «'+esc(q)+'» поставщиков не найдено.</span></div>'; return; }
     box.innerHTML=sups.length?sups.map(s=>{
-      const txns=(s.txns||[]).slice(0,8).map(t=>'<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc((t.date||'').slice(5))+'</td><td>'+(t.type==='debt'?'📦 взял':'💸 отдал')+(t.note?' <span style="color:var(--muted);font-size:12px">· '+esc(t.note)+'</span>':'')+(t.qty?' <span style="color:var(--muted);font-size:12px">('+t.qty+' шт)</span>':'')+(t.receipt_url?' <a href="'+esc(t.receipt_url)+'" target="_blank" rel="noopener" style="font-size:12px;color:var(--accent,#5b8cff);text-decoration:none" title="Открыть чек">📎 чек</a>':'')+(t.created_by?' <span style="color:var(--muted);font-size:11px">👤 '+esc(t.created_by)+'</span>':'')+'</td><td style="text-align:right;white-space:nowrap;color:'+(t.type==='debt'?'var(--red)':'var(--green)')+'">'+(t.type==='debt'?'+':'−')+fmt(t.amount)+'</td><td style="text-align:right"><span onclick="openTxnEdit('+s.id+','+t.id+')" style="cursor:pointer;font-size:13px" title="Исправить сумму операции">✏️</span></td></tr>').join('');
+      // вся история операций (раньше — только 8 последних); дата день.месяц.год
+      const txns=(s.txns||[]).map(t=>'<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc((t.date||'').split('-').reverse().join('.'))+'</td><td>'+(t.type==='debt'?'📦 взял':'💸 отдал')+(t.note?' <span style="color:var(--muted);font-size:12px">· '+esc(t.note)+'</span>':'')+(t.qty?' <span style="color:var(--muted);font-size:12px">('+t.qty+' шт)</span>':'')+(t.receipt_url?' <a href="'+esc(t.receipt_url)+'" target="_blank" rel="noopener" style="font-size:12px;color:var(--accent,#5b8cff);text-decoration:none" title="Открыть чек">📎 чек</a>':'')+(t.created_by?' <span style="color:var(--muted);font-size:11px">👤 '+esc(t.created_by)+'</span>':'')+'</td><td style="text-align:right;white-space:nowrap;color:'+(t.type==='debt'?'var(--red)':'var(--green)')+'">'+(t.type==='debt'?'+':'−')+fmt(t.amount)+'</td><td style="text-align:right"><span onclick="openTxnEdit('+s.id+','+t.id+')" style="cursor:pointer;font-size:13px" title="Исправить сумму операции">✏️</span></td></tr>').join('');
       return '<div class="card" style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">'+
         '<div><div style="font-weight:700;font-size:16px">'+esc(s.name)+' <span onclick="openSupEdit('+s.id+')" style="cursor:pointer;font-size:13px;font-weight:400" title="Изменить имя/телефон">✏️</span></div>'+(s.note?'<div style="font-size:12px;color:var(--muted)">'+esc(s.note)+'</div>':'')+'</div>'+
         '<div style="text-align:right"><div style="font-size:12px;color:var(--muted)">Текущий долг</div><div style="font-size:22px;font-weight:700;color:'+(s.debt>0?'var(--red)':'var(--green)')+'"><span class="money" data-som="'+s.debt+'">'+fmt(s.debt)+'</span></div></div></div>'+
         '<div style="display:flex;gap:8px;margin:12px 0;flex-wrap:wrap">'+
         '<button class="btn" onclick="openSupTxn('+s.id+',\'debt\')">📦 Взял товар (+долг)</button>'+
         '<button class="btn ghost" onclick="openSupTxn('+s.id+',\'payment\')">💸 Отдал деньги (−долг)</button></div>'+
-        '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Взял всего: '+fmt(s.total_taken)+' · Отдал всего: '+fmt(s.total_paid)+'</div>'+
+        '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Взял всего: '+fmt(s.total_taken)+' · Отдал всего: '+fmt(s.total_paid)+' · операций: '+(s.txns||[]).length+'</div>'+
         (txns?'<table><tbody>'+txns+'</tbody></table>':'<span style="color:var(--muted);font-size:13px">Операций пока нет</span>')+
         '</div>';
     }).join(''):'<div class="card"><span style="color:var(--muted);font-size:13px">Поставщиков пока нет. Нажми «➕ Добавить поставщика».</span></div>';
