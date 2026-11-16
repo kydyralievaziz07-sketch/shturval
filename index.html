@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
+<script>try{if(localStorage.getItem('shturval_wide')==='1')document.documentElement.classList.add('wide')}catch(e){}</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -13,7 +14,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
   /* ============================================================
-     ШТУРВАЛ v6.0.4 — оформление
+     ШТУРВАЛ v6.1.0 — оформление
      Плавающий док слева, вкладки-таблетки, главный экран-мозаика, цвет раздела.
      ============================================================ */
   :root{
@@ -380,6 +381,131 @@
   @media(max-width:1280px){.tile{grid-column:span 4}.tile.w4,.tile.w5{grid-column:span 6}.tile.w7,.tile.w8,.tile.hello{grid-column:span 12}.tile.attn{grid-column:span 12}.tile.w6{grid-column:span 6}}
   @media(max-width:1000px){.kpis{grid-template-columns:repeat(2,1fr)}.grid2,.grid2b{grid-template-columns:1fr}.tile,.tile.w4,.tile.w5,.tile.w6{grid-column:span 6}}
   @media(max-width:760px){.fin-m-slim{display:none}}
+
+  /* ---------- ШИРОКИЙ ЭКРАН (монитор 1920+ / 2560+ / 3440) ----------
+     Только раскладка: больше карточек в ряд, панели рядом. Ниже 1920 px эти правила не действуют.
+     Включается ТОЛЬКО кнопкой «Изменить разрешение» (класс html.wide, хранится в shturval_wide на
+     этом компьютере) — на других компьютерах вид прежний (решение владельца 16.11.2026). */
+  .wide-btn{display:none}
+  @media (min-width:1920px){ .wide-btn{display:flex} }
+  html.wide .wide-btn{border-color:var(--accent);color:var(--accent)}
+  @media (min-width:1920px){
+    /* ряд KPI из 5+ карточек — в одну линию, а не «4 + хвост» */
+    html.wide .kpis:has(>:nth-child(5)){grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+    /* Рабочий стол: выручка и KPI рядом, панели по две-три в ряд */
+    html.wide #tab-dash:not(.hide){display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;align-items:stretch}
+    html.wide #tab-dash>*{grid-column:1/-1;margin:0!important}
+    html.wide #tab-dash>.grid2{display:contents}
+    html.wide #tab-dash>#dash-hero{grid-column:span 8}
+    html.wide #tab-dash>#dash-sales-kpis{grid-column:span 4;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:1fr}
+    html.wide #tab-dash>.grid2>#dash-attn-card{grid-column:span 7}
+    html.wide #tab-dash>.grid2>.card:last-child{grid-column:span 5}
+    html.wide #tab-dash>#dash-forecast{grid-column:span 5}
+    html.wide #tab-dash>#dash-dept-check{grid-column:span 7}
+    html.wide #dash-fc-body{grid-template-columns:repeat(2,minmax(0,1fr))}
+    /* Авто Рент: «Сдача авто» и «Должники», карточки задач — рядом */
+    html.wide #rent-alert,html.wide #rent-tasks{display:flex;flex-wrap:wrap;column-gap:16px;align-items:stretch}
+    html.wide #rent-alert>*,html.wide #rent-tasks>*{flex:1 1 100%;min-width:0}
+    html.wide #rent-alert>.card,html.wide #rent-tasks>.card{flex:1 1 40%}
+    /* Настройки: профиль и вход рядом, «Приложение» рядом с версией */
+    html.wide #tab-set:not(.hide){display:flex;flex-wrap:wrap;column-gap:16px;align-items:stretch}
+    html.wide #tab-set>*{flex:1 1 100%;min-width:0}
+    html.wide #tab-set>.card:not(#set-team-card),html.wide #tab-set>.side-foot{flex:1 1 40%}
+    html.wide #tab-set>.side-foot{margin-top:0}
+    /* Ежедневный отчёт: кассы и разделы колонками вместо одной узкой ленты */
+    html.wide #tab-reportdash>div{max-width:none!important}
+    html.wide #rpt-body{column-width:520px;column-gap:16px}
+    html.wide #rpt-body>*{break-inside:avoid}
+    html.wide #rpt-body>.card:first-child{column-span:all}
+  }
+  @media (min-width:1920px) and (max-width:2559px){
+    /* Главная: если «Авто Рент 2» скрыт, Аренда и Склад делят ряд пополам — без дырки */
+    html.wide .bento:has(>#h-rent2[style*="none"])>#h-rent,html.wide .bento:has(>#h-rent2[style*="none"])>#h-stock{grid-column:span 6}
+  }
+  @media (min-width:2560px){
+    /* Главная: приветствие, «Требует внимания», топ товаров и оплаты — первым рядом, все цифры — вторым */
+    html.wide #home-body{grid-template-columns:repeat(12,minmax(0,1fr))}
+    html.wide #h-hello{grid-area:1/1/2/5} html.wide #h-attn{grid-area:1/5/2/8} html.wide #h-top{grid-area:1/8/2/11} html.wide #h-pay{grid-area:1/11/2/13}
+    html.wide #home-body>.tile:not(#h-hello):not(#h-attn):not(#h-top):not(#h-pay){grid-column:span 2}
+    /* виден «Авто Рент 2» — во втором ряду 7 плиток: сетка на 14 колонок */
+    html.wide #home-body:has(>#h-rent2:not([style*="none"])){grid-template-columns:repeat(14,minmax(0,1fr))}
+    html.wide #home-body:has(>#h-rent2:not([style*="none"]))>#h-hello{grid-area:1/1/2/6}
+    html.wide #home-body:has(>#h-rent2:not([style*="none"]))>#h-attn{grid-area:1/6/2/9}
+    html.wide #home-body:has(>#h-rent2:not([style*="none"]))>#h-top{grid-area:1/9/2/12}
+    html.wide #home-body:has(>#h-rent2:not([style*="none"]))>#h-pay{grid-area:1/12/2/15}
+    /* Рабочий стол: выручка шире, KPI 2×2 справа; внимание + неделя + прогноз; отделы + топ */
+    html.wide #tab-dash>#dash-hero{grid-column:span 9}
+    html.wide #tab-dash>#dash-sales-kpis{grid-column:span 3}
+    html.wide #tab-dash>.grid2>#dash-attn-card{grid-column:span 5}
+    html.wide #tab-dash>.grid2>.card:last-child{grid-column:span 3}
+    html.wide #tab-dash>#dash-forecast{grid-column:span 4}
+    html.wide #tab-dash>#dash-dept-check,html.wide #tab-dash>.card:last-child{grid-column:span 6}
+    /* Аналитика: шесть панелей по три в ряд */
+    html.wide #tab-analytics:not(.hide){display:grid;grid-template-columns:repeat(3,minmax(0,1fr));column-gap:16px}
+    html.wide #tab-analytics>*{grid-column:1/-1}
+    html.wide #tab-analytics>.grid2b{display:contents}
+    html.wide #tab-analytics>.grid2b>.card{grid-column:auto;margin-bottom:20px}
+    /* Товары: круговая диаграмма склада рядом с категориями и группами */
+    html.wide #tab-prod:not(.hide){display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:16px}
+    html.wide #tab-prod>*{grid-column:1/-1}
+    html.wide #tab-prod>.card:has(#prod-donut){grid-column:1;grid-row:span 2;margin-bottom:16px}
+    html.wide #tab-prod>.card:has(#prod-supercats){grid-column:2}
+    html.wide #tab-prod>.card:has(#prod-catbrowser){grid-column:2;margin:16px 0}
+    /* Продажи: кассы, топ товаров и чеки — тремя колонками */
+    html.wide #tab-sales:not(.hide){display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:16px}
+    html.wide #tab-sales>*{grid-column:1/-1}
+    html.wide #tab-sales>.grid2b{display:contents}
+    html.wide #tab-sales>.grid2b>#sales-sellers-card{grid-column:span 3}
+    html.wide #tab-sales>.grid2b>.card:last-child{grid-column:span 4}
+    html.wide #tab-sales>.card:last-child{grid-column:span 5}
+    /* Отчёт по продажам: диаграммы слева, дерево этажей и категорий справа */
+    html.wide #tab-report:not(.hide){display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);grid-template-rows:repeat(6,auto) 1fr auto;column-gap:16px;align-items:start}
+    html.wide #tab-report>*{grid-column:1/-1}
+    html.wide #tab-report>#report-charts{grid-column:1;grid-row:4/span 4;grid-template-columns:minmax(0,1fr)}
+    html.wide #tab-report>#report-audit{grid-column:2;grid-row:4}
+    html.wide #tab-report>#report-audit+div{grid-column:2;grid-row:5;margin-top:0!important}
+    html.wide #tab-report>#report-audit+div+.note{grid-column:2;grid-row:6}
+    html.wide #tab-report>#report-body{grid-column:2;grid-row:7}
+    html.wide #tab-report>#report-body+.note{grid-row:8}
+    /* Финансы: помесячная таблица слева, сезонность (диаграммы) справа */
+    html.wide #tab-fin:not(.hide){display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(5,auto) 1fr;column-gap:16px}
+    html.wide #tab-fin>*{grid-column:1/-1}
+    html.wide #tab-fin>.card:has(#fin-months){grid-column:1;grid-row:5/span 2}
+    html.wide #tab-fin>.card:has(#fin-months)+div{grid-column:2;grid-row:5;margin-top:16px}
+    html.wide #tab-fin>#fin-charts{grid-column:2;grid-row:6}
+    /* Расходы: помесячная таблица слева, список и категории справа */
+    html.wide #tab-exp:not(.hide){display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:16px}
+    html.wide #tab-exp>*{grid-column:1/-1}
+    html.wide #tab-exp>.card:has(#exp-months){grid-column:1;grid-row:5}
+    html.wide #tab-exp>.grid2{grid-column:2;grid-row:5}
+    /* Анализ по машинам: ABC-анализ и дни недели рядом */
+    html.wide #rent-analysis:has(>h3:nth-of-type(4)){display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:16px;grid-auto-flow:row dense}
+    html.wide #rent-analysis:has(>h3:nth-of-type(4))>*{grid-column:1/-1}
+    html.wide #rent-analysis>h3:nth-of-type(2),html.wide #rent-analysis>h3:nth-of-type(2)+.note,html.wide #rent-analysis>h3:nth-of-type(2)+.note+.card{grid-column:1!important}
+    html.wide #rent-analysis>h3:nth-of-type(3),html.wide #rent-analysis>h3:nth-of-type(3)+.note,html.wide #rent-analysis>h3:nth-of-type(3)+.note+.card{grid-column:2!important}
+    /* Сдано: дата и сумма рядом, комментарий забирает остальную ширину */
+    html.wide #rent-handed table th:nth-child(-n+2),html.wide #rent-handed table td:nth-child(-n+2){width:1%;white-space:nowrap;padding-right:48px!important}
+    /* Ассортимент: группы товаров по две в ряд */
+    html.wide #assort-body{display:flex;flex-wrap:wrap;column-gap:16px;align-items:stretch}
+    html.wide #assort-body>*{flex:1 1 40%;min-width:0}
+    /* Поставщики: карточки по две в ряд */
+    html.wide #supl-list:has(>.card:nth-child(2)){display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:16px;align-items:start}
+    /* Реклама: мастер запуска слева, «Мои кампании» справа */
+    html.wide #ads-body:has(>#ads-camps){display:grid;grid-template-columns:minmax(560px,760px) minmax(0,1fr);gap:16px;align-items:start}
+    html.wide #ads-body:has(>#ads-camps)>.card{margin:0}
+    /* Анализ рекламы: разбивки (пол и возраст, плейсменты, регионы…) по две в ряд */
+    html.wide #adsanalysis-body{display:flex;flex-wrap:wrap;column-gap:16px;align-items:stretch}
+    html.wide #adsanalysis-body>*{flex:1 1 100%;min-width:0}
+    html.wide #adsanalysis-body>.card:not(:first-child):not([style*="border-left"]){flex:1 1 40%}
+    /* Авто Рент — дашборд: две строки KPI рядом, «Парк» рядом с «Эффективностью» */
+    html.wide #rent-dash{display:flex;flex-wrap:wrap;column-gap:16px;align-items:stretch}
+    html.wide #rent-dash>*{flex:1 1 100%;min-width:0}
+    html.wide #rent-dash>.kpis,html.wide #rent-dash>.card:not(:has(table)){flex:1 1 40%}
+  }
+  @media (min-width:3200px){
+    /* задачи проката — по три в ряд */
+    html.wide #rent-tasks>.card{flex-basis:30%}
+  }
   @media(max-width:760px){
     html,body{overflow-x:hidden;max-width:100%}
     body{flex-direction:column}
@@ -467,7 +593,7 @@
     <div class="side-cap" id="side-cap"></div>
     <nav class="nav" id="submenu"></nav>
     <div class="side-foot">
-      <span class="ver">Штурвал v6.0.4</span><br>Поставщики: видна вся история операций, даты в виде день.месяц.год. Финансы: вернулись расходы за июнь–июль 2026 (раньше сервер брал только 1000 последних расходов).<br><br>Исправлен «Отчёт по продажам»: возвраты больше не прибавляются к прибыли и к «продано»; при неполных данных 1С отчёт предупреждает.<br><br>Новый интерфейс: «Главная» со всеми делами на одном экране, разделы в панели слева (на телефоне — внизу), у каждого раздела свой цвет, поиск и команды по ⌘K.<br><br><span onclick="hardReload()" style="cursor:pointer;color:var(--accent);font-weight:700">🔄 Обновить приложение</span>
+      <span class="ver">Штурвал v6.1.0</span><br>Широкий монитор: кнопка «Изменить разрешение» в шапке (видна на экранах от 1920 точек) разворачивает кабинет на весь экран — панели рядом, больше карточек в ряд. Выбор запоминается на этом компьютере, на остальных вид прежний.<br><br>Поставщики: видна вся история операций, даты в виде день.месяц.год. Финансы: вернулись расходы за июнь–июль 2026 (раньше сервер брал только 1000 последних расходов).<br><br>Исправлен «Отчёт по продажам»: возвраты больше не прибавляются к прибыли и к «продано»; при неполных данных 1С отчёт предупреждает.<br><br>Новый интерфейс: «Главная» со всеми делами на одном экране, разделы в панели слева (на телефоне — внизу), у каждого раздела свой цвет, поиск и команды по ⌘K.<br><br><span onclick="hardReload()" style="cursor:pointer;color:var(--accent);font-weight:700">🔄 Обновить приложение</span>
       <span> — если новое не появилось</span>
     </div>
   </aside>
@@ -5887,7 +6013,13 @@ function rptFondVal(id,v){var r=(_rptData.fond_rows||[]).find(function(x){return
     if(logo){ logo.setAttribute('title','На главную'); logo.addEventListener('click',function(){ if(tabVisible('home')) selectModule('home'); }); }
     var tr=document.querySelector('.top-right');
     if(tr){ var cb=document.createElement('button'); cb.className='cmdk-btn'; cb.type='button'; cb.id='cmdk-open';
-      cb.innerHTML=ico('search')+'<span>Найти раздел или товар</span><kbd>⌘K</kbd>'; tr.insertBefore(cb,tr.firstChild); cb.addEventListener('click',function(){ cmdkOpen(); }); }
+      cb.innerHTML=ico('search')+'<span>Найти раздел или товар</span><kbd>⌘K</kbd>'; tr.insertBefore(cb,tr.firstChild); cb.addEventListener('click',function(){ cmdkOpen(); });
+      // Широкий монитор: раскладка включается только этой кнопкой и запоминается на этом компьютере
+      var wb=document.createElement('button'); wb.className='cmdk-btn wide-btn'; wb.type='button'; wb.id='wide-toggle';
+      wb.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg><span>Изменить разрешение</span>';
+      var wsync=function(){ var on=document.documentElement.classList.contains('wide'); wb.setAttribute('aria-pressed', on?'true':'false'); wb.title=on?'Сейчас широкий вид на весь монитор — нажмите, чтобы вернуть обычный':'Развернуть кабинет на весь широкий монитор (запомнится на этом компьютере)'; };
+      wb.addEventListener('click',function(){ var on=!document.documentElement.classList.contains('wide'); document.documentElement.classList.toggle('wide', on); try{ localStorage.setItem('shturval_wide', on?'1':'0'); }catch(e){} wsync(); });
+      wsync(); tr.insertBefore(wb, cb.nextSibling); }
     var h1=$('page-title');
     if(h1){ var cr=document.createElement('div'); cr.className='crumb'; cr.id='crumb'; cr.innerHTML='<i></i><span></span>'; h1.parentNode.insertBefore(cr,h1); }
     var sf=document.querySelector('.side-foot'), st=$('tab-set'); if(sf&&st) st.appendChild(sf);
